@@ -1,30 +1,33 @@
 package com.example.mpc.service;
 
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.TaskStatus;
+import com.example.mpc.model.DkgTask;
 import com.example.mpc.model.KeyShare;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.ApplicationContextAware;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
-import java.security.*;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.SecureRandom;
+import java.security.Security;
 import java.security.spec.ECGenParameterSpec;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 @Service
-public class DkgService implements NodeService.MessageHandler, ApplicationContextAware {
+public class DkgService implements NodeService.MessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(DkgService.class);
     
     @Autowired
@@ -39,76 +42,15 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
     @Value("${nodes.count}")
     private int nodesCount;
     
-    private ApplicationContext applicationContext;
-    
     static {
         Security.addProvider(new BouncyCastleProvider());
     }
     
-    // 重构私钥所需的最小份额数
-    // 以太坊使用的椭圆曲线
-    
     // 任务状态管理
-    public static class DkgTask {
-        public final String taskId;
-        public final AtomicReference<TaskStatus> status;
-        public String groupPublicKey;
-        public BigInteger finalShare;
-        public final CountDownLatch commitmentsReceivedLatch;
-        public final CountDownLatch sharesReceivedLatch;
-        public final ConcurrentHashMap<Integer, List<org.bouncycastle.math.ec.ECPoint>> receivedCommitments;
-        public final ConcurrentHashMap<Integer, BigInteger> receivedShares;
-        public List<BigInteger> coefficients;
-        public List<org.bouncycastle.math.ec.ECPoint> verificationPoints;
-        public List<BigInteger> maskingCoefficients; // 遮蔽多项式系数
-        public List<org.bouncycastle.math.ec.ECPoint> maskingVerificationPoints; // 遮蔽多项式验证点
-        public final ConcurrentHashMap<Integer, List<org.bouncycastle.math.ec.ECPoint>> receivedMaskingCommitments; // 接收的遮蔽验证点
-        public long createdAt;
-        
-        public DkgTask(String taskId) {
-            this.taskId = taskId;
-            this.status = new AtomicReference<>(TaskStatus.IDLE);
-            this.groupPublicKey = null;
-            this.finalShare = null;
-            this.commitmentsReceivedLatch = new CountDownLatch(5 - 1); // 假设总共有5个节点
-            this.sharesReceivedLatch = new CountDownLatch(5 - 1); // 假设总共有5个节点
-            this.receivedCommitments = new ConcurrentHashMap<>();
-            this.receivedShares = new ConcurrentHashMap<>();
-            this.receivedMaskingCommitments = new ConcurrentHashMap<>();
-            this.createdAt = System.currentTimeMillis();
-        }
-        
-        // 状态转换方法
-        public boolean start() {
-            return status.compareAndSet(TaskStatus.IDLE, TaskStatus.IN_PROGRESS);
-        }
-        
-        public void complete() {
-            status.set(TaskStatus.COMPLETED);
-        }
-        
-        public void fail() {
-            status.set(TaskStatus.FAILED);
-        }
-        
-        public boolean isCompleted() {
-            return status.get() == TaskStatus.COMPLETED;
-        }
-        
-        public boolean isInProgress() {
-            return status.get() == TaskStatus.IN_PROGRESS;
-        }
-    }
-    
     private final ConcurrentHashMap<String, DkgTask> dkgTasks = new ConcurrentHashMap<>();
     private final AtomicBoolean dkgInProgress = new AtomicBoolean(false);
     
     public DkgService() {
-    }
-    
-    @Override
-    public void setApplicationContext(ApplicationContext applicationContext) {
-        this.applicationContext = applicationContext;
     }
     
     /**
@@ -117,7 +59,7 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
      */
     public String createDkgTask() {
         String taskId = UUID.randomUUID().toString();
-        DkgTask task = new DkgTask(taskId);
+        DkgTask task = new DkgTask(taskId, nodesCount);
         dkgTasks.put(taskId, task);
         return taskId;
     }
@@ -163,7 +105,7 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
      * 初始化DKG服务
      */
     public CompletableFuture<Void> init() {
-        return CompletableFuture.runAsync(() -> {
+        return com.example.mpc.util.ThreadPoolUtil.submitIoTask(() -> {
             try {
                 // 启动P2P服务器
                 nodeService.startP2PServer().join();
@@ -180,7 +122,7 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
                 e.printStackTrace();
                 throw new RuntimeException(e);
             }
-        }, Executors.newSingleThreadExecutor());
+        });
     }
     
     /**
@@ -233,8 +175,9 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
      */
     public CompletableFuture<KeyShare> generateDistributedKey(String taskId) {
         return CompletableFuture.supplyAsync(() -> {
+            DkgTask task = null;
             try {
-                DkgTask task = dkgTasks.get(taskId);
+                task = dkgTasks.get(taskId);
                 if (task == null) {
                     throw new RuntimeException("DKG task not found: " + taskId);
                 }
@@ -319,9 +262,9 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
                 }
                 
                 // 步骤9: 计算最终份额（所有收到的份额之和）
-                task.finalShare = BigInteger.ZERO;
+                task.finalKeyShare = BigInteger.ZERO;
                 for (BigInteger share : task.receivedShares.values()) {
-                    task.finalShare = task.finalShare.add(share);
+                    task.finalKeyShare = task.finalKeyShare.add(share);
                 }
                 
                 // 步骤10: 去中心化生成群公钥
@@ -340,7 +283,7 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
                 }
                 
                 // 步骤12: 保存密钥份额到本节点数据库
-                String shareBase64 = Base64.getEncoder().encodeToString(task.finalShare.toByteArray());
+                String shareBase64 = Base64.getEncoder().encodeToString(task.finalKeyShare.toByteArray());
                 KeyShare keyShare = new KeyShare(1L, nodeId, shareBase64); // 使用固定的walletId=1
                 saveKeyShareToDatabase(keyShare);
                 
@@ -349,10 +292,12 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
                 return keyShare;
             } catch (Exception e) {
                 e.printStackTrace();
-                task.fail();
+                if (task != null) {
+                    task.fail();
+                }
                 throw new RuntimeException(e);
             }
-        }, Executors.newSingleThreadExecutor());
+        }, com.example.mpc.util.ThreadPoolUtil.getComputationThreadPool());
     }
     
     /**
@@ -366,64 +311,41 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
         }
         
         try {
-            // 步骤1: 收集所有节点的实际验证点（第一个验证点对应多项式常数项）
-            List<org.bouncycastle.math.ec.ECPoint> allConstantCommitments = new ArrayList<>();
+            // 步骤1: 获取本节点的公钥贡献（实际多项式的常数项验证点）
+            org.bouncycastle.math.ec.ECPoint myContribution = task.verificationPoints.get(0);
             
-            // 添加本节点的常数项验证点
-            if (!task.verificationPoints.isEmpty()) {
-                allConstantCommitments.add(task.verificationPoints.get(0));
-            }
+            // 步骤2: 将公钥贡献编码为可传输的格式
+            byte[] contributionBytes = myContribution.getEncoded(false);
+            String publicKeyPart = Base64.getEncoder().encodeToString(contributionBytes);
             
-            // 添加其他节点的常数项验证点
-            for (Integer senderId : task.receivedCommitments.keySet()) {
-                List<org.bouncycastle.math.ec.ECPoint> commitments = task.receivedCommitments.get(senderId);
-                if (!commitments.isEmpty()) {
-                    allConstantCommitments.add(commitments.get(0));
-                }
-            }
+            // 步骤3: 广播公钥贡献给其他节点
+            Map<String, Object> publicKeyData = new HashMap<>();
+            publicKeyData.put("taskId", taskId);
+            publicKeyData.put("publicKeyPart", publicKeyPart);
             
-            // 步骤2: 聚合所有常数项验证点，生成群公钥
-            if (!allConstantCommitments.isEmpty()) {
-                // 获取椭圆曲线参数
-                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-                ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-                keyPairGenerator.initialize(ecSpec);
-                KeyPair keyPair = keyPairGenerator.generateKeyPair();
-                org.bouncycastle.jce.interfaces.ECPublicKey publicKey = (org.bouncycastle.jce.interfaces.ECPublicKey) keyPair.getPublic();
-                
-                // 初始化群公钥为第一个验证点
-                org.bouncycastle.math.ec.ECPoint groupPublicKeyPoint = allConstantCommitments.get(0);
-                
-                // 累加其他验证点
-                for (int i = 1; i < allConstantCommitments.size(); i++) {
-                    groupPublicKeyPoint = groupPublicKeyPoint.add(allConstantCommitments.get(i));
-                }
-                
-                // 步骤3: 将群公钥转换为可存储的格式
-                // 注意：这里使用了简化的转换方式，实际应用中可能需要更复杂的处理
-                // 由于ECPoint无法直接转换为PublicKey，我们使用验证点的编码作为群公钥
-                byte[] groupPublicKeyBytes = groupPublicKeyPoint.getEncoded(false);
-                String groupPublicKey = Base64.getEncoder().encodeToString(groupPublicKeyBytes);
-                
-                // 步骤4: 广播群公钥
-                Map<String, Object> publicKeyData = new HashMap<>();
-                publicKeyData.put("taskId", taskId);
-                publicKeyData.put("groupPublicKey", groupPublicKey);
-                
-                return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.PUBLIC_KEY_PART, publicKeyData))
-                    .thenRun(() -> {
-                        task.groupPublicKey = groupPublicKey;
-                        logger.info("Generated and broadcasted group public key for task: {}", taskId);
-                    })
-                    .exceptionally(ex -> {
-                        logger.error("Failed to generate and broadcast group public key: {}", ex.getMessage());
-                        throw new RuntimeException(ex);
-                    });
-            } else {
-                throw new Exception("No commitments found to generate group public key");
-            }
+            return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.PUBLIC_KEY_PART, publicKeyData))
+                .thenRun(() -> {
+                    logger.info("Broadcasted public key contribution for task: {}", taskId);
+                    
+                    // 步骤4: 等待所有节点的公钥贡献
+                    try {
+                        if (!task.publicKeyContributionsReceivedLatch.await(60, TimeUnit.SECONDS)) {
+                            throw new Exception("Timeout waiting for public key contributions");
+                        }
+                        
+                        // 步骤5: 生成群公钥
+                        generateGroupPublicKey(task);
+                    } catch (Exception e) {
+                        logger.error("Error in public key generation process: {}", e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                })
+                .exceptionally(ex -> {
+                    logger.error("Failed to broadcast public key contribution: {}", ex.getMessage());
+                    throw new RuntimeException(ex);
+                });
         } catch (Exception e) {
-            logger.error("Error generating group public key: {}", e.getMessage());
+            logger.error("Error generating public key part: {}", e.getMessage());
             return CompletableFuture.failedFuture(new RuntimeException(e));
         }
     }
@@ -464,7 +386,10 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
             }
             
             // 检查点是否在椭圆曲线上
-            // 简化处理：假设点已经在曲线上（实际应用中需要更严格的验证）
+            if (!point.isValid()) {
+                logger.warn("Invalid commitment at index {}: point not on curve", i);
+                return false;
+            }
         }
         
         // 验证点有效
@@ -534,39 +459,7 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
         return verificationPoints;
     }
     
-    /**
-     * 验证份额（Feldman DKG）
-     * @param share 要验证的份额
-     * @param x 份额的索引
-     * @param verificationPoints 验证点列表
-     * @return 是否有效
-     */
-    private boolean verifyShare(BigInteger share, int x, List<org.bouncycastle.math.ec.ECPoint> verificationPoints) throws Exception {
-        // 获取椭圆曲线参数
-        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-        ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-        keyPairGenerator.initialize(ecSpec);
-        KeyPair keyPair = keyPairGenerator.generateKeyPair();
-        org.bouncycastle.jce.interfaces.ECPublicKey publicKey = (org.bouncycastle.jce.interfaces.ECPublicKey) keyPair.getPublic();
-        org.bouncycastle.math.ec.ECPoint G = publicKey.getParameters().getG(); // 基点
-        
-        // 计算 g^share
-        org.bouncycastle.math.ec.ECPoint gShare = G.multiply(share);
-        
-        // 计算 v0 * v1^x * v2^x^2 * ... * v(t-1)^x^(t-1)
-        BigInteger xBigInt = BigInteger.valueOf(x);
-        BigInteger xPower = BigInteger.ONE;
-        org.bouncycastle.math.ec.ECPoint computedPoint = verificationPoints.get(0);
-        
-        for (int i = 1; i < verificationPoints.size(); i++) {
-            xPower = xPower.multiply(xBigInt);
-            org.bouncycastle.math.ec.ECPoint viPower = verificationPoints.get(i).multiply(xPower);
-            computedPoint = computedPoint.add(viPower);
-        }
-        
-        // 验证 g^share 是否等于计算出的点
-        return gShare.equals(computedPoint);
-    }
+
     
     /**
      * 验证Gennaro DKG中的组合份额
@@ -643,9 +536,14 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
         String insertSql = "INSERT INTO key_shares (wallet_id, share_index, key_share) VALUES (?, ?, ?)";
         String selectSql = "SELECT last_insert_rowid()";
         
-        try (Connection conn = databaseService.getShareConnection(keyShare.getShareIndex());
-             PreparedStatement insertStmt = conn.prepareStatement(insertSql);
-             PreparedStatement selectStmt = conn.prepareStatement(selectSql)) {
+        Connection conn = null;
+        PreparedStatement insertStmt = null;
+        PreparedStatement selectStmt = null;
+        try {
+            conn = databaseService.getShareConnection(keyShare.getShareIndex());
+            insertStmt = conn.prepareStatement(insertSql);
+            selectStmt = conn.prepareStatement(selectSql);
+            
             insertStmt.setLong(1, keyShare.getWalletId());
             insertStmt.setInt(2, keyShare.getShareIndex());
             insertStmt.setString(3, keyShare.getKeyShare());
@@ -655,6 +553,26 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
             var rs = selectStmt.executeQuery();
             if (rs.next()) {
                 keyShare.setId(rs.getLong(1));
+            }
+        } finally {
+            // 关闭语句
+            if (selectStmt != null) {
+                try {
+                    selectStmt.close();
+                } catch (SQLException e) {
+                    logger.error("Error closing statement: {}", e.getMessage());
+                }
+            }
+            if (insertStmt != null) {
+                try {
+                    insertStmt.close();
+                } catch (SQLException e) {
+                    logger.error("Error closing statement: {}", e.getMessage());
+                }
+            }
+            // 回收连接
+            if (conn != null) {
+                databaseService.releaseShareConnection(conn, keyShare.getShareIndex());
             }
         }
     }
@@ -667,27 +585,41 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
      */
     public CompletableFuture<KeyShare> loadKeyShare(Long walletId) {
         return CompletableFuture.supplyAsync(() -> {
+            Connection conn = null;
+            PreparedStatement pstmt = null;
             try {
                 String sql = "SELECT id, wallet_id, share_index, key_share FROM key_shares WHERE wallet_id = ?";
-                try (Connection conn = databaseService.getShareConnection(nodeId);
-                     PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                    pstmt.setLong(1, walletId);
-                    var rs = pstmt.executeQuery();
-                    if (rs.next()) {
-                        KeyShare keyShare = new KeyShare();
-                        keyShare.setId(rs.getLong("id"));
-                        keyShare.setWalletId(rs.getLong("wallet_id"));
-                        keyShare.setShareIndex(rs.getInt("share_index"));
-                        keyShare.setKeyShare(rs.getString("key_share"));
-                        return keyShare;
-                    }
+                conn = databaseService.getShareConnection(nodeId);
+                pstmt = conn.prepareStatement(sql);
+                pstmt.setLong(1, walletId);
+                var rs = pstmt.executeQuery();
+                if (rs.next()) {
+                    KeyShare keyShare = new KeyShare();
+                    keyShare.setId(rs.getLong("id"));
+                    keyShare.setWalletId(rs.getLong("wallet_id"));
+                    keyShare.setShareIndex(rs.getInt("share_index"));
+                    keyShare.setKeyShare(rs.getString("key_share"));
+                    return keyShare;
                 }
                 return null;
             } catch (Exception e) {
                 e.printStackTrace();
                 throw new RuntimeException(e);
+            } finally {
+                // 关闭语句
+                if (pstmt != null) {
+                    try {
+                        pstmt.close();
+                    } catch (SQLException e) {
+                        logger.error("Error closing statement: {}", e.getMessage());
+                    }
+                }
+                // 回收连接
+                if (conn != null) {
+                    databaseService.releaseShareConnection(conn, nodeId);
+                }
             }
-        }, Executors.newSingleThreadExecutor());
+        }, com.example.mpc.util.ThreadPoolUtil.getComputationThreadPool());
     }
     
     /**
@@ -764,12 +696,109 @@ public class DkgService implements NodeService.MessageHandler, ApplicationContex
     }
     
     /**
-     * 处理公钥部分
+     * 处理公钥部分（实现完整的去中心化群公钥生成）
      */
     private void handlePublicKeyPart(int senderId, String taskId, String publicKeyPart) throws Exception {
-        // 注意：这里需要实现去中心化的群公钥生成
-        // 简化处理，将所有公钥部分存储，当收集到足够多的部分后生成最终公钥
-        // 实际实现中需要更复杂的协议
+        DkgTask task = dkgTasks.get(taskId);
+        if (task == null) {
+            logger.warn("Received public key part for non-existent task: {}", taskId);
+            return;
+        }
+        
+        // 步骤1: 解析公钥部分（这里假设 publicKeyPart 是验证点的编码）
+        byte[] publicKeyBytes = Base64.getDecoder().decode(publicKeyPart);
+        
+        // 步骤2: 将编码转换为 ECPoint
+        org.bouncycastle.math.ec.ECPoint publicKeyContribution = decodeECPoint(publicKeyBytes);
+        
+        // 步骤3: 存储其他节点的公钥贡献
+        task.receivedPublicKeyContributions.put(senderId, publicKeyContribution);
+        task.publicKeyContributionsReceivedLatch.countDown();
+        logger.info("Received public key contribution from node {} for task: {}", senderId, taskId);
+        
+        // 步骤4: 当收集到所有公钥贡献后，生成群公钥
+        if (task.publicKeyContributionsReceivedLatch.getCount() == 0) {
+            generateGroupPublicKey(task);
+        }
+    }
+    
+    /**
+     * 将编码的字节数组解码为 ECPoint
+     */
+    private org.bouncycastle.math.ec.ECPoint decodeECPoint(byte[] encoded) throws Exception {
+        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
+        ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
+        keyPairGenerator.initialize(ecSpec);
+        KeyPair keyPair = keyPairGenerator.generateKeyPair();
+        org.bouncycastle.jce.interfaces.ECPublicKey publicKey = (org.bouncycastle.jce.interfaces.ECPublicKey) keyPair.getPublic();
+        org.bouncycastle.math.ec.ECCurve curve = publicKey.getParameters().getCurve();
+        
+        // 解码点（假设使用压缩格式）
+        return curve.decodePoint(encoded);
+    }
+    
+    /**
+     * 生成群公钥
+     */
+    private void generateGroupPublicKey(DkgTask task) throws Exception {
+        // 检查群公钥是否已经生成，避免重复生成
+        if (task.groupPublicKeyGenerated) {
+            logger.info("Group public key already generated for task: {}", task.taskId);
+            return;
+        }
+        
+        // 步骤1: 收集所有节点的公钥贡献
+        List<org.bouncycastle.math.ec.ECPoint> allContributions = new ArrayList<>();
+        
+        // 添加本节点的公钥贡献（实际多项式的常数项验证点）
+        if (!task.verificationPoints.isEmpty()) {
+            allContributions.add(task.verificationPoints.get(0));
+        }
+        
+        // 添加其他节点的公钥贡献
+        for (org.bouncycastle.math.ec.ECPoint contribution : task.receivedPublicKeyContributions.values()) {
+            allContributions.add(contribution);
+        }
+        
+        // 步骤2: 聚合所有公钥贡献生成群公钥
+        if (!allContributions.isEmpty()) {
+            // 初始化群公钥为第一个贡献
+            org.bouncycastle.math.ec.ECPoint groupPublicKeyPoint = allContributions.get(0);
+            
+            // 累加其他贡献
+            for (int i = 1; i < allContributions.size(); i++) {
+                groupPublicKeyPoint = groupPublicKeyPoint.add(allContributions.get(i));
+            }
+            
+            // 步骤3: 将群公钥转换为可存储的格式
+            byte[] groupPublicKeyBytes = groupPublicKeyPoint.getEncoded(false);
+            String groupPublicKey = Base64.getEncoder().encodeToString(groupPublicKeyBytes);
+            
+            // 步骤4: 存储群公钥
+            task.groupPublicKey = groupPublicKey;
+            task.groupPublicKeyGenerated = true; // 标记为已生成
+            logger.info("Generated group public key");
+            
+            // 步骤5: 广播群公钥给其他节点（可选，确保所有节点都获得相同的群公钥）
+            broadcastGroupPublicKey(task.taskId, groupPublicKey);
+        } else {
+            throw new Exception("No public key contributions found to generate group public key");
+        }
+    }
+    
+    /**
+     * 广播群公钥给其他节点
+     */
+    private CompletableFuture<Void> broadcastGroupPublicKey(String taskId, String groupPublicKey) {
+        Map<String, Object> publicKeyData = new HashMap<>();
+        publicKeyData.put("taskId", taskId);
+        publicKeyData.put("groupPublicKey", groupPublicKey);
+        
+        return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.PUBLIC_KEY_PART, publicKeyData))
+            .exceptionally(ex -> {
+                logger.error("Failed to broadcast group public key: {}", ex.getMessage());
+                return null;
+            });
     }
     
     /**

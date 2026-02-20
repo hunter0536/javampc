@@ -1,19 +1,31 @@
 package com.example.mpc.service;
 
 import com.example.mpc.constant.Constants;
+import com.example.mpc.util.ConnectionPool;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class DatabaseService {
     // 数据库连接池
-    private final ConcurrentHashMap<String, Connection> connectionPool = new ConcurrentHashMap<>();
-    private final AtomicInteger activeConnections = new AtomicInteger(0);
-    private final AtomicLong connectionCount = new AtomicLong(0);
+    private final ConnectionPool connectionPool;
     private final AtomicLong statementCount = new AtomicLong(0);
     private final AtomicLong batchStatementCount = new AtomicLong(0);
+    
+    public DatabaseService() {
+        // 初始化连接池
+        this.connectionPool = new ConnectionPool();
+    }
     
     /**
      * 初始化份额数据库
@@ -30,7 +42,9 @@ public class DatabaseService {
         String dbPath = Constants.DATABASES_DIR + File.separator + "share_" + shareIndex + ".db";
         
         // 连接数据库
-        try (Connection conn = getConnection(dbPath)) {
+        Connection conn = null;
+        try {
+            conn = getConnection(dbPath);
             // 创建密钥份额表
             String createTableSql = """
                 CREATE TABLE IF NOT EXISTS key_shares (
@@ -45,6 +59,13 @@ public class DatabaseService {
                 stmt.execute(createTableSql);
                 statementCount.incrementAndGet();
             }
+        } catch (TimeoutException e) {
+            throw new SQLException("Timeout waiting for database connection", e);
+        } finally {
+            // 回收连接
+            if (conn != null) {
+                releaseConnection(conn, dbPath);
+            }
         }
     }
     
@@ -53,17 +74,17 @@ public class DatabaseService {
      * @param dbPath 数据库路径
      * @return 数据库连接
      */
-    private Connection getConnection(String dbPath) throws SQLException {
-        return connectionPool.computeIfAbsent(dbPath, k -> {
-            try {
-                Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath);
-                activeConnections.incrementAndGet();
-                connectionCount.incrementAndGet();
-                return conn;
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
-            }
-        });
+    private Connection getConnection(String dbPath) throws SQLException, TimeoutException {
+        return connectionPool.getConnection(dbPath);
+    }
+    
+    /**
+     * 回收数据库连接
+     * @param conn 数据库连接
+     * @param dbPath 数据库路径
+     */
+    private void releaseConnection(Connection conn, String dbPath) {
+        connectionPool.releaseConnection(conn, dbPath);
     }
     
     /**
@@ -73,7 +94,21 @@ public class DatabaseService {
      */
     public Connection getShareConnection(int shareIndex) throws SQLException {
         String dbPath = Constants.DATABASES_DIR + File.separator + "share_" + shareIndex + ".db";
-        return getConnection(dbPath);
+        try {
+            return getConnection(dbPath);
+        } catch (TimeoutException e) {
+            throw new SQLException("Timeout waiting for database connection", e);
+        }
+    }
+    
+    /**
+     * 回收份额数据库连接
+     * @param conn 数据库连接
+     * @param shareIndex 份额索引
+     */
+    public void releaseShareConnection(Connection conn, int shareIndex) {
+        String dbPath = Constants.DATABASES_DIR + File.separator + "share_" + shareIndex + ".db";
+        releaseConnection(conn, dbPath);
     }
     
     /**
@@ -100,10 +135,28 @@ public class DatabaseService {
     /**
      * 关闭数据库连接
      * @param conn 数据库连接
+     * @param shareIndex 份额索引
      */
-    public void closeConnection(Connection conn) {
-        // 注意：由于使用连接池，这里不关闭连接，而是保持在池中
-        // 实际应用中，应该实现连接池的管理和连接的回收
+    public void closeConnection(Connection conn, int shareIndex) {
+        if (conn != null) {
+            releaseShareConnection(conn, shareIndex);
+        }
+    }
+    
+    /**
+     * 关闭指定数据库的连接池
+     * @param shareIndex 份额索引
+     */
+    public void closePool(int shareIndex) {
+        String dbPath = Constants.DATABASES_DIR + File.separator + "share_" + shareIndex + ".db";
+        connectionPool.closePool(dbPath);
+    }
+    
+    /**
+     * 关闭所有连接池
+     */
+    public void closeAllPools() {
+        connectionPool.closeAllPools();
     }
     
     /**
@@ -112,11 +165,9 @@ public class DatabaseService {
      */
     public Map<String, Object> getDatabaseStats() {
         Map<String, Object> stats = new HashMap<>();
-        stats.put("activeConnections", activeConnections.get());
-        stats.put("connectionCount", connectionCount.get());
-        stats.put("connectionPoolSize", connectionPool.size());
         stats.put("statementCount", statementCount.get());
         stats.put("batchStatementCount", batchStatementCount.get());
+        stats.putAll(connectionPool.getPoolStatus());
         return stats;
     }
 }

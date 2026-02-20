@@ -27,13 +27,13 @@ public class ServerHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
-        allChannels.add(ctx);
+        allChannels.add(ctx.channel());
         logger.info("Channel active: {}", ctx.channel().remoteAddress());
     }
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
-        allChannels.remove(ctx);
+        allChannels.remove(ctx.channel());
         // 清理节点映射
         nodeChannels.entrySet().removeIf(entry -> entry.getValue().equals(ctx));
         logger.info("Channel inactive: {}", ctx.channel().remoteAddress());

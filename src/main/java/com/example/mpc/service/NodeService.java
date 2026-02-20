@@ -6,40 +6,22 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.*;
-import java.net.*;
-import java.util.*;
-import java.util.concurrent.*;
+import java.io.Serializable;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 @Service
 public class NodeService {
     
-    public NodeService() {
-        // 优化线程池配置
-        int availableProcessors = Runtime.getRuntime().availableProcessors();
-        int corePoolSize = availableProcessors;
-        int maxPoolSize = availableProcessors * 2;
-        long keepAliveTime = 60L;
-        BlockingQueue<Runnable> workQueue = new LinkedBlockingQueue<>(1000);
-        ThreadFactory threadFactory = new ThreadFactoryBuilder()
-            .setNameFormat("node-service-%d")
-            .setDaemon(true)
-            .build();
-        RejectedExecutionHandler handler = new ThreadPoolExecutor.CallerRunsPolicy();
-        
-        this.executorService = new ThreadPoolExecutor(
-            corePoolSize,
-            maxPoolSize,
-            keepAliveTime,
-            TimeUnit.SECONDS,
-            workQueue,
-            threadFactory,
-            handler
-        );
-    }
     private static final Logger logger = LoggerFactory.getLogger(NodeService.class);
     
     @Value("${node.id}")
@@ -55,12 +37,11 @@ public class NodeService {
     // 节点发现间隔（毫秒）
     
     // P2P通信
-    private final ExecutorService executorService;
+    private com.example.mpc.service.netty.NettyService nettyService;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong taskCount = new AtomicLong(0);
     private final AtomicLong completedTaskCount = new AtomicLong(0);
     private final AtomicLong totalTaskTime = new AtomicLong(0);
-    private com.example.mpc.service.netty.NettyService nettyService;
     
     // 网络拓扑
     private final ConcurrentHashMap<Integer, NodeInfo> nodes = new ConcurrentHashMap<>();
@@ -114,7 +95,7 @@ public class NodeService {
      * 启动P2P服务器和节点发现
      */
     public CompletableFuture<Void> startP2PServer() {
-        return CompletableFuture.runAsync(() -> {
+        return com.example.mpc.util.ThreadPoolUtil.submitIoTask(() -> {
             if (running.get()) {
                 return;
             }
@@ -134,7 +115,7 @@ public class NodeService {
                 logger.error("Error starting P2P server: {}", e.getMessage());
                 running.set(false);
             }
-        }, executorService);
+        });
     }
     
 
@@ -150,7 +131,7 @@ public class NodeService {
         discoveryRunning.set(true);
         
         // 启动发现服务器
-        executorService.submit(() -> {
+        com.example.mpc.util.ThreadPoolUtil.getIoThreadPool().submit(() -> {
             try (DatagramSocket socket = new DatagramSocket(Constants.DISCOVERY_PORT)) {
                 byte[] buffer = new byte[1024];
                 while (discoveryRunning.get()) {
@@ -167,7 +148,7 @@ public class NodeService {
         });
         
         // 启动发现客户端
-        executorService.submit(() -> {
+        com.example.mpc.util.ThreadPoolUtil.getIoThreadPool().submit(() -> {
             try (DatagramSocket socket = new DatagramSocket()) {
                 socket.setBroadcast(true);
                 while (discoveryRunning.get()) {
@@ -225,16 +206,14 @@ public class NodeService {
      * 停止P2P服务器
      */
     public CompletableFuture<Void> stopP2PServer() {
-        return CompletableFuture.runAsync(() -> {
+        return com.example.mpc.util.ThreadPoolUtil.submitIoTask(() -> {
             running.set(false);
             discoveryRunning.set(false);
             
             if (nettyService != null) {
                 nettyService.shutdown();
             }
-            
-            executorService.shutdown();
-        }, executorService);
+        });
     }
     
 
@@ -243,7 +222,7 @@ public class NodeService {
      * 发送消息到指定节点
      */
     public CompletableFuture<Void> sendMessage(int receiverId, Message message) {
-        return CompletableFuture.runAsync(() -> {
+        return com.example.mpc.util.ThreadPoolUtil.submitIoTask(() -> {
             NodeInfo nodeInfo = nodes.get(receiverId);
             if (nodeInfo == null) {
                 throw new RuntimeException("Node " + receiverId + " not found in network");
@@ -263,7 +242,7 @@ public class NodeService {
                 nodes.remove(receiverId);
                 throw new RuntimeException(e);
             }
-        }, executorService);
+        });
     }
     
     /**
@@ -321,7 +300,7 @@ public class NodeService {
      * @throws InterruptedException 中断异常
      */
     public CompletableFuture<Void> waitForNetworkReady() {
-        return CompletableFuture.runAsync(() -> {
+        return com.example.mpc.util.ThreadPoolUtil.submitIoTask(() -> {
             try {
                 while (nodes.size() < nodesCount - 1) {
                     logger.info("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
@@ -332,7 +311,7 @@ public class NodeService {
                 Thread.currentThread().interrupt();
                 throw new RuntimeException(e);
             }
-        }, executorService);
+        });
     }
     
     /**
@@ -348,15 +327,9 @@ public class NodeService {
      * @return 线程池状态信息
      */
     public Map<String, Object> getThreadPoolStatus() {
-        ThreadPoolExecutor threadPool = (ThreadPoolExecutor) executorService;
         Map<String, Object> status = new HashMap<>();
-        status.put("corePoolSize", threadPool.getCorePoolSize());
-        status.put("maxPoolSize", threadPool.getMaximumPoolSize());
-        status.put("activeCount", threadPool.getActiveCount());
-        status.put("poolSize", threadPool.getPoolSize());
-        status.put("queueSize", threadPool.getQueue().size());
-        status.put("completedTaskCount", threadPool.getCompletedTaskCount());
         status.put("taskCount", taskCount.get());
+        status.put("completedTaskCount", completedTaskCount.get());
         status.put("totalTaskTime", totalTaskTime.get() + "ms");
         if (completedTaskCount.get() > 0) {
             status.put("averageTaskTime", totalTaskTime.get() / completedTaskCount.get() + "ms");
@@ -372,7 +345,7 @@ public class NodeService {
         long startTime = System.currentTimeMillis();
         taskCount.incrementAndGet();
         
-        executorService.submit(() -> {
+        com.example.mpc.util.ThreadPoolUtil.getIoThreadPool().submit(() -> {
             try {
                 task.run();
             } finally {

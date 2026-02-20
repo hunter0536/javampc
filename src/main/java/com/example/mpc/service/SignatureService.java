@@ -1,8 +1,7 @@
 package com.example.mpc.service;
 
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.TaskStatus;
-import com.example.mpc.model.KeyShare;
+import com.example.mpc.model.SignatureTask;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,10 +12,16 @@ import org.springframework.stereotype.Service;
 import java.math.BigInteger;
 import java.security.*;
 import java.security.spec.ECGenParameterSpec;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class SignatureService implements NodeService.MessageHandler {
@@ -31,6 +36,9 @@ public class SignatureService implements NodeService.MessageHandler {
     @Value("${node.id}")
     private int nodeId;
     
+    @Value("${nodes.count}")
+    private int nodesCount;
+    
     static {
         Security.addProvider(new BouncyCastleProvider());
     }
@@ -39,60 +47,7 @@ public class SignatureService implements NodeService.MessageHandler {
     // 分布式签名阈值
     
     // 签名任务管理
-    public static class SignatureTask {
-        public final String taskId;
-        public final String message;
-        public final String dkgTaskId;
-        public final AtomicReference<TaskStatus> status;
-        public String signature;
-        public boolean verified;
-        public final CountDownLatch commitmentsReceivedLatch;
-        public final CountDownLatch sharesReceivedLatch;
-        public final ConcurrentHashMap<Integer, org.bouncycastle.math.ec.ECPoint> receivedCommitments;
-        public final ConcurrentHashMap<Integer, BigInteger> receivedSignatureShares;
-        public BigInteger k_i; // 本地随机数
-        public org.bouncycastle.math.ec.ECPoint R_i; // 本地临时公钥
-        public org.bouncycastle.math.ec.ECPoint R; // 全局临时公钥
-        public long createdAt;
-        
-        public SignatureTask(String taskId, String message, String dkgTaskId) {
-            this.taskId = taskId;
-            this.message = message;
-            this.dkgTaskId = dkgTaskId;
-            this.status = new AtomicReference<>(TaskStatus.IDLE);
-            this.signature = null;
-            this.verified = false;
-            this.commitmentsReceivedLatch = new CountDownLatch(5 - 1); // 假设总共有5个节点
-            this.sharesReceivedLatch = new CountDownLatch(5 - 1); // 假设总共有5个节点
-            this.receivedCommitments = new ConcurrentHashMap<>();
-            this.receivedSignatureShares = new ConcurrentHashMap<>();
-            this.k_i = null;
-            this.R_i = null;
-            this.R = null;
-            this.createdAt = System.currentTimeMillis();
-        }
-        
-        // 状态转换方法
-        public boolean start() {
-            return status.compareAndSet(TaskStatus.IDLE, TaskStatus.IN_PROGRESS);
-        }
-        
-        public void complete() {
-            status.set(TaskStatus.COMPLETED);
-        }
-        
-        public void fail() {
-            status.set(TaskStatus.FAILED);
-        }
-        
-        public boolean isCompleted() {
-            return status.get() == TaskStatus.COMPLETED;
-        }
-        
-        public boolean isInProgress() {
-            return status.get() == TaskStatus.IN_PROGRESS;
-        }
-    }
+
     
     private final ConcurrentHashMap<String, SignatureTask> signatureTasks = new ConcurrentHashMap<>();
     private final AtomicBoolean signatureInProgress = new AtomicBoolean(false);
@@ -105,122 +60,27 @@ public class SignatureService implements NodeService.MessageHandler {
     
     /**
      * 初始化签名服务
+     * @param nodesCount 节点总数
      */
-    public CompletableFuture<Void> init() {
+    public CompletableFuture<Void> init(int nodesCount) {
         return CompletableFuture.runAsync(() -> {
             try {
                 // 注册消息处理器
-                for (int i = 1; i <= 5; i++) { // 假设总共有5个节点
+                for (int i = 1; i <= nodesCount; i++) {
                     if (i != nodeId) {
                         nodeService.registerMessageHandler(i, this);
                     }
                 }
                 
-                logger.info("Signature service initialized successfully for node {}", nodeId);
+                logger.info("Signature service initialized successfully for node {} with {} total nodes", nodeId, nodesCount);
             } catch (Exception e) {
                 e.printStackTrace();
                 throw new RuntimeException(e);
             }
-        }, Executors.newSingleThreadExecutor());
+        }, com.example.mpc.util.ThreadPoolUtil.getSingleThreadPool());
     }
     
-    /**
-     * 使用分布式密钥签名数据（不重构私钥，使用分布式签名）
-     * @param walletId 钱包ID
-     * @param data 要签名的数据
-     * @return 签名结果
-     */
-    public CompletableFuture<String> sign(Long walletId, String data) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                // 从本节点加载密钥份额
-                KeyShare keyShare = dkgService.loadKeyShare(walletId).join();
-                if (keyShare == null) {
-                    throw new Exception("Key share not found for wallet " + walletId);
-                }
-                
-                // 直接使用本节点的密钥份额进行签名（简化实现）
-                // 注意：实际实现中，这里需要使用分布式签名算法，如Gennaro等人的方案
-                // 这里简化处理，使用密钥份额作为私钥进行签名
-                BigInteger keyShareInt = new BigInteger(Base64.getDecoder().decode(keyShare.getKeyShare()));
-                
-                // 生成ECDSA签名
-                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-                ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-                keyPairGenerator.initialize(ecSpec);
-                KeyPair keyPair = keyPairGenerator.generateKeyPair();
-                
-                // 创建临时私钥对象
-                org.bouncycastle.jce.interfaces.ECPrivateKey privateKey = (org.bouncycastle.jce.interfaces.ECPrivateKey) keyPair.getPrivate();
-                org.bouncycastle.jce.spec.ECPrivateKeySpec privateKeySpec = new org.bouncycastle.jce.spec.ECPrivateKeySpec(
-                        keyShareInt,
-                        privateKey.getParameters()
-                );
-                KeyFactory keyFactory = KeyFactory.getInstance("EC", "BC");
-                PrivateKey tempPrivateKey = keyFactory.generatePrivate(privateKeySpec);
-                
-                // 签名数据
-                Signature signature = Signature.getInstance("SHA256withECDSA", "BC");
-                signature.initSign(tempPrivateKey);
-                signature.update(data.getBytes());
-                byte[] signatureBytes = signature.sign();
-                
-                return Base64.getEncoder().encodeToString(signatureBytes);
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            }
-        }, Executors.newSingleThreadExecutor());
-    }
-    
-    /**
-     * 根据任务ID签名数据（不重构私钥，使用分布式签名）
-     * @param taskId 任务ID
-     * @param data 要签名的数据
-     * @return 签名结果
-     */
-    public CompletableFuture<String> signByTaskId(String taskId, String data) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                // 从本节点加载密钥份额
-                KeyShare keyShare = dkgService.loadKeyShare(1L).join();
-                if (keyShare == null) {
-                    throw new Exception("Key share not found");
-                }
-                
-                // 直接使用本节点的密钥份额进行签名（简化实现）
-                // 注意：实际实现中，这里需要使用分布式签名算法，如Gennaro等人的方案
-                // 这里简化处理，使用密钥份额作为私钥进行签名
-                BigInteger keyShareInt = new BigInteger(Base64.getDecoder().decode(keyShare.getKeyShare()));
-                
-                // 生成ECDSA签名
-                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-                ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-                keyPairGenerator.initialize(ecSpec);
-                KeyPair keyPair = keyPairGenerator.generateKeyPair();
-                
-                // 创建临时私钥对象
-                org.bouncycastle.jce.interfaces.ECPrivateKey privateKey = (org.bouncycastle.jce.interfaces.ECPrivateKey) keyPair.getPrivate();
-                org.bouncycastle.jce.spec.ECPrivateKeySpec privateKeySpec = new org.bouncycastle.jce.spec.ECPrivateKeySpec(
-                        keyShareInt,
-                        privateKey.getParameters()
-                );
-                KeyFactory keyFactory = KeyFactory.getInstance("EC", "BC");
-                PrivateKey tempPrivateKey = keyFactory.generatePrivate(privateKeySpec);
-                
-                // 签名数据
-                Signature signature = Signature.getInstance("SHA256withECDSA", "BC");
-                signature.initSign(tempPrivateKey);
-                signature.update(data.getBytes());
-                byte[] signatureBytes = signature.sign();
-                
-                return Base64.getEncoder().encodeToString(signatureBytes);
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            }
-        }, Executors.newSingleThreadExecutor());
-    }
+
     
     /**
      * 验证签名
@@ -286,7 +146,7 @@ public class SignatureService implements NodeService.MessageHandler {
      */
     public String createSignatureTask(String dkgTaskId, String message) {
         String taskId = UUID.randomUUID().toString();
-        SignatureTask task = new SignatureTask(taskId, message, dkgTaskId);
+        SignatureTask task = new SignatureTask(taskId, message, dkgTaskId, nodesCount);
         signatureTasks.put(taskId, task);
         return taskId;
     }
@@ -325,7 +185,7 @@ public class SignatureService implements NodeService.MessageHandler {
             
             // 3. 广播临时公钥Ri给其他节点
             return broadcastCommitment(taskId, task.R_i)
-                .thenRun(() -> {
+                .thenCompose(v -> {
                     try {
                         // 4. 等待接收其他节点的临时公钥
                         if (!task.commitmentsReceivedLatch.await(60, TimeUnit.SECONDS)) {
@@ -686,65 +546,7 @@ public class SignatureService implements NodeService.MessageHandler {
         });
     }
     
-    /**
-     * 获取加密操作统计信息
-     * @return 加密操作统计
-     */
-    public Map<String, Object> getCryptoStats() {
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("cryptoOperationCount", cryptoOperationCount.get());
-        stats.put("cachedCryptoOperationCount", cachedCryptoOperationCount.get());
-        stats.put("cacheSize", cryptoCache.size());
-        if (cryptoOperationCount.get() > 0) {
-            stats.put("cacheHitRate", (double) cachedCryptoOperationCount.get() / cryptoOperationCount.get());
-        }
-        return stats;
-    }
-    
-    /**
-     * 清理已完成的任务，释放内存
-     */
-    public void cleanupCompletedTasks() {
-        List<String> completedTaskIds = new ArrayList<>();
-        long currentTime = System.currentTimeMillis();
-        
-        for (Map.Entry<String, SignatureTask> entry : signatureTasks.entrySet()) {
-            SignatureTask task = entry.getValue();
-            // 清理已完成且超过1小时的任务
-            if (task.isCompleted() && (currentTime - task.createdAt) > 3600000) {
-                completedTaskIds.add(entry.getKey());
-            }
-        }
-        
-        // 执行清理
-        for (String taskId : completedTaskIds) {
-            signatureTasks.remove(taskId);
-            logger.info("Cleaned up completed task: {}", taskId);
-        }
-        
-        if (!completedTaskIds.isEmpty()) {
-            logger.info("Cleaned up {} completed tasks", completedTaskIds.size());
-        }
-    }
-    
-    /**
-     * 获取缓存统计信息
-     * @return 缓存统计数据
-     */
-    public Map<String, Object> getCacheStats() {
-        long hits = cacheHits.get();
-        long misses = cacheMisses.get();
-        long total = hits + misses;
-        double hitRate = total > 0 ? (double) hits / total : 0.0;
-        
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("cacheSize", signatureTasks.size());
-        stats.put("cacheHits", hits);
-        stats.put("cacheMisses", misses);
-        stats.put("hitRate", String.format("%.2f%%", hitRate * 100));
-        stats.put("totalRequests", total);
-        return stats;
-    }
+
     
     /**
      * 获取签名任务（带缓存统计）

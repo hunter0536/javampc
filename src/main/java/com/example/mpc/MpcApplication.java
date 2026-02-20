@@ -1,6 +1,7 @@
 package com.example.mpc;
 
 import com.example.mpc.service.DkgService;
+import com.example.mpc.service.SignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,8 +18,14 @@ public class MpcApplication implements CommandLineRunner {
     @Autowired
     private DkgService dkgService;
     
+    @Autowired
+    private SignatureService signatureService;
+    
     @Value("${node.id}")
     private int nodeId;
+    
+    @Value("${nodes.count}")
+    private int nodesCount;
 
     public static void main(String[] args) {
         SpringApplication.run(MpcApplication.class, args);
@@ -26,8 +33,18 @@ public class MpcApplication implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        logger.info("Initializing DKG service for node {}...", nodeId);
+        logger.info("Initializing services for node {}...", nodeId);
+        
+        // 初始化DKG服务
+        logger.info("Initializing DKG service...");
         dkgService.init().join();
-        logger.info("DKG service initialized successfully for node {}", nodeId);
+        logger.info("DKG service initialized successfully");
+        
+        // 初始化签名服务
+        logger.info("Initializing Signature service...");
+        signatureService.init(nodesCount).join();
+        logger.info("Signature service initialized successfully");
+        
+        logger.info("All services initialized successfully for node {}", nodeId);
     }
 }
