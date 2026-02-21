@@ -23,6 +23,7 @@ public class SignatureTask {
     public final CountDownLatch commitmentsReceivedLatch;
     public final CountDownLatch sharesReceivedLatch;
     public final AtomicReference<TaskStatus> status = new AtomicReference<>(TaskStatus.PENDING);
+    public volatile String errorMessage;
 
     public SignatureTask(String taskId, String message, String groupPublicKey, int nodesCount) {
         this.taskId = taskId;
@@ -42,6 +43,11 @@ public class SignatureTask {
     }
 
     public void fail() {
+        status.set(TaskStatus.FAILED);
+    }
+
+    public void fail(String errorMessage) {
+        this.errorMessage = errorMessage;
         status.set(TaskStatus.FAILED);
     }
 

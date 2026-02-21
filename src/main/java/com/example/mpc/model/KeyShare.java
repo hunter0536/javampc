@@ -2,24 +2,27 @@ package com.example.mpc.model;
 
 public class KeyShare {
     private Long id;
-    private Long walletId;
     private Integer shareIndex;
     private String keyShare;
+    private String groupPublicKey;
+    private String dkgTaskId;
 
     public KeyShare() {
     }
 
-    public KeyShare(Long walletId, Integer shareIndex, String keyShare) {
-        this.walletId = walletId;
+    public KeyShare(Integer shareIndex, String keyShare, String groupPublicKey, String dkgTaskId) {
         this.shareIndex = shareIndex;
         this.keyShare = keyShare;
+        this.groupPublicKey = groupPublicKey;
+        this.dkgTaskId = dkgTaskId;
     }
 
-    public KeyShare(Long id, Long walletId, Integer shareIndex, String keyShare) {
+    public KeyShare(Long id, Integer shareIndex, String keyShare, String groupPublicKey, String dkgTaskId) {
         this.id = id;
-        this.walletId = walletId;
         this.shareIndex = shareIndex;
         this.keyShare = keyShare;
+        this.groupPublicKey = groupPublicKey;
+        this.dkgTaskId = dkgTaskId;
     }
 
     public Long getId() {
@@ -28,14 +31,6 @@ public class KeyShare {
 
     public void setId(Long id) {
         this.id = id;
-    }
-
-    public Long getWalletId() {
-        return walletId;
-    }
-
-    public void setWalletId(Long walletId) {
-        this.walletId = walletId;
     }
 
     public Integer getShareIndex() {
@@ -52,5 +47,21 @@ public class KeyShare {
 
     public void setKeyShare(String keyShare) {
         this.keyShare = keyShare;
+    }
+
+    public String getGroupPublicKey() {
+        return groupPublicKey;
+    }
+
+    public void setGroupPublicKey(String groupPublicKey) {
+        this.groupPublicKey = groupPublicKey;
+    }
+
+    public String getDkgTaskId() {
+        return dkgTaskId;
+    }
+
+    public void setDkgTaskId(String dkgTaskId) {
+        this.dkgTaskId = dkgTaskId;
     }
 }

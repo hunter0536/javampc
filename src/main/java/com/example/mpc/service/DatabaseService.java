@@ -478,15 +478,18 @@ public class DatabaseService {
             String createTableSql = """
                 CREATE TABLE IF NOT EXISTS key_shares (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    wallet_id INTEGER NOT NULL,
                     share_index INTEGER NOT NULL,
-                    key_share TEXT NOT NULL
+                    key_share TEXT NOT NULL,
+                    group_public_key TEXT NOT NULL,
+                    dkg_task_id TEXT NOT NULL
                 )
                 """;
             
             try (Statement stmt = conn.createStatement()) {
                 stmt.execute(createTableSql);
                 statementCount.incrementAndGet();
+                ensureKeyShareColumn(stmt, "group_public_key", "TEXT");
+                ensureKeyShareColumn(stmt, "dkg_task_id", "TEXT");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -496,6 +499,27 @@ public class DatabaseService {
             if (conn != null) {
                 releaseConnection(conn, dbPath);
             }
+        }
+    }
+
+    private void ensureKeyShareColumn(Statement stmt, String columnName, String columnType) {
+        try {
+            boolean exists = false;
+            try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(key_shares)")) {
+                while (rs.next()) {
+                    String name = rs.getString("name");
+                    if (columnName.equalsIgnoreCase(name)) {
+                        exists = true;
+                        break;
+                    }
+                }
+            }
+            if (!exists) {
+                stmt.execute("ALTER TABLE key_shares ADD COLUMN " + columnName + " " + columnType);
+                statementCount.incrementAndGet();
+            }
+        } catch (SQLException e) {
+            // Ignore migration errors to avoid breaking startup on existing DBs.
         }
     }
     

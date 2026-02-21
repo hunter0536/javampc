@@ -431,7 +431,7 @@ public class DkgService implements NodeService.MessageHandler {
                 
                 // 保存密钥份额到本节点数据库
                 String shareBase64 = Base64.getEncoder().encodeToString(task.finalKeyShare.toByteArray());
-                KeyShare keyShare = new KeyShare(1L, nodeId, shareBase64); // 使用固定的walletId=1
+                KeyShare keyShare = new KeyShare(nodeId, shareBase64, task.groupPublicKey, task.taskId);
                 saveKeyShareToDatabase(keyShare);
                 
                 logger.info("DKG process completed successfully for task: {}", taskId);
@@ -710,20 +710,44 @@ public class DkgService implements NodeService.MessageHandler {
      * @throws SQLException 异常
      */
     private void saveKeyShareToDatabase(KeyShare keyShare) throws SQLException {
-        String insertSql = "INSERT INTO key_shares (wallet_id, share_index, key_share) VALUES (?, ?, ?)";
+        String insertSql;
         String selectSql = "SELECT last_insert_rowid()";
-        
+
         Connection conn = null;
         PreparedStatement insertStmt = null;
         PreparedStatement selectStmt = null;
         try {
+            boolean hasWalletId = false;
+            try (var metaConn = databaseService.getShareConnection(keyShare.getShareIndex());
+                 var metaStmt = metaConn.createStatement();
+                 var rs = metaStmt.executeQuery("PRAGMA table_info(key_shares)")) {
+                while (rs.next()) {
+                    String name = rs.getString("name");
+                    if ("wallet_id".equalsIgnoreCase(name)) {
+                        hasWalletId = true;
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                hasWalletId = false;
+            }
+
+            insertSql = hasWalletId
+                ? "INSERT INTO key_shares (wallet_id, share_index, key_share, group_public_key, dkg_task_id) VALUES (?, ?, ?, ?, ?)"
+                : "INSERT INTO key_shares (share_index, key_share, group_public_key, dkg_task_id) VALUES (?, ?, ?, ?)";
+
             conn = databaseService.getShareConnection(keyShare.getShareIndex());
             insertStmt = conn.prepareStatement(insertSql);
             selectStmt = conn.prepareStatement(selectSql);
-            
-            insertStmt.setLong(1, keyShare.getWalletId());
-            insertStmt.setInt(2, keyShare.getShareIndex());
-            insertStmt.setString(3, keyShare.getKeyShare());
+
+            int index = 1;
+            if (hasWalletId) {
+                insertStmt.setInt(index++, 0);
+            }
+            insertStmt.setInt(index++, keyShare.getShareIndex());
+            insertStmt.setString(index++, keyShare.getKeyShare());
+            insertStmt.setString(index++, keyShare.getGroupPublicKey());
+            insertStmt.setString(index, keyShare.getDkgTaskId());
             insertStmt.executeUpdate();
             
             // 获取生成的ID
@@ -756,26 +780,27 @@ public class DkgService implements NodeService.MessageHandler {
     
     /**
      * 从本节点数据库加载密钥份额
-     * @param walletId 钱包ID
+     * @param groupPublicKey 群公钥
      * @return 密钥份额
      * @throws SQLException 异常
      */
-    public CompletableFuture<KeyShare> loadKeyShare(Long walletId) {
+    public CompletableFuture<KeyShare> loadKeyShareByGroupPublicKey(String groupPublicKey) {
         return CompletableFuture.supplyAsync(() -> {
             Connection conn = null;
             PreparedStatement pstmt = null;
             try {
-                String sql = "SELECT id, wallet_id, share_index, key_share FROM key_shares WHERE wallet_id = ?";
+                String sql = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares WHERE group_public_key = ? ORDER BY id DESC LIMIT 1";
                 conn = databaseService.getShareConnection(nodeId);
                 pstmt = conn.prepareStatement(sql);
-                pstmt.setLong(1, walletId);
+                pstmt.setString(1, groupPublicKey);
                 var rs = pstmt.executeQuery();
                 if (rs.next()) {
                     KeyShare keyShare = new KeyShare();
                     keyShare.setId(rs.getLong("id"));
-                    keyShare.setWalletId(rs.getLong("wallet_id"));
                     keyShare.setShareIndex(rs.getInt("share_index"));
                     keyShare.setKeyShare(rs.getString("key_share"));
+                    keyShare.setGroupPublicKey(rs.getString("group_public_key"));
+                    keyShare.setDkgTaskId(rs.getString("dkg_task_id"));
                     return keyShare;
                 }
                 return null;
@@ -794,6 +819,50 @@ public class DkgService implements NodeService.MessageHandler {
                 // 回收连接
                 if (conn != null) {
                     databaseService.releaseShareConnection(conn, nodeId);
+                }
+            }
+        }, ThreadPoolUtil.getComputationThreadPool());
+    }
+    
+    /**
+     * 从指定节点的数据库加载密钥份额
+     * @param shareIndex 节点份额索引
+     * @param groupPublicKey 群公钥
+     * @return 密钥份额
+     */
+    public CompletableFuture<KeyShare> loadKeyShareByIndexAndGroupPublicKey(int shareIndex, String groupPublicKey) {
+        return CompletableFuture.supplyAsync(() -> {
+            Connection conn = null;
+            PreparedStatement pstmt = null;
+            try {
+                String sql = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares WHERE group_public_key = ? ORDER BY id DESC LIMIT 1";
+                conn = databaseService.getShareConnection(shareIndex);
+                pstmt = conn.prepareStatement(sql);
+                pstmt.setString(1, groupPublicKey);
+                var rs = pstmt.executeQuery();
+                if (rs.next()) {
+                    KeyShare keyShare = new KeyShare();
+                    keyShare.setId(rs.getLong("id"));
+                    keyShare.setShareIndex(rs.getInt("share_index"));
+                    keyShare.setKeyShare(rs.getString("key_share"));
+                    keyShare.setGroupPublicKey(rs.getString("group_public_key"));
+                    keyShare.setDkgTaskId(rs.getString("dkg_task_id"));
+                    return keyShare;
+                }
+                return null;
+            } catch (Exception e) {
+                e.printStackTrace();
+                throw new RuntimeException(e);
+            } finally {
+                if (pstmt != null) {
+                    try {
+                        pstmt.close();
+                    } catch (SQLException e) {
+                        logger.error("Error closing statement: {}", e.getMessage());
+                    }
+                }
+                if (conn != null) {
+                    databaseService.releaseShareConnection(conn, shareIndex);
                 }
             }
         }, ThreadPoolUtil.getComputationThreadPool());

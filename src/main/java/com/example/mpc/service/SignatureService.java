@@ -228,6 +228,7 @@ public class SignatureService implements NodeService.MessageHandler {
             
             // 2. 计算临时公钥Ri = ki * G
             task.R_i = generateCommitment(task.k_i);
+            task.receivedCommitments.put(nodeId, task.R_i);
             
             // 3. 广播临时公钥Ri给其他节点
             return broadcastCommitment(taskId, task.R_i)
@@ -247,8 +248,9 @@ public class SignatureService implements NodeService.MessageHandler {
                         BigInteger h = new BigInteger(1, messageHash);
                         
                         // 7. 生成签名份额σi = ki + si * h
-                return generateSignatureShareCGGMP(task.k_i, h)
+                return generateSignatureShareCGGMP(task, task.k_i, h)
                     .thenCompose(signatureShare -> {
+                        task.receivedSignatureShares.put(nodeId, signatureShare);
                         // 8. 广播签名份额给其他节点
                         return broadcastSignatureShare(taskId, signatureShare);
                     })
@@ -277,33 +279,33 @@ public class SignatureService implements NodeService.MessageHandler {
                                         })
                                         .exceptionally(ex -> {
                                             logger.error("Failed to verify signature: {}", ex.getMessage());
-                                            task.fail();
+                                            task.fail(ex.getMessage());
                                             signatureInProgress.set(false);
                                             return null;
                                         });
                                 } catch (Exception e) {
                                     logger.error("Error in signature process: {}", e.getMessage());
-                                    task.fail();
+                                    task.fail(e.getMessage());
                                     signatureInProgress.set(false);
                                     throw new RuntimeException(e);
                                 }
                             });
                     } catch (Exception e) {
                         logger.error("Error in signature process: {}", e.getMessage());
-                        task.fail();
+                        task.fail(e.getMessage());
                         signatureInProgress.set(false);
                         throw new RuntimeException(e);
                     }
                 })
                 .exceptionally(ex -> {
                     logger.error("Error in signature process: {}", ex.getMessage());
-                    task.fail();
+                    task.fail(ex.getMessage());
                     signatureInProgress.set(false);
                     return null;
                 });
         } catch (Exception e) {
             logger.error("Error starting signature process: {}", e.getMessage());
-            task.fail();
+            task.fail(e.getMessage());
             signatureInProgress.set(false);
             return CompletableFuture.failedFuture(e);
         }
@@ -327,6 +329,9 @@ public class SignatureService implements NodeService.MessageHandler {
         status.put("completed", task.isCompleted());
         status.put("status", task.status.get().name());
         status.put("message", task.message);
+        status.put("errorMessage", task.errorMessage);
+        status.put("receivedCommitments", task.receivedCommitments.size());
+        status.put("receivedSignatureShares", task.receivedSignatureShares.size());
         return status;
     }
     
@@ -475,7 +480,7 @@ public class SignatureService implements NodeService.MessageHandler {
         for (ECPoint R_i : task.receivedCommitments.values()) {
             globalR = globalR.add(R_i);
         }
-        return globalR;
+        return globalR.normalize();
     }
     
     /**
@@ -486,7 +491,8 @@ public class SignatureService implements NodeService.MessageHandler {
      */
     private byte[] calculateMessageHash(String message, ECPoint R) throws Exception {
         // 序列化 R 的 x 坐标
-        byte[] RxBytes = R.getAffineXCoord().getEncoded();
+        ECPoint normalized = R.normalize();
+        byte[] RxBytes = normalized.getAffineXCoord().getEncoded();
         // 构建哈希输入: message || Rx
         byte[] messageBytes = message.getBytes();
         byte[] input = new byte[messageBytes.length + RxBytes.length];
@@ -502,9 +508,9 @@ public class SignatureService implements NodeService.MessageHandler {
      * @param h 消息哈希
      * @return 签名份额 BigInteger
      */
-    private CompletableFuture<BigInteger> generateSignatureShareCGGMP(BigInteger k_i, BigInteger h) {
-        // 加载密钥份额
-        return dkgService.loadKeyShare(1L)
+    private CompletableFuture<BigInteger> generateSignatureShareCGGMP(SignatureTask task, BigInteger k_i, BigInteger h) {
+        // 加载密钥份额（按群公钥）
+        return dkgService.loadKeyShareByGroupPublicKey(task.groupPublicKey)
             .thenApply(keyShare -> {
                 if (keyShare == null) {
                     throw new RuntimeException("Key share not found");
@@ -523,6 +529,7 @@ public class SignatureService implements NodeService.MessageHandler {
                 throw new RuntimeException(ex);
             });
     }
+
     
     /**
      * 组合 CGMMP 签名份额
@@ -545,7 +552,8 @@ public class SignatureService implements NodeService.MessageHandler {
      */
     private String convertToECDSASignature(ECPoint R, BigInteger sigma) throws Exception {
         // 获取 R 的 x 坐标作为 r
-        BigInteger r = R.getAffineXCoord().toBigInteger().mod(getCurveOrder());
+        ECPoint normalized = R.normalize();
+        BigInteger r = normalized.getAffineXCoord().toBigInteger().mod(getCurveOrder());
         // 计算 s = sigma * r^{-1} mod n
         BigInteger s = sigma.multiply(r.modInverse(getCurveOrder())).mod(getCurveOrder());
         // 使用DER编码的ECDSA签名格式
