@@ -1,5 +1,6 @@
 package com.example.mpc;
 
+import com.example.mpc.constant.Constants;
 import com.example.mpc.service.DkgService;
 import com.example.mpc.service.SignatureService;
 import org.slf4j.Logger;
@@ -24,8 +25,8 @@ public class MpcApplication implements CommandLineRunner {
     @Value("${node.id}")
     private int nodeId;
     
-    @Value("${nodes.count}")
-    private int nodesCount;
+    // 使用Constants中的常量
+    private final int nodesCount = Constants.NODES_COUNT;
 
     public static void main(String[] args) {
         SpringApplication.run(MpcApplication.class, args);

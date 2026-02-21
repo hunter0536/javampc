@@ -2,83 +2,76 @@ package com.example.mpc.service.netty;
 
 import com.example.mpc.service.NodeService;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
-import io.netty.channel.group.ChannelGroup;
-import io.netty.channel.group.DefaultChannelGroup;
-import io.netty.util.concurrent.GlobalEventExecutor;
+import io.netty.channel.SimpleChannelInboundHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 
-/**
- * 服务器端处理器
- */
-public class ServerHandler extends ChannelInboundHandlerAdapter {
+public class ServerHandler extends SimpleChannelInboundHandler<NodeService.Message> {
     private static final Logger logger = LoggerFactory.getLogger(ServerHandler.class);
-    private final Map<Integer, NodeService.MessageHandler> messageHandlers;
-    private final Map<Integer, ChannelHandlerContext> nodeChannels = new ConcurrentHashMap<>();
-    private final ChannelGroup allChannels = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
-
-    public ServerHandler(Map<Integer, NodeService.MessageHandler> messageHandlers) {
+    
+    private final NettyService nettyService;
+    private final Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers;
+    
+    public ServerHandler(NettyService nettyService, Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers) {
+        this.nettyService = nettyService;
         this.messageHandlers = messageHandlers;
     }
-
+    
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
-        allChannels.add(ctx.channel());
-        logger.info("Channel active: {}", ctx.channel().remoteAddress());
+        logger.info("Client connected: {}", ctx.channel().remoteAddress());
     }
-
+    
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
-        allChannels.remove(ctx.channel());
-        // 清理节点映射
-        nodeChannels.entrySet().removeIf(entry -> entry.getValue().equals(ctx));
-        logger.info("Channel inactive: {}", ctx.channel().remoteAddress());
+        logger.info("Client disconnected: {}", ctx.channel().remoteAddress());
     }
-
+    
     @Override
-    public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        if (msg instanceof NodeService.Message) {
-            NodeService.Message message = (NodeService.Message) msg;
-            logger.info("Received message from node {}: {}", message.senderId, message.type);
+    protected void channelRead0(ChannelHandlerContext ctx, NodeService.Message message) {
+        logger.info("Received message from node {}: {}", message.senderId, message.type);
+        if (message.data instanceof java.util.Map) {
+            Object taskId = ((java.util.Map<?, ?>) message.data).get("taskId");
+            if (taskId != null) {
+                logger.info("Message taskId: {}", taskId);
+            }
+        }
 
-            // 注册节点通道映射
-            nodeChannels.put(message.senderId, ctx);
+        // 处理消息：先分发给senderId注册的处理器，再分发给全局(-1)处理器
+        var combinedHandlers = new java.util.LinkedHashSet<NodeService.MessageHandler>();
+        var senderHandlers = messageHandlers.get(message.senderId);
+        if (senderHandlers != null) {
+            combinedHandlers.addAll(senderHandlers);
+        }
+        var globalHandlers = messageHandlers.get(-1);
+        if (globalHandlers != null) {
+            combinedHandlers.addAll(globalHandlers);
+        }
+        if (combinedHandlers.isEmpty()) {
+            logger.warn("No handlers registered for message from node {} (keys={})", message.senderId, messageHandlers.keySet());
+            return;
+        }
 
-            // 处理消息
-            NodeService.MessageHandler handler = messageHandlers.get(message.senderId);
-            if (handler != null) {
-                try {
-                    handler.handleMessage(message.senderId, message);
-                } catch (Exception e) {
-                    logger.error("Error handling message: {}", e.getMessage());
-                }
-            } else {
-                logger.warn("No handler found for node {}", message.senderId);
+        for (NodeService.MessageHandler handler : combinedHandlers) {
+            try {
+                CompletableFuture<Void> future = handler.handleMessage(message.senderId, message);
+                future.thenAccept(v -> logger.debug("Message handled successfully"))
+                    .exceptionally(ex -> {
+                        logger.error("Error handling message: {}", ex.getMessage());
+                        return null;
+                    });
+            } catch (Exception e) {
+                logger.error("Error handling message: {}", e.getMessage());
             }
         }
     }
-
+    
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        logger.error("Exception caught: {}", cause.getMessage());
+        logger.error("Exception in server handler: {}", cause.getMessage());
         ctx.close();
-    }
-
-    /**
-     * 获取节点通道
-     */
-    public ChannelHandlerContext getNodeChannel(int nodeId) {
-        return nodeChannels.get(nodeId);
-    }
-
-    /**
-     * 获取所有通道
-     */
-    public ChannelGroup getAllChannels() {
-        return allChannels;
     }
 }

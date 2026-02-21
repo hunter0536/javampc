@@ -159,7 +159,7 @@ mpc/
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/dkg/start" -H "Content-Type: application/json"
+curl -X POST "http://localhost:8081/api/dkg/start"
 ```
 
 **响应示例**
@@ -183,7 +183,7 @@ curl -X POST "http://localhost:8081/api/dkg/start" -H "Content-Type: application
 
 **示例**
 ```bash
-curl -X GET "http://localhost:8081/api/dkg/status?taskId=550e8400-e29b-41d4-a716-446655440000" -H "Content-Type: application/json"
+curl -X GET "http://localhost:8081/api/dkg/status?taskId=550e8400-e29b-41d4-a716-446655440000"
 ```
 
 **响应示例**
@@ -209,7 +209,7 @@ curl -X GET "http://localhost:8081/api/dkg/status?taskId=550e8400-e29b-41d4-a716
 
 **示例**
 ```bash
-curl -X GET "http://localhost:8081/api/dkg/public-key?taskId=550e8400-e29b-41d4-a716-446655440000" -H "Content-Type: application/json"
+curl -X GET "http://localhost:8081/api/dkg/public-key?taskId=550e8400-e29b-41d4-a716-446655440000"
 ```
 
 **响应示例**
@@ -225,7 +225,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
 - 方法：`POST`
 - 路径：`/api/sign/start`
 - 参数：
-  - `taskId`（DKG 任务 ID，UUID 格式）
+  - `groupPublicKey`（群公钥，Base64 编码格式）
   - `message`（要签名的数据）
 
 **响应**
@@ -234,14 +234,14 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/sign/start?taskId=550e8400-e29b-41d4-a716-446655440000&message=Hello%20MPC%20Wallet" -H "Content-Type: application/json"
+curl -X POST "http://localhost:8081/api/sign/start?groupPublicKey=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...&message=Hello%20MPC%20Wallet"
 ```
 
 **响应示例**
 ```json
 {
   "signatureTaskId": "550e8400-e29b-41d4-a716-446655440000",
-  "dkgTaskId": "550e8400-e29b-41d4-a716-446655440000",
+  "groupPublicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...",
   "message": "Hello MPC Wallet",
   "status": "Signature process started"
 }
@@ -260,7 +260,7 @@ curl -X POST "http://localhost:8081/api/sign/start?taskId=550e8400-e29b-41d4-a71
 
 **示例**
 ```bash
-curl -X GET "http://localhost:8081/api/sign/status?signatureTaskId=550e8400-e29b-41d4-a716-446655440000" -H "Content-Type: application/json"
+curl -X GET "http://localhost:8081/api/sign/status?signatureTaskId=550e8400-e29b-41d4-a716-446655440000"
 ```
 
 **响应示例**
@@ -286,7 +286,7 @@ curl -X GET "http://localhost:8081/api/sign/status?signatureTaskId=550e8400-e29b
 
 **示例**
 ```bash
-curl -X GET "http://localhost:8081/api/sign/result?signatureTaskId=550e8400-e29b-41d4-a716-446655440000" -H "Content-Type: application/json"
+curl -X GET "http://localhost:8081/api/sign/result?signatureTaskId=550e8400-e29b-41d4-a716-446655440000"
 ```
 
 **响应示例**
@@ -295,8 +295,7 @@ curl -X GET "http://localhost:8081/api/sign/result?signatureTaskId=550e8400-e29b
   "signatureTaskId": "550e8400-e29b-41d4-a716-446655440000",
   "signature": "MEQCIHFPEKcoKcTRIc70un9UiZmpMGesrKv4hbzm8bQyT7bPAiBUdewlIWsr5pzc3r7Hz0x3mVAV8B+a26kbzKM9DZgX5w==",
   "verified": true,
-  "message": "Hello MPC Wallet",
-  "dkgTaskId": "550e8400-e29b-41d4-a716-446655440000"
+  "message": "Hello MPC Wallet"
 }
 ```
 

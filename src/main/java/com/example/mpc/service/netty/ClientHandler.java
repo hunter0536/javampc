@@ -2,65 +2,44 @@ package com.example.mpc.service.netty;
 
 import com.example.mpc.service.NodeService;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.SimpleChannelInboundHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-
-/**
- * 客户端处理器
- */
-public class ClientHandler extends ChannelInboundHandlerAdapter {
+public class ClientHandler extends SimpleChannelInboundHandler<NodeService.Message> {
     private static final Logger logger = LoggerFactory.getLogger(ClientHandler.class);
-    private ChannelHandlerContext ctx;
-    private final ConcurrentHashMap<String, CompletableFuture<NodeService.Message>> pendingRequests = new ConcurrentHashMap<>();
-
+    
+    private final int nodeId;
+    private final NettyService nettyService;
+    
+    public ClientHandler(int nodeId, NettyService nettyService) {
+        this.nodeId = nodeId;
+        this.nettyService = nettyService;
+    }
+    
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
-        this.ctx = ctx;
-        logger.info("Client channel active: {}", ctx.channel().remoteAddress());
+        logger.info("Connected to server: {}", ctx.channel().remoteAddress());
+        // 保存通道
+        nettyService.addNodeChannel(nodeId, ctx.channel());
     }
-
+    
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
-        logger.info("Client channel inactive: {}", ctx.channel().remoteAddress());
+        logger.info("Disconnected from server: {}", ctx.channel().remoteAddress());
+        // 移除通道
+        nettyService.removeNodeChannel(nodeId);
     }
-
+    
     @Override
-    public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        if (msg instanceof NodeService.Message) {
-            NodeService.Message message = (NodeService.Message) msg;
-            logger.info("Client received message: {}", message.type);
-
-            // 处理响应
-            // 这里可以根据消息ID匹配请求和响应
-        }
+    protected void channelRead0(ChannelHandlerContext ctx, NodeService.Message message) {
+        logger.info("Received message from server: {}", message.type);
+        // 客户端处理器主要用于发送消息，接收消息由服务端处理器处理
     }
-
+    
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        logger.error("Client exception caught: {}", cause.getMessage());
+        logger.error("Exception in client handler: {}", cause.getMessage());
         ctx.close();
-    }
-
-    /**
-     * 发送消息
-     */
-    public void sendMessage(NodeService.Message message) {
-        if (ctx != null && ctx.channel().isActive()) {
-            ctx.writeAndFlush(message);
-            logger.info("Sent message: {}", message.type);
-        } else {
-            logger.error("Cannot send message: channel not active");
-        }
-    }
-
-    /**
-     * 获取通道上下文
-     */
-    public ChannelHandlerContext getContext() {
-        return ctx;
     }
 }

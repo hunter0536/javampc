@@ -1,173 +1,92 @@
 package com.example.mpc.util;
 
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import java.util.concurrent.*;
-import java.util.function.Supplier;
+import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * 线程池管理工具类，为不同类型的任务提供专用线程池
- */
 public class ThreadPoolUtil {
-    
-    // 计算密集型任务线程池（如密码学计算）
-    private static final ExecutorService computationThreadPool;
-    
-    // IO密集型任务线程池（如网络通信）
-    private static final ExecutorService ioThreadPool;
-    
-    // 定时任务线程池
-    private static final ScheduledExecutorService scheduledThreadPool;
-    
-    // 单线程池（用于需要串行执行的任务）
-    private static final ExecutorService singleThreadPool;
-    
-    static {
-        int availableProcessors = Runtime.getRuntime().availableProcessors();
-        
-        // 计算密集型任务线程池
-        ThreadFactory computationThreadFactory = new ThreadFactoryBuilder()
-                .setNameFormat("computation-pool-%d")
-                .setDaemon(true)
-                .build();
-        computationThreadPool = new ThreadPoolExecutor(
-                availableProcessors,
-                availableProcessors * 2,
-                60L,
-                TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(500),
-                computationThreadFactory,
-                new ThreadPoolExecutor.CallerRunsPolicy()
-        );
-        
-        // IO密集型任务线程池
-        ThreadFactory ioThreadFactory = new ThreadFactoryBuilder()
-                .setNameFormat("io-pool-%d")
-                .setDaemon(true)
-                .build();
-        ioThreadPool = new ThreadPoolExecutor(
-                availableProcessors * 2,
-                availableProcessors * 4,
-                60L,
-                TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(1000),
-                ioThreadFactory,
-                new ThreadPoolExecutor.CallerRunsPolicy()
-        );
-        
-        // 定时任务线程池
-        ThreadFactory scheduledThreadFactory = new ThreadFactoryBuilder()
-                .setNameFormat("scheduled-pool-%d")
-                .setDaemon(true)
-                .build();
-        scheduledThreadPool = new ScheduledThreadPoolExecutor(
-                availableProcessors,
-                scheduledThreadFactory,
-                new ThreadPoolExecutor.CallerRunsPolicy()
-        );
-        
-        // 单线程池
-        ThreadFactory singleThreadFactory = new ThreadFactoryBuilder()
-                .setNameFormat("single-pool-%d")
-                .setDaemon(true)
-                .build();
-        singleThreadPool = new ThreadPoolExecutor(
-                1,
-                1,
-                0L,
-                TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(),
-                singleThreadFactory,
-                new ThreadPoolExecutor.CallerRunsPolicy()
-        );
-    }
-    
+    private static final int CORE_POOL_SIZE = Runtime.getRuntime().availableProcessors();
+    private static final int MAX_POOL_SIZE = CORE_POOL_SIZE * 2;
+    private static final long KEEP_ALIVE_TIME = 60L;
+    private static final TimeUnit KEEP_ALIVE_TIME_UNIT = TimeUnit.SECONDS;
+    private static final BlockingQueue<Runnable> WORK_QUEUE = new LinkedBlockingQueue<>(1000);
+    private static final ThreadFactory THREAD_FACTORY = new ThreadFactory() {
+        private final ThreadFactory defaultFactory = Executors.defaultThreadFactory();
+        private final AtomicInteger threadNumber = new AtomicInteger(1);
+
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = defaultFactory.newThread(r);
+            t.setName("ThreadPoolUtil-" + threadNumber.getAndIncrement());
+            return t;
+        }
+    };
+    private static final RejectedExecutionHandler REJECTED_HANDLER = new ThreadPoolExecutor.CallerRunsPolicy();
+
+    // 计算线程池 - 用于CPU密集型任务
+    private static final ExecutorService computationThreadPool = new ThreadPoolExecutor(
+            CORE_POOL_SIZE,
+            MAX_POOL_SIZE,
+            KEEP_ALIVE_TIME,
+            KEEP_ALIVE_TIME_UNIT,
+            WORK_QUEUE,
+            THREAD_FACTORY,
+            REJECTED_HANDLER
+    );
+
+    // IO线程池 - 用于IO密集型任务
+    private static final ExecutorService ioThreadPool = Executors.newCachedThreadPool();
+
+    // 单线程池 - 用于任务协调
+    private static final ExecutorService singleThreadPool = Executors.newSingleThreadExecutor();
+
     /**
-     * 获取计算密集型任务线程池
+     * 获取计算线程池
      */
     public static ExecutorService getComputationThreadPool() {
         return computationThreadPool;
     }
-    
+
     /**
-     * 获取IO密集型任务线程池
+     * 获取IO线程池
      */
     public static ExecutorService getIoThreadPool() {
         return ioThreadPool;
     }
-    
-    /**
-     * 获取定时任务线程池
-     */
-    public static ScheduledExecutorService getScheduledThreadPool() {
-        return scheduledThreadPool;
-    }
-    
+
     /**
      * 获取单线程池
      */
     public static ExecutorService getSingleThreadPool() {
         return singleThreadPool;
     }
-    
+
     /**
-     * 关闭所有线程池
+     * 提交任务到计算线程池
      */
-    public static void shutdownAll() {
-        computationThreadPool.shutdown();
-        ioThreadPool.shutdown();
-        scheduledThreadPool.shutdown();
-        singleThreadPool.shutdown();
-    }
-    
-    /**
-     * 强制关闭所有线程池
-     */
-    public static void shutdownNowAll() {
-        computationThreadPool.shutdownNow();
-        ioThreadPool.shutdownNow();
-        scheduledThreadPool.shutdownNow();
-        singleThreadPool.shutdownNow();
-    }
-    
-    /**
-     * 提交计算密集型任务
-     */
-    public static <T> CompletableFuture<T> submitComputationTask(Supplier<T> task) {
-        return CompletableFuture.supplyAsync(task, computationThreadPool);
-    }
-    
-    /**
-     * 提交IO密集型任务
-     */
-    public static <T> CompletableFuture<T> submitIoTask(Supplier<T> task) {
-        return CompletableFuture.supplyAsync(task, ioThreadPool);
-    }
-    
-    /**
-     * 提交计算密集型任务（无返回值）
-     */
-    public static CompletableFuture<Void> submitComputationTask(Runnable task) {
+    public static CompletableFuture<Void> submitToComputationThreadPool(Runnable task) {
         return CompletableFuture.runAsync(task, computationThreadPool);
     }
-    
+
     /**
-     * 提交IO密集型任务（无返回值）
+     * 提交任务到IO线程池
+     */
+    public static CompletableFuture<Void> submitToIoThreadPool(Runnable task) {
+        return CompletableFuture.runAsync(task, ioThreadPool);
+    }
+
+    /**
+     * 提交IO任务（简化方法）
      */
     public static CompletableFuture<Void> submitIoTask(Runnable task) {
         return CompletableFuture.runAsync(task, ioThreadPool);
     }
-    
+
     /**
-     * 延迟执行任务
+     * 关闭所有线程池
      */
-    public static ScheduledFuture<?> scheduleTask(Runnable task, long delay, TimeUnit unit) {
-        return scheduledThreadPool.schedule(task, delay, unit);
-    }
-    
-    /**
-     * 定期执行任务
-     */
-    public static ScheduledFuture<?> scheduleAtFixedRate(Runnable task, long initialDelay, long period, TimeUnit unit) {
-        return scheduledThreadPool.scheduleAtFixedRate(task, initialDelay, period, unit);
+    public static void shutdown() {
+        computationThreadPool.shutdown();
+        ioThreadPool.shutdown();
+        singleThreadPool.shutdown();
     }
 }
