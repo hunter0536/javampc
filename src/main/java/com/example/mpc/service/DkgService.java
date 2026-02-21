@@ -430,8 +430,8 @@ public class DkgService implements NodeService.MessageHandler {
                 logger.info("Group public key generated for task: {}", taskId);
                 
                 // 保存密钥份额到本节点数据库
-                String shareBase64 = Base64.getEncoder().encodeToString(task.finalKeyShare.toByteArray());
-                KeyShare keyShare = new KeyShare(nodeId, shareBase64, task.groupPublicKey, task.taskId);
+                String shareHex = task.finalKeyShare.toString(16); // 直接转为 hex 字符串
+                KeyShare keyShare = new KeyShare(nodeId, shareHex, task.groupPublicKey, task.taskId);
                 saveKeyShareToDatabase(keyShare);
                 
                 logger.info("DKG process completed successfully for task: {}", taskId);
@@ -789,22 +789,57 @@ public class DkgService implements NodeService.MessageHandler {
             Connection conn = null;
             PreparedStatement pstmt = null;
             try {
-                String sql = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares WHERE group_public_key = ? ORDER BY id DESC LIMIT 1";
+                logger.info("Loading key share for group public key: {}", groupPublicKey);
+                logger.info("Node ID: {}", nodeId);
+                
+                // 先查询所有记录，看看数据库中有什么
+                String debugSql = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares ORDER BY id DESC LIMIT 5";
                 conn = databaseService.getShareConnection(nodeId);
+                logger.info("Connected to database successfully");
+                
+                // 执行调试查询
+                try (PreparedStatement debugStmt = conn.prepareStatement(debugSql)) {
+                    var debugRs = debugStmt.executeQuery();
+                    logger.info("Debug query results:");
+                    while (debugRs.next()) {
+                        String dbGroupPublicKey = debugRs.getString("group_public_key");
+                        logger.info("DB Group Public Key: {}", dbGroupPublicKey);
+                        logger.info("Match: {}", groupPublicKey.equals(dbGroupPublicKey));
+                        logger.info("Length match: {}", groupPublicKey.length() == dbGroupPublicKey.length());
+                        if (groupPublicKey.length() == dbGroupPublicKey.length()) {
+                            for (int i = 0; i < groupPublicKey.length(); i++) {
+                                if (groupPublicKey.charAt(i) != dbGroupPublicKey.charAt(i)) {
+                                    logger.info("Mismatch at position {}: '{}' vs '{}'", i, groupPublicKey.charAt(i), dbGroupPublicKey.charAt(i));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 执行正式查询
+                String sql = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares WHERE group_public_key = ? ORDER BY id DESC LIMIT 1";
                 pstmt = conn.prepareStatement(sql);
                 pstmt.setString(1, groupPublicKey);
+                logger.info("Executing query with group public key");
                 var rs = pstmt.executeQuery();
+                
                 if (rs.next()) {
+                    logger.info("Found key share in database!");
                     KeyShare keyShare = new KeyShare();
                     keyShare.setId(rs.getLong("id"));
                     keyShare.setShareIndex(rs.getInt("share_index"));
                     keyShare.setKeyShare(rs.getString("key_share"));
                     keyShare.setGroupPublicKey(rs.getString("group_public_key"));
                     keyShare.setDkgTaskId(rs.getString("dkg_task_id"));
+                    logger.info("Loaded key share: {}", keyShare);
                     return keyShare;
+                } else {
+                    logger.info("No key share found for group public key: {}", groupPublicKey);
+                    return null;
                 }
-                return null;
             } catch (Exception e) {
+                logger.error("Error loading key share: {}", e.getMessage());
                 e.printStackTrace();
                 throw new RuntimeException(e);
             } finally {
@@ -1081,6 +1116,8 @@ public class DkgService implements NodeService.MessageHandler {
     
     /**
      * 生成群公钥
+     * @param task DKG任务对象
+     * @throws Exception 异常
      */
     private void generateGroupPublicKey(DkgTask task) throws Exception {
         // 检查群公钥是否已经生成，避免重复生成
@@ -1112,8 +1149,9 @@ public class DkgService implements NodeService.MessageHandler {
                 groupPublicKeyPoint = groupPublicKeyPoint.add(allContributions.get(i));
             }
             
-            // 步骤3: 将群公钥转换为可存储的X509格式
-            String groupPublicKey = encodeGroupPublicKeyX509(groupPublicKeyPoint);
+            // 步骤3: 将群公钥直接编码为hex格式（使用非压缩格式以确保完整性）
+            byte[] pointBytes = groupPublicKeyPoint.getEncoded(false); // false 表示非压缩格式（65字节：0x04 + X + Y）
+            String groupPublicKey = java.util.HexFormat.of().formatHex(pointBytes);
             
             // 步骤4: 存储群公钥
             task.groupPublicKey = groupPublicKey;

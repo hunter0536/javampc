@@ -138,24 +138,294 @@ public class SignatureService implements NodeService.MessageHandler {
     
     /**
      * 使用指定的公钥验证签名
-     * @param publicKeyBase64 公钥（Base64编码）
+     * @param publicKeyHex 公钥（Hex编码）
      * @param data 原始数据
      * @param signature 签名结果
      * @return 是否有效
      */
-    private boolean verifyWithPublicKey(String publicKeyBase64, String data, String signature) throws Exception {
-        byte[] publicKeyBytes = Base64.getDecoder().decode(publicKeyBase64);
-        KeyFactory keyFactory = KeyFactory.getInstance("EC", "BC");
-        PublicKey publicKey = keyFactory.generatePublic(new X509EncodedKeySpec(publicKeyBytes));
-        
-        // 验证签名
-        Signature sig = Signature.getInstance("SHA256withECDSA", "BC");
-        sig.initVerify(publicKey);
-        sig.update(data.getBytes());
-        byte[] signatureBytes = Base64.getDecoder().decode(signature);
-        return sig.verify(signatureBytes);
+    private boolean verifyWithPublicKey(String publicKeyHex, String data, String signature) throws Exception {
+        try {
+            // 解码公钥（从hex解码为字节数组）
+            byte[] pointBytes = java.util.HexFormat.of().parseHex(publicKeyHex);
+            // 直接解析为ECPoint（无需X509包装）
+            ECPoint Q = getEcPublicKey().getParameters().getCurve().decodePoint(pointBytes);
+            // 构建临时公钥对象用于验证
+            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
+            ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
+            keyPairGenerator.initialize(ecSpec);
+            KeyPair keyPair = keyPairGenerator.generateKeyPair();
+            ECPublicKey paramsPub = (ECPublicKey) keyPair.getPublic();
+            org.bouncycastle.jce.spec.ECPublicKeySpec spec = new org.bouncycastle.jce.spec.ECPublicKeySpec(Q, paramsPub.getParameters());
+            KeyFactory keyFactory = KeyFactory.getInstance("EC", "BC");
+            PublicKey publicKey = keyFactory.generatePublic(spec);
+            
+            // 预处理签名：移除空格等无效字符，并确保Base64格式正确
+            String cleanedSignature = signature.replaceAll("\\s+", "")
+                                              .replaceAll("[^A-Za-z0-9+/=]", "");
+            
+            // 确保签名长度是4的倍数
+            while (cleanedSignature.length() % 4 != 0) {
+                cleanedSignature += "=";
+            }
+            
+            // 打印公钥信息
+            logger.info("Public key algorithm: {}", publicKey.getAlgorithm());
+            logger.info("Public key format: {}", publicKey.getFormat());
+            logger.info("Public key (hex): {}", publicKeyHex);
+            logger.info("Data: {}", data);
+            logger.info("Data bytes length: {}", data.getBytes("UTF-8").length);
+            logger.info("Original signature: {}", signature);
+            logger.info("Cleaned signature: {}", cleanedSignature);
+            
+            // 解析签名获取r和s
+            byte[] signatureBytes = Base64.getDecoder().decode(cleanedSignature);
+            logger.info("Signature bytes length: {}", signatureBytes.length);
+            BigInteger[] rs = decodeEcdsaDer(signatureBytes);
+            BigInteger r = rs[0];
+            BigInteger s = rs[1];
+            logger.info("Extracted r: {}", r);
+            logger.info("Extracted s: {}", s);
+            
+            // 重建R点（从r值恢复曲线点）
+            ECPoint R = reconstructPointFromR(r);
+            logger.info("Reconstructed R point: {}", R);
+            
+            // 使用与签名生成相同的哈希计算方法
+            byte[] messageHash = calculateMessageHash(data, R);
+            BigInteger h = new BigInteger(1, messageHash);
+            logger.info("Calculated hash during verification: {}", java.util.Arrays.toString(messageHash));
+            
+            // 执行CGMMP验证
+            boolean result = verifyCgmmpSignature(publicKey, R, h, r, s);
+            logger.info("CGMMP verification result: {}", result);
+            
+            return result;
+        } catch (Exception e) {
+            logger.error("Error verifying signature: {}", e.getMessage());
+            e.printStackTrace();
+            throw e;
+        }
     }
     
+    /**
+     * 从签名中解析r和s
+     * @param derEncoded DER编码的签名
+     * @return r和s的数组
+     */
+    private BigInteger[] decodeEcdsaDer(byte[] derEncoded) throws Exception {
+        // 简单的DER解析，假设格式正确
+        int pos = 0;
+        if (derEncoded[pos++] != 0x30) {
+            throw new Exception("Invalid DER encoding: expected SEQUENCE");
+        }
+        int len = derEncoded[pos++];
+        if (len > derEncoded.length - pos) {
+            throw new Exception("Invalid DER encoding: length too long");
+        }
+        
+        // 解析r
+        if (derEncoded[pos++] != 0x02) {
+            throw new Exception("Invalid DER encoding: expected INTEGER for r");
+        }
+        int rLen = derEncoded[pos++];
+        byte[] rBytes = new byte[rLen];
+        System.arraycopy(derEncoded, pos, rBytes, 0, rLen);
+        pos += rLen;
+        BigInteger r = new BigInteger(1, rBytes);
+        
+        // 解析s
+        if (derEncoded[pos++] != 0x02) {
+            throw new Exception("Invalid DER encoding: expected INTEGER for s");
+        }
+        int sLen = derEncoded[pos++];
+        byte[] sBytes = new byte[sLen];
+        System.arraycopy(derEncoded, pos, sBytes, 0, sLen);
+        BigInteger s = new BigInteger(1, sBytes);
+        
+        return new BigInteger[]{r, s};
+    }
+    
+    /**
+     * 从r值重建椭圆曲线点R
+     * @param r x坐标
+     * @return 椭圆曲线点R
+     */
+    private ECPoint reconstructPointFromR(BigInteger r) throws Exception {
+        // 获取曲线参数
+        org.bouncycastle.jce.spec.ECParameterSpec ecSpec = getEcPublicKey().getParameters();
+        org.bouncycastle.math.ec.ECCurve curve = ecSpec.getCurve();
+        
+        // 不需要对r取模曲线的阶，直接使用原始值作为x坐标
+        // r = r.mod(curve.getOrder());
+        
+        // 构建正确的压缩格式点
+        try {
+            // 计算x坐标的字节表示（固定32字节长度，适合secp256k1曲线）
+            byte[] xBytes = new byte[32];
+            byte[] rBytes = r.toByteArray();
+            
+            // 复制rBytes到xBytes，确保正确的字节顺序（大端序）
+            if (rBytes.length <= 32) {
+                // 如果rBytes长度小于32，左对齐填充0（大端序）
+                int offset = 32 - rBytes.length;
+                System.arraycopy(rBytes, 0, xBytes, offset, rBytes.length);
+                // 前面位置填充0
+                for (int i = 0; i < offset; i++) {
+                    xBytes[i] = 0;
+                }
+            } else {
+                // 如果rBytes长度大于32，取最后32字节
+                System.arraycopy(rBytes, rBytes.length - 32, xBytes, 0, 32);
+            }
+            
+            // 尝试压缩格式点 (0x02 | x)
+            byte[] encodedR = new byte[33];
+            encodedR[0] = 0x02; // 压缩格式，y为偶数
+            System.arraycopy(xBytes, 0, encodedR, 1, 32);
+            
+            try {
+                ECPoint point = curve.decodePoint(encodedR);
+                logger.info("Reconstructed R point using compressed format (0x02)");
+                return point;
+            } catch (Exception e) {
+                // 尝试压缩格式点 (0x03 | x)
+                encodedR[0] = 0x03; // 压缩格式，y为奇数
+                ECPoint point = curve.decodePoint(encodedR);
+                logger.info("Reconstructed R point using compressed format (0x03)");
+                return point;
+            }
+        } catch (Exception e) {
+            logger.error("Failed to reconstruct R point from r: {}", e.getMessage());
+            throw new Exception("Failed to reconstruct R point from r: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * 执行CGMMP签名验证
+     * @param publicKey 公钥
+     * @param R 临时公钥
+     * @param h 消息哈希
+     * @param r r值
+     * @param s s值
+     * @return 是否有效
+     */
+    private boolean verifyCgmmpSignature(PublicKey publicKey, ECPoint R, BigInteger h, BigInteger r, BigInteger s) throws Exception {
+        ECPublicKey ecPublicKey = (ECPublicKey) publicKey;
+        org.bouncycastle.jce.spec.ECParameterSpec ecSpec = ecPublicKey.getParameters();
+        ECPoint G = ecSpec.getG();
+        BigInteger n = ecSpec.getN();
+        ECPoint Q = ecPublicKey.getQ();
+        
+        // 验证r和s是否在有效范围内
+        if (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0) {
+            logger.warn("Invalid r value: out of range");
+            return false;
+        }
+        if (s.compareTo(BigInteger.ZERO) <= 0 || s.compareTo(n) >= 0) {
+            logger.warn("Invalid s value: out of range");
+            return false;
+        }
+        
+        // 确保h在有效范围内
+        h = h.mod(n);
+        
+        // CGMMP验证公式：σ * G = R + h * Q
+        // 其中σ = s * r mod n（因为在转换为ECDSA格式时做了s = σ * r^{-1}）
+        BigInteger sigma = s.multiply(r).mod(n);
+        logger.info("Calculated sigma: {}", sigma);
+        
+        // 计算左边：sigma * G
+        ECPoint sigmaG = G.multiply(sigma).normalize();
+        logger.info("Calculated sigma * G: {}", sigmaG);
+        
+        // 计算右边：R + h * Q
+        ECPoint hQ = Q.multiply(h).normalize();
+        ECPoint rightSide = R.add(hQ).normalize();
+        logger.info("Calculated R + h * Q: {}", rightSide);
+        
+        // 检查两边是否相等
+        boolean result = sigmaG.equals(rightSide);
+        logger.info("CGMMP verification result: {}", result);
+        
+        // 检查R.x mod n是否等于r
+        BigInteger rX = R.getAffineXCoord().toBigInteger().mod(n);
+        logger.info("R's x-coordinate mod n: {}", rX);
+        logger.info("Expected r: {}", r);
+        boolean rXMatch = rX.equals(r);
+        logger.info("R's x-coordinate match: {}", rXMatch);
+        
+        // 尝试使用奇数y坐标的R点进行验证
+        if (!result) {
+            // 重建奇数y坐标的R点
+            ECPoint ROdd = reconstructPointFromRWithYCoordinate(r, true);
+            logger.info("Reconstructed R point (odd y): {}", ROdd);
+            
+            // 计算右边：ROdd + h * Q
+            ECPoint rightSideOdd = ROdd.add(hQ).normalize();
+            logger.info("Calculated ROdd + h * Q: {}", rightSideOdd);
+            
+            // 检查两边是否相等
+            boolean resultOdd = sigmaG.equals(rightSideOdd);
+            logger.info("CGMMP verification result (odd y): {}", resultOdd);
+            
+            if (resultOdd) {
+                return true;
+            }
+        }
+        
+        // 返回综合结果
+        return result && rXMatch;
+    }
+    
+    /**
+     * 从r值重建椭圆曲线点R，指定y坐标奇偶性
+     * @param r x坐标
+     * @param useOddY 是否使用奇数y坐标
+     * @return 椭圆曲线点R
+     */
+    private ECPoint reconstructPointFromRWithYCoordinate(BigInteger r, boolean useOddY) throws Exception {
+        // 获取曲线参数
+        org.bouncycastle.jce.spec.ECParameterSpec ecSpec = getEcPublicKey().getParameters();
+        org.bouncycastle.math.ec.ECCurve curve = ecSpec.getCurve();
+        
+        // 不需要对r取模曲线的阶，直接使用原始值作为x坐标
+        // r = r.mod(curve.getOrder());
+        
+        // 构建正确的压缩格式点
+        try {
+            // 计算x坐标的字节表示（固定32字节长度，适合secp256k1曲线）
+            byte[] xBytes = new byte[32];
+            byte[] rBytes = r.toByteArray();
+            
+            // 复制rBytes到xBytes，确保正确的字节顺序（大端序）
+            if (rBytes.length <= 32) {
+                // 如果rBytes长度小于32，左对齐填充0（大端序）
+                int offset = 32 - rBytes.length;
+                System.arraycopy(rBytes, 0, xBytes, offset, rBytes.length);
+                // 前面位置填充0
+                for (int i = 0; i < offset; i++) {
+                    xBytes[i] = 0;
+                }
+            } else {
+                // 如果rBytes长度大于32，取最后32字节
+                System.arraycopy(rBytes, rBytes.length - 32, xBytes, 0, 32);
+            }
+            
+            // 构建压缩格式点
+            byte[] encodedR = new byte[33];
+            int formatByte = useOddY ? 0x03 : 0x02;
+            encodedR[0] = (byte) formatByte; // 0x02=偶数y, 0x03=奇数y
+            System.arraycopy(xBytes, 0, encodedR, 1, 32);
+            
+            ECPoint point = curve.decodePoint(encodedR);
+            logger.info("Reconstructed R point using compressed format (0x{})");
+            return point;
+        } catch (Exception e) {
+            logger.error("Failed to reconstruct R point from r: {}", e.getMessage());
+            throw new Exception("Failed to reconstruct R point from r: " + e.getMessage());
+        }
+    }
+
     /**
      * 创建签名任务（使用群公钥）
      * @param groupPublicKey 群公钥
@@ -163,14 +433,32 @@ public class SignatureService implements NodeService.MessageHandler {
      * @return 签名任务ID
      */
     public String createSignatureTaskWithGroupKey(String groupPublicKey, String message) {
+        // 修复URL编码问题：先进行URL解码，然后将空格替换回+字符
+        String fixedGroupPublicKey = null;
+        try {
+            fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
+        } catch (java.io.UnsupportedEncodingException e) {
+            // 如果解码失败，使用原始值
+            fixedGroupPublicKey = groupPublicKey;
+        }
+        fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         String taskId = UUID.randomUUID().toString();
-        SignatureTask task = new SignatureTask(taskId, message, groupPublicKey, nodesCount);
+        SignatureTask task = new SignatureTask(taskId, message, fixedGroupPublicKey, nodesCount);
         signatureTasks.put(taskId, task);
         return taskId;
     }
 
     public String createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message) {
-        SignatureTask task = new SignatureTask(signatureTaskId, message, groupPublicKey, nodesCount);
+        // 修复URL编码问题：先进行URL解码，然后将空格替换回+字符
+        String fixedGroupPublicKey = null;
+        try {
+            fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
+        } catch (java.io.UnsupportedEncodingException e) {
+            // 如果解码失败，使用原始值
+            fixedGroupPublicKey = groupPublicKey;
+        }
+        fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
+        SignatureTask task = new SignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount);
         signatureTasks.put(signatureTaskId, task);
         return signatureTaskId;
     }
@@ -470,16 +758,20 @@ public class SignatureService implements NodeService.MessageHandler {
      * @return 椭圆曲线点 ECPoint
      */
     private ECPoint calculateGlobalCommitment(SignatureTask task) throws Exception {
+        // 检查是否接收到足够的临时公钥
+        if (task.receivedCommitments.size() < Constants.THRESHOLD) {
+            throw new Exception("Not enough commitments: " + task.receivedCommitments.size() + " < " + Constants.THRESHOLD);
+        }
+        
         // 初始化全局临时公钥为无穷远点
         ECPoint globalR = getInfinityPoint();
-        // 累加本节点承诺
-        if (task.R_i != null) {
-            globalR = globalR.add(task.R_i);
-        }
-        // 累加其他节点承诺
+        
+        // 标准CGGMP中，全局临时公钥R是所有参与节点的临时公钥R_i的总和
+        // 因为每个节点的临时公钥都是独立生成的，需要全部累加
         for (ECPoint R_i : task.receivedCommitments.values()) {
             globalR = globalR.add(R_i);
         }
+        
         return globalR.normalize();
     }
     
@@ -494,12 +786,17 @@ public class SignatureService implements NodeService.MessageHandler {
         ECPoint normalized = R.normalize();
         byte[] RxBytes = normalized.getAffineXCoord().getEncoded();
         // 构建哈希输入: message || Rx
-        byte[] messageBytes = message.getBytes();
+        byte[] messageBytes = message.getBytes("UTF-8");
         byte[] input = new byte[messageBytes.length + RxBytes.length];
         System.arraycopy(messageBytes, 0, input, 0, messageBytes.length);
         System.arraycopy(RxBytes, 0, input, messageBytes.length, RxBytes.length);
         // 计算 SHA-256 哈希
-        return MessageDigest.getInstance("SHA-256").digest(input);
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(input);
+        logger.info("Message bytes length: {}", messageBytes.length);
+        logger.info("Rx bytes length: {}", RxBytes.length);
+        logger.info("Total input length: {}", input.length);
+        logger.info("Calculated hash: {}", java.util.Arrays.toString(hash));
+        return hash;
     }
     
     /**
@@ -517,7 +814,7 @@ public class SignatureService implements NodeService.MessageHandler {
                 }
                 try {
                     // 获取密钥份额 s_i
-                    BigInteger s_i = new BigInteger(Base64.getDecoder().decode(keyShare.getKeyShare()));
+                    BigInteger s_i = new BigInteger(keyShare.getKeyShare(), 16); // 直接从 hex 解析
                     // 计算签名份额: σ_i = k_i + s_i * h
                     return k_i.add(s_i.multiply(h)).mod(getCurveOrder());
                 } catch (Exception e) {
@@ -529,6 +826,39 @@ public class SignatureService implements NodeService.MessageHandler {
                 throw new RuntimeException(ex);
             });
     }
+    
+    /**
+     * 使用群私钥直接生成签名（用于测试）
+     * @param privateKey 群私钥
+     * @param message 消息
+     * @return 签名
+     */
+    public String generateSignatureWithPrivateKey(BigInteger privateKey, String message) throws Exception {
+        // 生成随机数 k
+        BigInteger k = generateSecureRandom();
+        // 获取曲线基点 G
+        ECPoint G = getCurveGenerator();
+        // 计算临时公钥 R = k * G
+        ECPoint R = G.multiply(k).normalize();
+        // 计算消息哈希 h = H(m || R_x)
+        byte[] messageHash = calculateMessageHash(message, R);
+        BigInteger h = new BigInteger(1, messageHash);
+        // 计算签名 σ = k + privateKey * h
+        BigInteger sigma = k.add(privateKey.multiply(h)).mod(getCurveOrder());
+        // 转换为 ECDSA 签名格式
+        return convertToECDSASignature(R, sigma);
+    }
+    
+    /**
+     * 使用群私钥直接验证签名（用于测试）
+     * @param publicKeyHex 群公钥（Hex编码）
+     * @param message 消息
+     * @param signature 签名
+     * @return 是否有效
+     */
+    public boolean verifySignatureWithPublicKey(String publicKeyHex, String message, String signature) throws Exception {
+        return verifyWithPublicKey(publicKeyHex, message, signature);
+    }
 
     
     /**
@@ -537,10 +867,20 @@ public class SignatureService implements NodeService.MessageHandler {
      * @return 最终签名 BigInteger
      */
     private BigInteger combineSignatureSharesCGGMP(SignatureTask task) throws Exception {
+        // 获取接收到的签名份额（包括本节点的）
+        var shares = task.receivedSignatureShares;
+        if (shares.size() < Constants.THRESHOLD) {
+            throw new Exception("Not enough signature shares: " + shares.size() + " < " + Constants.THRESHOLD);
+        }
+        
+        // 标准CGGMP中，签名份额是线性的，直接累加即可
+        // 因为密钥份额s_i已经是通过拉格朗日插值生成的，满足Σs_i = s（群私钥）
+        // 所以签名份额σ_i = k_i + s_i * h，累加后Σσ_i = Σk_i + Σs_i * h = K + s * h = σ
         BigInteger sigma = BigInteger.ZERO;
-        for (BigInteger share : task.receivedSignatureShares.values()) {
+        for (BigInteger share : shares.values()) {
             sigma = sigma.add(share).mod(getCurveOrder());
         }
+        
         return sigma;
     }
     
@@ -551,14 +891,27 @@ public class SignatureService implements NodeService.MessageHandler {
      * @return Base64 编码的签名
      */
     private String convertToECDSASignature(ECPoint R, BigInteger sigma) throws Exception {
-        // 获取 R 的 x 坐标作为 r
-        ECPoint normalized = R.normalize();
-        BigInteger r = normalized.getAffineXCoord().toBigInteger().mod(getCurveOrder());
-        // 计算 s = sigma * r^{-1} mod n
-        BigInteger s = sigma.multiply(r.modInverse(getCurveOrder())).mod(getCurveOrder());
-        // 使用DER编码的ECDSA签名格式
-        byte[] der = encodeEcdsaDer(r, s);
-        return Base64.getEncoder().encodeToString(der);
+        try {
+            // 获取 R 的 x 坐标作为 r
+            ECPoint normalized = R.normalize();
+            BigInteger r = normalized.getAffineXCoord().toBigInteger().mod(getCurveOrder());
+            // 计算 s = sigma * r^{-1} mod n
+            BigInteger s = sigma.multiply(r.modInverse(getCurveOrder())).mod(getCurveOrder());
+            
+            // 打印签名参数
+            logger.info("Signature r: {}", r);
+            logger.info("Signature s: {}", s);
+            
+            // 使用DER编码的ECDSA签名格式
+            byte[] der = encodeEcdsaDer(r, s);
+            String signature = Base64.getEncoder().encodeToString(der);
+            logger.info("Generated signature: {}", signature);
+            return signature;
+        } catch (Exception e) {
+            logger.error("Error converting to ECDSA signature: {}", e.getMessage());
+            e.printStackTrace();
+            throw e;
+        }
     }
 
     private byte[] encodeEcdsaDer(BigInteger r, BigInteger s) {

@@ -35,10 +35,10 @@ public class NodeService {
     @Value("${node.port}")
     private int nodePort;
     
-    @Value("${discovery.port:8888}")
+    @Value("${discovery.port}")
     private int discoveryPort;
     
-    @Value("#{'${discovery.broadcast.ports:8888,8889,8890,8891,8892}'.split(',')}")
+    @Value("#{'${discovery.broadcast.ports}'.split(',')}")
     private List<String> discoveryBroadcastPorts;
 
     @Value("#{'${nodes.peers:}'.isEmpty() ? null : '${nodes.peers:}'.split(',')}")
@@ -91,7 +91,15 @@ public class NodeService {
             DKG_INIT,         // DKG初始化
             SIGN_INIT,        // 签名初始化
             PING,             // 心跳
-            PONG              // 心跳响应
+            PONG,             // 心跳响应
+            // CGGMP相关消息
+            CGGMP_DKG_INIT,           // CGGMP DKG初始化
+            CGGMP_DKG_ROUND1,         // CGGMP DKG第1轮
+            CGGMP_DKG_ROUND2,         // CGGMP DKG第2轮
+            CGGMP_SIGN_INIT,          // CGGMP签名初始化
+            CGGMP_SIGN_ROUND1,        // CGGMP签名第1轮
+            CGGMP_SIGN_ROUND2,        // CGGMP签名第2轮
+            CGGMP_SIGN_ROUND3         // CGGMP签名第3轮
         }
         
         public final int senderId;

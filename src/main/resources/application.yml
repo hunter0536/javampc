@@ -1,17 +1,17 @@
 # 基础配置
 
-# 服务器配置
-server:
-  port: 8080
-
-# 节点配置
-node:
-  id: 1
-  port: 9000
+## 服务器配置
+#server:
+#  port: 8080
+#
+## 节点配置
+#node:
+#  id: 1
+#  port: 9000
 
 # 发现服务配置
 discovery:
-  port: 8888
+#  port: 8888
   # 广播目标端口（5个节点的发现端口）
   broadcast:
     ports: 8888,8889,8890,8891,8892
@@ -20,3 +20,11 @@ discovery:
 logging:
   level:
     com.example.mpc: info
+
+# 应用初始化配置
+app:
+  init:
+    cggmp:
+      enabled: true  # 是否启用CGGMP服务
+    legacy:
+      enabled: false  # 是否启用旧的DKG/Signature服务

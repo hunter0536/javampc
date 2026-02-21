@@ -1,0 +1,139 @@
+package com.example.mpc.cggmp;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.math.BigInteger;
+import java.security.SecureRandom;
+
+public class PaillierEncryption {
+    private static final Logger logger = LoggerFactory.getLogger(PaillierEncryption.class);
+
+    private BigInteger n;
+    private BigInteger nSquared;
+    private BigInteger g;
+    private BigInteger lambda;
+    private BigInteger mu;
+    private BigInteger p;
+    private BigInteger q;
+
+    private static final int KEY_SIZE = 2048;
+    private static final BigInteger TWO = BigInteger.valueOf(2);
+
+    public PaillierEncryption() {
+        generateKeys();
+    }
+
+    public PaillierEncryption(BigInteger p, BigInteger q) {
+        this.p = p;
+        this.q = q;
+        initializeFromPQ();
+    }
+
+    private void generateKeys() {
+        SecureRandom random = new SecureRandom();
+        
+        p = new BigInteger(KEY_SIZE / 2, 64, random);
+        q = new BigInteger(KEY_SIZE / 2, 64, random);
+        
+        while (p.equals(q)) {
+            q = new BigInteger(KEY_SIZE / 2, 64, random);
+        }
+        
+        initializeFromPQ();
+    }
+
+    private void initializeFromPQ() {
+        n = p.multiply(q);
+        nSquared = n.multiply(n);
+        
+        lambda = p.subtract(BigInteger.ONE).multiply(q.subtract(BigInteger.ONE));
+        g = n.add(BigInteger.ONE);
+        
+        mu = lambda.modInverse(n);
+    }
+
+    public BigInteger encrypt(BigInteger m) {
+        SecureRandom random = new SecureRandom();
+        BigInteger r;
+        
+        do {
+            r = new BigInteger(n.bitLength(), random);
+        } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
+        
+        return encryptWithRandom(m, r);
+    }
+
+    public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
+        BigInteger gm = g.modPow(m, nSquared);
+        BigInteger rn = r.modPow(n, nSquared);
+        return gm.multiply(rn).mod(nSquared);
+    }
+
+    public BigInteger decrypt(BigInteger c) {
+        BigInteger cLambda = c.modPow(lambda, nSquared);
+        BigInteger l = cLambda.subtract(BigInteger.ONE).divide(n);
+        return l.multiply(mu).mod(n);
+    }
+
+    public BigInteger add(BigInteger c1, BigInteger c2) {
+        return c1.multiply(c2).mod(nSquared);
+    }
+
+    public BigInteger multiply(BigInteger c, BigInteger k) {
+        return c.modPow(k, nSquared);
+    }
+
+    public BigInteger getPublicKey() {
+        return n;
+    }
+
+    public BigInteger getN() {
+        return n;
+    }
+
+    public BigInteger getNSquared() {
+        return nSquared;
+    }
+
+    public BigInteger getG() {
+        return g;
+    }
+
+    public static class PublicKey {
+        public final BigInteger n;
+        public final BigInteger nSquared;
+        public final BigInteger g;
+
+        public PublicKey(BigInteger n) {
+            this.n = n;
+            this.nSquared = n.multiply(n);
+            this.g = n.add(BigInteger.ONE);
+        }
+
+        public BigInteger encrypt(BigInteger m) {
+            SecureRandom random = new SecureRandom();
+            BigInteger r;
+            
+            do {
+                r = new BigInteger(n.bitLength(), random);
+            } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
+            
+            return encryptWithRandom(m, r);
+        }
+
+        public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
+            BigInteger gm = g.modPow(m, nSquared);
+            BigInteger rn = r.modPow(n, nSquared);
+            return gm.multiply(rn).mod(nSquared);
+        }
+
+        public BigInteger add(BigInteger c1, BigInteger c2) {
+            return c1.multiply(c2).mod(nSquared);
+        }
+
+        public BigInteger multiply(BigInteger c, BigInteger k) {
+            return c.modPow(k, nSquared);
+        }
+    }
+}

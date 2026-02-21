@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class SignatureTask {
+public class CggmpSignatureTask {
     public final String taskId;
     public final String message;
     public final String groupPublicKey;
@@ -25,12 +25,11 @@ public class SignatureTask {
     public final AtomicReference<TaskStatus> status = new AtomicReference<>(TaskStatus.PENDING);
     public volatile String errorMessage;
 
-    public SignatureTask(String taskId, String message, String groupPublicKey, int nodesCount) {
+    public CggmpSignatureTask(String taskId, String message, String groupPublicKey, int nodesCount) {
         this.taskId = taskId;
         this.message = message;
         this.groupPublicKey = groupPublicKey;
         this.nodesCount = nodesCount;
-        // 使用门限数量而不是节点总数，实现真正的CGGMP门限签名
         this.commitmentsReceivedLatch = new CountDownLatch(com.example.mpc.constant.Constants.THRESHOLD - 1);
         this.sharesReceivedLatch = new CountDownLatch(com.example.mpc.constant.Constants.THRESHOLD - 1);
     }
