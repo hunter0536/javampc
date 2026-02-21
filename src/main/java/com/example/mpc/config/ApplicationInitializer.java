@@ -1,10 +1,9 @@
 package com.example.mpc.config;
 
 import com.example.mpc.constant.Constants;
-import com.example.mpc.service.CGGMPKeyService;
-import com.example.mpc.service.DkgService;
+import com.example.mpc.service.CggmpSignatureService;
+import com.example.mpc.service.GennaroDkgService;
 import com.example.mpc.service.NodeService;
-//import com.example.mpc.service.SignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,13 +16,11 @@ public class ApplicationInitializer implements CommandLineRunner {
     private static final Logger logger = LoggerFactory.getLogger(ApplicationInitializer.class);
 
     @Autowired
-    private DkgService dkgService;
+    private GennaroDkgService gennaroDkgService;
 
-//    @Autowired
-//    private SignatureService signatureService;
 
     @Autowired
-    private CGGMPKeyService cggmpKeyService;
+    private CggmpSignatureService cggmpSignatureService;
 
     @Autowired
     private NodeService nodeService;
@@ -39,9 +36,9 @@ public class ApplicationInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        logger.info("=" .repeat(60));
+        logger.info("=".repeat(60));
         logger.info("Initializing application for node {}", nodeId);
-        logger.info("=" .repeat(60));
+        logger.info("=".repeat(60));
 
         if (enableCggmp) {
             initializeCggmp();
@@ -54,17 +51,17 @@ public class ApplicationInitializer implements CommandLineRunner {
             initializeLegacy();
         }
 
-        logger.info("=" .repeat(60));
+        logger.info("=".repeat(60));
         logger.info("Application initialization complete for node {}", nodeId);
-        logger.info("=" .repeat(60));
+        logger.info("=".repeat(60));
     }
 
     private void initializeCggmp() {
         logger.info("--- Initializing CGGMP services ---");
         try {
-            cggmpKeyService.initialize();
+            cggmpSignatureService.initialize();
             logger.info("Initializing CGGMP signature service...");
-            cggmpKeyService.init(Constants.NODES_COUNT).join();
+            cggmpSignatureService.init(Constants.NODES_COUNT).join();
             logger.info("CGGMP services initialized successfully");
         } catch (Exception e) {
             logger.error("Failed to initialize CGGMP services", e);
@@ -74,13 +71,10 @@ public class ApplicationInitializer implements CommandLineRunner {
     private void initializeLegacy() {
         logger.info("--- Initializing legacy services ---");
         try {
-            logger.info("Initializing DKG service...");
-            dkgService.init().join();
-            logger.info("DKG service initialized successfully");
+            logger.info("Initializing Gennaro DKG service...");
+            gennaroDkgService.init().join();
+            logger.info("Gennaro DKG service initialized successfully");
 
-//            logger.info("Initializing Signature service...");
-//            signatureService.init(Constants.NODES_COUNT).join();
-//            logger.info("Signature service initialized successfully");
         } catch (Exception e) {
             logger.error("Failed to initialize legacy services", e);
         }

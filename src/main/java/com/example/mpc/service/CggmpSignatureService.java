@@ -1,36 +1,22 @@
 package com.example.mpc.service;
 
 import com.example.mpc.cggmp.CGGMP;
-import com.example.mpc.cggmp.CGGMPProtocol;
-import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.Gg20Codec;
+import com.example.mpc.cggmp.PaillierEncryption;
+import com.example.mpc.common.response.DkgTaskStatusResponse;
+import com.example.mpc.common.response.SignatureResultResponse;
+import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.KeyShareDao;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.CggmpDkgTask;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.model.KeyShare;
-import com.example.mpc.util.ThreadPoolUtil;
 import org.bouncycastle.jce.interfaces.ECPublicKey;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.math.ec.ECPoint;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
-import java.math.BigInteger;
-import java.security.*;
-import java.security.spec.ECGenParameterSpec;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.Base64;
 import org.exploit.gmp.BigInt;
 import org.exploit.secp256k1.Secp256k1;
 import org.exploit.secp256k1.Secp256k1CurveParams;
@@ -55,13 +41,25 @@ import org.exploit.tss.proof.model.ZKSetup;
 import org.exploit.tss.signature.ECDSASignature;
 import org.exploit.tss.util.Hash;
 import org.exploit.tss.util.ZKRandom;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.math.BigInteger;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.SecureRandom;
+import java.security.Security;
+import java.security.spec.ECGenParameterSpec;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
-public class CGGMPKeyService implements NodeService.MessageHandler {
-    private static final Logger logger = LoggerFactory.getLogger(CGGMPKeyService.class);
-
-    @Autowired
-    private DatabaseService databaseService;
+public class CggmpSignatureService implements NodeService.MessageHandler {
+    private static final Logger logger = LoggerFactory.getLogger(CggmpSignatureService.class);
 
     @Autowired
     private NodeService nodeService;
@@ -72,10 +70,6 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
     @Value("${node.id}")
     private int nodeId;
 
-    private CGGMP cggmp;
-    private CGGMPProtocol protocol;
-    private PaillierEncryption paillier;
-
     private final Map<String, CggmpDkgTask> dkgTasks = new ConcurrentHashMap<>();
     private final Map<String, Gg20SignatureTask> signatureTasks = new ConcurrentHashMap<>();
 
@@ -85,7 +79,6 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         return t;
     });
 
-    private final AtomicBoolean dkgInProgress = new AtomicBoolean(false);
     private final AtomicBoolean signatureInProgress = new AtomicBoolean(false);
     private final int nodesCount = Constants.NODES_COUNT;
     private final int threshold = Constants.THRESHOLD;
@@ -97,7 +90,6 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
 
     public void initialize() throws Exception {
         logger.info("Initializing CGGMP service for node {}", nodeId);
-        this.paillier = new PaillierEncryption();
         logger.info("CGGMP service initialized successfully");
     }
 
@@ -115,7 +107,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             CggmpDkgTask task = null;
             try {
                 task = getDkgTask(taskId);
-                
+
                 if (!task.start()) {
                     logger.warn("DKG task {} failed to start (may already be in progress), skipping", taskId);
                     return;
@@ -133,7 +125,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                 logger.info("Network ready with {} nodes", networkSize);
 
                 try {
-                    Thread.sleep(Constants.DKG_INIT_WAIT_TIME_MS);
+                    Thread.sleep(Constants.DKG_INIT_WAIT_MS);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 }
@@ -141,22 +133,22 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                 Map<String, Object> initData = new HashMap<>();
                 initData.put("taskId", taskId);
                 initData.put("nodesCount", Constants.NODES_COUNT);
-                
+
                 boolean initBroadcastSuccess = false;
                 for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
                     try {
-                        nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_DKG_INIT, initData)).join();
+                        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_INIT, initData)).join();
                         logger.info("Broadcasted CGGMP_DKG_INIT for task: {} (attempt {}/{})", taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
                         initBroadcastSuccess = true;
                         break;
                     } catch (Exception e) {
                         logger.warn("Failed to broadcast CGGMP_DKG_INIT (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
                         if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
-                            Thread.sleep(Constants.DKG_BROADCAST_RETRY_DELAY_MS);
+                            Thread.sleep(Constants.DKG_BROADCAST_RETRY_INTERVAL_MS);
                         }
                     }
                 }
-                
+
                 if (!initBroadcastSuccess) {
                     throw new RuntimeException("Failed to broadcast CGGMP_DKG_INIT after 3 attempts");
                 }
@@ -180,7 +172,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
 
     private void executeDkgRounds(CggmpDkgTask task) throws Exception {
         logger.info("Node {} executing DKG Round 1", nodeId);
-        
+
         task.cggmpInstance = new CGGMP(threshold, nodesCount, nodeId, Constants.CURVE_NAME);
         CGGMP.DkgRound1Output round1Output = task.cggmpInstance.dkgRound1();
         task.round1Outputs.put(nodeId, round1Output);
@@ -194,18 +186,18 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         boolean round1BroadcastSuccess = false;
         for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
             try {
-                nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_DKG_ROUND1, round1Data)).join();
+                nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, round1Data)).join();
                 logger.info("Broadcasted CGGMP_DKG_ROUND1 for task: {} (attempt {}/{})", task.taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
                 round1BroadcastSuccess = true;
                 break;
             } catch (Exception e) {
                 logger.warn("Failed to broadcast CGGMP_DKG_ROUND1 (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
                 if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
-                    Thread.sleep(Constants.DKG_BROADCAST_RETRY_DELAY_MS);
+                    Thread.sleep(Constants.DKG_BROADCAST_RETRY_INTERVAL_MS);
                 }
             }
         }
-        
+
         if (!round1BroadcastSuccess) {
             throw new RuntimeException("Failed to broadcast CGGMP_DKG_ROUND1 after " + Constants.DKG_BROADCAST_RETRY_COUNT + " attempts");
         }
@@ -234,7 +226,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                     round2Data.put("receiverId", receiverId);
                     round2Data.put("share", share.toString(16));
 
-                    nodeService.sendMessage(receiverId, new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_DKG_ROUND2, round2Data)).join();
+                    nodeService.sendMessage(receiverId, new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2, round2Data)).join();
                 }
                 logger.info("Sent CGGMP_DKG_ROUND2 shares for task: {} (attempt {}/{})", task.taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
                 round2SendSuccess = true;
@@ -242,11 +234,11 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             } catch (Exception e) {
                 logger.warn("Failed to send CGGMP_DKG_ROUND2 shares (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
                 if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
-                    Thread.sleep(Constants.DKG_BROADCAST_RETRY_DELAY_MS);
+                    Thread.sleep(Constants.DKG_BROADCAST_RETRY_INTERVAL_MS);
                 }
             }
         }
-        
+
         if (!round2SendSuccess) {
             throw new RuntimeException("Failed to send CGGMP_DKG_ROUND2 shares after " + Constants.DKG_BROADCAST_RETRY_COUNT + " attempts");
         }
@@ -261,7 +253,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         task.startValidating();
         logger.info("Node {} completing DKG", nodeId);
         boolean success = task.cggmpInstance.dkgRound3(task.round2Outputs, task.round1Outputs);
-        
+
         if (!success) {
             throw new Exception("CGGMP DKG failed in Round 3");
         }
@@ -269,22 +261,22 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         task.secretShare = task.cggmpInstance.getSecretShare();
         task.groupPublicKey = task.cggmpInstance.getPublicKey();
         task.groupPublicKeyHex = bytesToHex(task.groupPublicKey.getEncoded(false));
-        
+
         logger.info("CGGMP DKG completed! Group public key: {}", task.groupPublicKeyHex);
     }
 
-    public Map<String, Object> getTaskStatus(String taskId) {
+    public DkgTaskStatusResponse getTaskStatus(String taskId) {
         CggmpDkgTask task = getDkgTask(taskId);
-        Map<String, Object> status = new HashMap<>();
-        status.put("taskId", task.taskId);
-        status.put("status", task.status.get().name());
-        status.put("inProgress", task.isInProgress());
-        status.put("completed", task.isCompleted());
-        status.put("groupPublicKey", task.groupPublicKeyHex);
-        status.put("errorMessage", task.errorMessage);
-        status.put("receivedRound1", task.round1Outputs.size());
-        status.put("receivedRound2", task.round2Outputs.size());
-        return status;
+        DkgTaskStatusResponse response = new DkgTaskStatusResponse();
+        response.setTaskId(task.taskId);
+        response.setStatus(task.status.get().name());
+        response.setInProgress(task.isInProgress());
+        response.setCompleted(task.isCompleted());
+        response.setGroupPublicKey(task.groupPublicKeyHex);
+        response.setErrorMessage(task.errorMessage);
+        response.setReceivedRound1(task.round1Outputs.size());
+        response.setReceivedRound2(task.round2Outputs.size());
+        return response;
     }
 
     public String getGroupPublicKey(String taskId) {
@@ -295,39 +287,23 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         return task.groupPublicKeyHex;
     }
 
-    public BigInteger getSecretShare() {
-        return cggmp != null ? cggmp.getSecretShare() : null;
-    }
-
-    public ECPoint getPublicKey() {
-        return cggmp != null ? cggmp.getPublicKey() : null;
-    }
-
-    public CGGMP getCggmp() {
-        return cggmp;
-    }
-
-    public CGGMPProtocol getProtocol() {
-        return protocol;
-    }
-
     private void handleCggmpDkgInit(int senderId, Object data) {
         if (data instanceof Map) {
             Map<?, ?> dataMap = (Map<?, ?>) data;
             String taskId = (String) dataMap.get("taskId");
             int nodesCount = (Integer) dataMap.get("nodesCount");
             logger.info("Received CGGMP_DKG_INIT from node {} for task: {}, nodesCount: {}", senderId, taskId, nodesCount);
-            
+
             CggmpDkgTask task = new CggmpDkgTask(taskId, nodesCount, threshold);
             CggmpDkgTask existingTask = dkgTasks.putIfAbsent(taskId, task);
-            
+
             if (existingTask != null) {
                 logger.info("DKG task {} already exists, skipping creation", taskId);
                 return;
             }
-            
+
             logger.info("Created DKG task {} on node {}", taskId, nodeId);
-            
+
             startDkgProcess(taskId);
         }
     }
@@ -338,41 +314,41 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             Map<?, ?> dataMap = (Map<?, ?>) data;
             String taskId = (String) dataMap.get("taskId");
             logger.info("Received CGGMP_DKG_ROUND1 from node {} for task: {}", senderId, taskId);
-            
+
             try {
                 CggmpDkgTask task = dkgTasks.get(taskId);
                 if (task == null) {
                     logger.warn("Task {} not found in dkgTasks, ignoring Round1 from node {}", taskId, senderId);
                     return;
                 }
-                
+
                 int senderNodeId = (Integer) dataMap.get("nodeId");
                 if (senderNodeId != senderId) {
                     logger.warn("Discarding CGGMP_DKG_ROUND1: senderId {} does not match payload nodeId {}", senderId, senderNodeId);
                     return;
                 }
-                
+
                 // 检查是否是重复消息（自己已经处理过了）
                 // 注意：如果 senderNodeId == nodeId（当前节点），则这是我们自己之前已经处理过的消息，应该跳过
                 if (senderNodeId == nodeId) {
                     logger.info("Received Round1 from self (node {}), this is our own message, skipping", senderNodeId);
                     return;
                 }
-                
+
                 logger.info("=== DEBUG: senderId={}, senderNodeId={}, match={} ===", senderId, senderNodeId, senderId == senderNodeId);
-                
+
                 if (task.round1Outputs.containsKey(senderNodeId)) {
                     logger.info("Already received Round1 from node {}, skipping", senderNodeId);
                     return;
                 }
-                
+
                 List<String> commitmentHexList = (List<String>) dataMap.get("commitments");
                 String paillierKeyHex = (String) dataMap.get("paillierKey");
-                
-                logger.info("Processing Round1 from node {}: commitments={}, paillierKey={}", 
-                    senderNodeId, commitmentHexList != null ? commitmentHexList.size() : "null", 
-                    paillierKeyHex != null ? "present" : "null");
-                
+
+                logger.info("Processing Round1 from node {}: commitments={}, paillierKey={}",
+                        senderNodeId, commitmentHexList != null ? commitmentHexList.size() : "null",
+                        paillierKeyHex != null ? "present" : "null");
+
                 if (commitmentHexList == null || commitmentHexList.size() != threshold) {
                     logger.warn("Invalid commitments size from node {}: expected {}, got {}", senderNodeId, threshold, commitmentHexList == null ? "null" : commitmentHexList.size());
                     return;
@@ -386,7 +362,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                     }
                     commitments.add(point);
                 }
-                
+
                 PaillierEncryption.PublicKey paillierKey = new PaillierEncryption.PublicKey(new BigInteger(paillierKeyHex, 16));
                 CGGMP.DkgRound1Output output = new CGGMP.DkgRound1Output(senderNodeId, null, commitments, paillierKey);
                 boolean first = task.round1Outputs.putIfAbsent(senderNodeId, output) == null;
@@ -408,7 +384,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             Map<?, ?> dataMap = (Map<?, ?>) data;
             String taskId = (String) dataMap.get("taskId");
             logger.info("Received CGGMP_DKG_ROUND2 from node {} for task: {}", senderId, taskId);
-            
+
             try {
                 CggmpDkgTask task = dkgTasks.get(taskId);
                 if (task != null) {
@@ -417,17 +393,17 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                         logger.warn("Discarding CGGMP_DKG_ROUND2: senderId {} does not match payload nodeId {}", senderId, senderNodeId);
                         return;
                     }
-                    
+
                     if (senderNodeId == nodeId) {
                         logger.info("Received Round2 from self (node {}), this is our own message, skipping", senderNodeId);
                         return;
                     }
-                    
+
                     if (task.round2Outputs.containsKey(senderNodeId)) {
                         logger.info("Already received Round2 from node {}, skipping", senderNodeId);
                         return;
                     }
-                    
+
                     Integer receiverId = (Integer) dataMap.get("receiverId");
                     String shareHex = (String) dataMap.get("share");
                     if (receiverId == null || shareHex == null) {
@@ -440,7 +416,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                     }
                     Map<Integer, BigInteger> shares = new HashMap<>();
                     shares.put(nodeId, new BigInteger(shareHex, 16));
-                    
+
                     CGGMP.DkgRound2Output output = new CGGMP.DkgRound2Output(senderNodeId, shares);
                     boolean first = task.round2Outputs.putIfAbsent(senderNodeId, output) == null;
                     if (first) {
@@ -559,10 +535,10 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                     initData.put("messageHash", Base64.getEncoder().encodeToString(hashMessage(task.message)));
                     try {
                         for (int attempt = 1; attempt <= Constants.SIGNATURE_BROADCAST_RETRY_COUNT; attempt++) {
-                            nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.GG20_SIGN_INIT, initData)).join();
+                            nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GG20_SIGN_INIT, initData)).join();
                             logger.info("Broadcasted GG20_SIGN_INIT for signature task: {} (attempt {}/{})", task.taskId, attempt, Constants.SIGNATURE_BROADCAST_RETRY_COUNT);
                             if (attempt < Constants.SIGNATURE_BROADCAST_RETRY_COUNT) {
-                                Thread.sleep(Constants.SIGNATURE_BROADCAST_RETRY_DELAY_MS);
+                                Thread.sleep(Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS);
                             }
                         }
                     } catch (Exception e) {
@@ -620,29 +596,29 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         }, ThreadPoolUtil.getIoThreadPool());
     }
 
-    public Map<String, Object> getSignatureTaskStatus(String taskId) {
+    public SignatureTaskStatusResponse getSignatureTaskStatus(String taskId) {
         Gg20SignatureTask task = signatureTasks.get(taskId);
         if (task == null) {
             throw new RuntimeException("Signature task not found: " + taskId);
         }
 
-        Map<String, Object> status = new HashMap<>();
-        status.put("taskId", task.taskId);
-        status.put("groupPublicKey", task.groupPublicKey);
-        status.put("inProgress", task.isInProgress());
-        status.put("completed", task.isCompleted());
-        status.put("status", task.status.get().name());
-        status.put("message", task.message);
-        status.put("errorMessage", task.errorMessage);
-        status.put("participants", new ArrayList<>(task.participants));
-        status.put("receivedGammaCommitments", task.participants.size() - 1 - (int) task.gammaCommitmentLatch.getCount());
-        status.put("receivedMtaResponses", task.participants.size() - 1 - (int) task.mtaResponseLatch.getCount());
-        status.put("receivedOffline", task.participants.size() - 1 - (int) task.offlineLatch.getCount());
-        status.put("receivedPartialS", task.participants.size() - 1 - (int) task.partialSLatch.getCount());
-        return status;
+        SignatureTaskStatusResponse response = new SignatureTaskStatusResponse();
+        response.setTaskId(task.taskId);
+        response.setGroupPublicKey(task.groupPublicKey);
+        response.setInProgress(task.isInProgress());
+        response.setCompleted(task.isCompleted());
+        response.setStatus(task.status.get().name());
+        response.setMessage(task.message);
+        response.setErrorMessage(task.errorMessage);
+        response.setParticipants(new ArrayList<>(task.participants));
+        response.setReceivedGammaCommitments(task.participants.size() - 1 - (int) task.gammaCommitmentLatch.getCount());
+        response.setReceivedMtaResponses(task.participants.size() - 1 - (int) task.mtaResponseLatch.getCount());
+        response.setReceivedOffline(task.participants.size() - 1 - (int) task.offlineLatch.getCount());
+        response.setReceivedPartialS(task.participants.size() - 1 - (int) task.partialSLatch.getCount());
+        return response;
     }
 
-    public Map<String, Object> getSignatureResult(String taskId) {
+    public SignatureResultResponse getSignatureResult(String taskId) {
         Gg20SignatureTask task = signatureTasks.get(taskId);
         if (task == null) {
             throw new RuntimeException("Signature task not found: " + taskId);
@@ -652,13 +628,13 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             throw new RuntimeException("Signature task not completed yet: " + taskId);
         }
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("taskId", task.taskId);
-        result.put("groupPublicKey", task.groupPublicKey);
-        result.put("signature", task.signature);
-        result.put("verified", task.verified);
-        result.put("message", task.message);
-        return result;
+        SignatureResultResponse response = new SignatureResultResponse();
+        response.setTaskId(task.taskId);
+        response.setGroupPublicKey(task.groupPublicKey);
+        response.setSignature(task.signature);
+        response.setVerified(task.verified);
+        response.setMessage(task.message);
+        return response;
     }
 
     private byte[] hashMessage(String message) {
@@ -690,30 +666,30 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         Secp256k1PointOps publicKey = task.curveParams.decodePoint(HexUtils.hexToBytes(task.groupPublicKey));
 
         InitContext initContext = InitContext.inMemoryBuilder()
-            .additionalContext(task.taskId.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-            .message(task.messageHash)
-            .build();
+                .additionalContext(task.taskId.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .message(task.messageHash)
+                .build();
 
         CryptoContext<Secp256k1PointOps> cryptoContext = CryptoContext.inMemoryBuilder(Secp256k1PointOps.class)
-            .idx(nodeId)
-            .ski(ski)
-            .participants(new ArrayList<>(task.participants))
-            .memKey(() -> task.memKey.clone())
-            .publicKey(publicKey)
-            .curve(task.curveParams)
-            .build();
+                .idx(nodeId)
+                .ski(ski)
+                .participants(new ArrayList<>(task.participants))
+                .memKey(() -> task.memKey.clone())
+                .publicKey(publicKey)
+                .curve(task.curveParams)
+                .build();
 
         GG20Context<Secp256k1PointOps> context = GG20Context.newBuilder(Secp256k1PointOps.class)
-            .init(initContext)
-            .mta(MtAContext.inMemory())
-            .crypto(cryptoContext)
-            .signature(SignatureContext.inMemory())
-            .build();
+                .init(initContext)
+                .mta(MtAContext.inMemory())
+                .crypto(cryptoContext)
+                .signature(SignatureContext.inMemory())
+                .build();
 
         GG20CommitmentGenerator<Secp256k1PointOps> generator = new GG20CommitmentGenerator<>(
-            task.curveParams.getCurveOrder(),
-            task.curveParams.getG(),
-            task.curveParams.getGeneratorH()
+                task.curveParams.getCurveOrder(),
+                task.curveParams.getG(),
+                task.curveParams.getGeneratorH()
         );
         task.client = new GG20Client<>(task.taskId, context, generator);
         task.client.init();
@@ -725,11 +701,11 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("commitment", Gg20Codec.encodeGammaCommitment(gammaCommitment));
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.GG20_GAMMA_COMMITMENT, data))
-            .exceptionally(ex -> {
-                logger.error("Failed to broadcast GG20_GAMMA_COMMITMENT: {}", ex.getMessage());
-                return null;
-            });
+        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GG20_GAMMA_COMMITMENT, data))
+                .exceptionally(ex -> {
+                    logger.error("Failed to broadcast GG20_GAMMA_COMMITMENT: {}", ex.getMessage());
+                    return null;
+                });
     }
 
     private CompletableFuture<Void> broadcastMtaInit(Gg20SignatureTask task) {
@@ -740,11 +716,11 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         data.put("paillierPublicKey", Gg20Codec.encodePaillierPublicKey(task.client.context().crypto().paillier().publicKey()));
         data.put("zkSetup", Gg20Codec.encodeZkSetup(task.client.context().crypto().zkSetup()));
         data.put("initiatorMessage", Gg20Codec.encodeMtAInitiatorMessage(initiatorMessage));
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.GG20_MTA_INIT, data))
-            .exceptionally(ex -> {
-                logger.error("Failed to broadcast GG20_MTA_INIT: {}", ex.getMessage());
-                return null;
-            });
+        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GG20_MTA_INIT, data))
+                .exceptionally(ex -> {
+                    logger.error("Failed to broadcast GG20_MTA_INIT: {}", ex.getMessage());
+                    return null;
+                });
     }
 
     private CompletableFuture<Void> broadcastOfflineData(Gg20SignatureTask task) {
@@ -760,11 +736,11 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         data.put("deltaShare", Gg20Codec.encodeBigInt(deltaShare));
         data.put("lambdaCommitment", Gg20Codec.encodeChaumCommitmentWithValue(lambdaCommitment));
         data.put("sigmaCommitment", Gg20Codec.encodeChaumCommitment(sigmaCommitment));
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.GG20_OFFLINE, data))
-            .exceptionally(ex -> {
-                logger.error("Failed to broadcast GG20_OFFLINE: {}", ex.getMessage());
-                return null;
-            });
+        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GG20_OFFLINE, data))
+                .exceptionally(ex -> {
+                    logger.error("Failed to broadcast GG20_OFFLINE: {}", ex.getMessage());
+                    return null;
+                });
     }
 
     private void storePartialS(Gg20SignatureTask task, int senderId, BigInt partialS) {
@@ -778,11 +754,11 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("partialS", Gg20Codec.encodeBigInt(partialS));
-        nodeService.sendMessage(task.initiatorId, new NodeService.Message(nodeId, NodeService.Message.Type.GG20_PARTIAL_S, data))
-            .exceptionally(ex -> {
-                logger.error("Failed to send GG20_PARTIAL_S: {}", ex.getMessage());
-                return null;
-            });
+        nodeService.sendMessage(task.initiatorId, new NodeService.Message(nodeId, MessageType.GG20_PARTIAL_S, data))
+                .exceptionally(ex -> {
+                    logger.error("Failed to send GG20_PARTIAL_S: {}", ex.getMessage());
+                    return null;
+                });
     }
 
     private ECPublicKey getEcPublicKey() throws Exception {
@@ -842,8 +818,8 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
 
     @Override
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
-        logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===", 
-            senderId, message.type, message.data instanceof Map ? ((Map<?,?>)message.data).get("taskId") : "N/A");
+        logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
+                senderId, message.type, message.data instanceof Map ? ((Map<?, ?>) message.data).get("taskId") : "N/A");
         return CompletableFuture.runAsync(() -> {
             try {
                 logger.info("=== CGGMP processing: type={} ===", message.type);
@@ -932,10 +908,10 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                             return;
                         }
                         startSignatureTaskInternal(signatureTaskId, false)
-                            .exceptionally(ex -> {
-                                logger.error("Failed to start GG20 signature task {} from GG20_SIGN_INIT: {}", signatureTaskId, ex.getMessage());
-                                return null;
-                            });
+                                .exceptionally(ex -> {
+                                    logger.error("Failed to start GG20 signature task {} from GG20_SIGN_INIT: {}", signatureTaskId, ex.getMessage());
+                                    return null;
+                                });
                     }, ThreadPoolUtil.getIoThreadPool());
                 } else {
                     logger.info("GG20 signature task {} already exists, ignoring GG20_SIGN_INIT", signatureTaskId);
@@ -1007,7 +983,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             resp.put("responderId", nodeId);
             resp.put("alpha", Gg20Codec.encodeMtAResult(alpha));
             resp.put("mu", Gg20Codec.encodeMtAResult(mu));
-            nodeService.sendMessage(initiatorId, new NodeService.Message(nodeId, NodeService.Message.Type.GG20_MTA_RESPONSE, resp)).join();
+            nodeService.sendMessage(initiatorId, new NodeService.Message(nodeId, MessageType.GG20_MTA_RESPONSE, resp)).join();
         } catch (Exception e) {
             logger.error("Failed to handle GG20_MTA_INIT from node {}: {}", senderId, e.getMessage());
         }
@@ -1063,9 +1039,9 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             Secp256k1PointOps gamma = Gg20Codec.decodePoint(task.curveParams, (String) dataMap.get("gamma"));
             BigInt deltaShare = Gg20Codec.decodeBigInt((String) dataMap.get("deltaShare"));
             ChaumPedersenCommitmentWithValue<Secp256k1PointOps> lambdaCommitment =
-                Gg20Codec.decodeChaumCommitmentWithValue(task.curveParams, (Map<?, ?>) dataMap.get("lambdaCommitment"));
+                    Gg20Codec.decodeChaumCommitmentWithValue(task.curveParams, (Map<?, ?>) dataMap.get("lambdaCommitment"));
             ChaumPedersenCommitment<Secp256k1PointOps> sigmaCommitment =
-                Gg20Codec.decodeChaumCommitment(task.curveParams, (Map<?, ?>) dataMap.get("sigmaCommitment"));
+                    Gg20Codec.decodeChaumCommitment(task.curveParams, (Map<?, ?>) dataMap.get("sigmaCommitment"));
 
             task.client.signature().storeGamma(senderId, gamma);
             task.client.context().signature().storeDeltaShare(senderId, deltaShare);

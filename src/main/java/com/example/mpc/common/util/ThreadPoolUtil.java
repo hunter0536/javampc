@@ -1,4 +1,4 @@
-package com.example.mpc.util;
+package com.example.mpc.common.util;
 
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -22,7 +22,6 @@ public class ThreadPoolUtil {
     };
     private static final RejectedExecutionHandler REJECTED_HANDLER = new ThreadPoolExecutor.CallerRunsPolicy();
 
-    // 计算线程池 - 用于CPU密集型任务
     private static final ExecutorService computationThreadPool = new ThreadPoolExecutor(
             CORE_POOL_SIZE,
             MAX_POOL_SIZE,
@@ -33,57 +32,34 @@ public class ThreadPoolUtil {
             REJECTED_HANDLER
     );
 
-    // IO线程池 - 用于IO密集型任务
     private static final ExecutorService ioThreadPool = Executors.newCachedThreadPool();
 
-    // 单线程池 - 用于任务协调
     private static final ExecutorService singleThreadPool = Executors.newSingleThreadExecutor();
 
-    /**
-     * 获取计算线程池
-     */
     public static ExecutorService getComputationThreadPool() {
         return computationThreadPool;
     }
 
-    /**
-     * 获取IO线程池
-     */
     public static ExecutorService getIoThreadPool() {
         return ioThreadPool;
     }
 
-    /**
-     * 获取单线程池
-     */
     public static ExecutorService getSingleThreadPool() {
         return singleThreadPool;
     }
 
-    /**
-     * 提交任务到计算线程池
-     */
     public static CompletableFuture<Void> submitToComputationThreadPool(Runnable task) {
         return CompletableFuture.runAsync(task, computationThreadPool);
     }
 
-    /**
-     * 提交任务到IO线程池
-     */
     public static CompletableFuture<Void> submitToIoThreadPool(Runnable task) {
         return CompletableFuture.runAsync(task, ioThreadPool);
     }
 
-    /**
-     * 提交IO任务（简化方法）
-     */
     public static CompletableFuture<Void> submitIoTask(Runnable task) {
         return CompletableFuture.runAsync(task, ioThreadPool);
     }
 
-    /**
-     * 关闭所有线程池
-     */
     public static void shutdown() {
         computationThreadPool.shutdown();
         ioThreadPool.shutdown();

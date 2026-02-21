@@ -1,7 +1,6 @@
 package com.example.mpc.model;
 
 import com.example.mpc.cggmp.CGGMP;
-import com.example.mpc.cggmp.CGGMPProtocol;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.TaskStatus;
@@ -13,7 +12,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class CggmpDkgTask {
-    public static final long DEFAULT_TIMEOUT_MS = Constants.DKG_TASK_DEFAULT_TIMEOUT_MS;
+    public static final long DEFAULT_TIMEOUT_MS = Constants.DKG_TASK_TIMEOUT_MS;
 
     public final String taskId;
     public final int nodesCount;

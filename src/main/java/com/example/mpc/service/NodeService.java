@@ -1,8 +1,9 @@
 package com.example.mpc.service;
 
 import com.example.mpc.constant.Constants;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.netty.NettyService;
-import com.example.mpc.util.ThreadPoolUtil;
+import com.example.mpc.common.util.ThreadPoolUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,57 +17,53 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class NodeService {
-    
+
     private static final Logger logger = LoggerFactory.getLogger(NodeService.class);
-    
+
     @Value("${node.id}")
     private int nodeId;
-    
+
     @Value("${node.port}")
     private int nodePort;
-    
+
     @Value("${discovery.port}")
     private int discoveryPort;
-    
+
     @Value("#{'${discovery.broadcast.ports}'.split(',')}")
     private List<String> discoveryBroadcastPorts;
 
     @Value("#{'${nodes.peers:}'.isEmpty() ? null : '${nodes.peers:}'.split(',')}")
     private List<String> peerNodes;
-    
+
     // 使用Constants中的常量
     private final int nodesCount = Constants.NODES_COUNT;
-    
+
     // P2P通信
     private com.example.mpc.service.netty.NettyService nettyService;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong taskCount = new AtomicLong(0);
     private final AtomicLong completedTaskCount = new AtomicLong(0);
     private final AtomicLong totalTaskTime = new AtomicLong(0);
-    
+
     // 网络拓扑
     private final ConcurrentHashMap<Integer, NodeInfo> nodes = new ConcurrentHashMap<>();
     private final AtomicBoolean discoveryRunning = new AtomicBoolean(false);
     private final ConcurrentHashMap<Integer, java.util.concurrent.CopyOnWriteArrayList<MessageHandler>> messageHandlers = new ConcurrentHashMap<>();
     private ScheduledExecutorService discoveryScheduler;
-    
+
     // 节点信息类
     public static class NodeInfo {
         public final int id;
         public final String host;
         public final int port;
         public long lastSeen;
-        
+
         public NodeInfo(int id, String host, int port) {
             this.id = id;
             this.host = host;
@@ -74,52 +71,25 @@ public class NodeService {
             this.lastSeen = System.currentTimeMillis();
         }
     }
-    
+
     // 消息处理器接口
     public interface MessageHandler {
         CompletableFuture<Void> handleMessage(int senderId, Message message) throws Exception;
     }
-    
+
     // 消息类
     public static class Message implements Serializable {
-        public enum Type {
-            COMMITMENT,      // 验证点（承诺）
-            SHARE,            // 份额
-            PUBLIC_KEY_PART,  // 公钥部分
-            SIGNATURE_SHARE,  // 签名份额
-            SIGN_COMMITMENT,  // 签名承诺
-            DKG_INIT,         // DKG初始化
-            SIGN_INIT,        // 签名初始化
-            PING,             // 心跳
-            PONG,             // 心跳响应
-            // CGGMP相关消息
-            CGGMP_DKG_INIT,           // CGGMP DKG初始化
-            CGGMP_DKG_ROUND1,         // CGGMP DKG第1轮
-            CGGMP_DKG_ROUND2,         // CGGMP DKG第2轮
-            CGGMP_SIGN_INIT,          // CGGMP签名初始化
-            CGGMP_SIGN_ROUND1,        // CGGMP签名第1轮
-            CGGMP_SIGN_ROUND2,        // CGGMP签名第2轮
-            CGGMP_SIGN_ROUND3,        // CGGMP签名第3轮
-            // GG20相关消息
-            GG20_SIGN_INIT,           // GG20签名初始化
-            GG20_GAMMA_COMMITMENT,    // GG20 Gamma承诺
-            GG20_MTA_INIT,            // GG20 MTA初始化
-            GG20_MTA_RESPONSE,        // GG20 MTA响应
-            GG20_OFFLINE,             // GG20 离线阶段数据
-            GG20_PARTIAL_S            // GG20 部分签名s
-        }
-        
         public final int senderId;
-        public final Type type;
+        public final MessageType type;
         public final Object data;
-        
-        public Message(int senderId, Type type, Object data) {
+
+        public Message(int senderId, MessageType type, Object data) {
             this.senderId = senderId;
             this.type = type;
             this.data = data;
         }
     }
-    
+
     /**
      * 启动P2P服务器和节点发现
      */
@@ -128,20 +98,20 @@ public class NodeService {
             if (running.get()) {
                 return;
             }
-            
+
             running.set(true);
-            
+
             try {
                 // 启动Netty服务器
                 nettyService = new NettyService(nodePort, messageHandlers);
                 nettyService.startServer();
-                
+
                 // 启动节点发现
                 submitTask(this::startNodeDiscovery);
 
                 // 连接配置的静态节点（绕过UDP广播限制）
                 submitTask(this::connectStaticPeers);
-                
+
                 logger.info("P2P server started for node {} on port {}", nodeId, nodePort);
             } catch (Exception e) {
                 logger.error("Error starting P2P server: {}", e.getMessage());
@@ -149,7 +119,7 @@ public class NodeService {
             }
         });
     }
-    
+
     /**
      * 启动节点发现服务
      */
@@ -157,9 +127,9 @@ public class NodeService {
         if (discoveryRunning.get()) {
             return;
         }
-        
+
         discoveryRunning.set(true);
-        
+
         // 启动发现服务器
         ThreadPoolUtil.getIoThreadPool().submit(() -> {
             try (DatagramSocket socket = new DatagramSocket(discoveryPort)) {
@@ -176,7 +146,7 @@ public class NodeService {
                 }
             }
         });
-        
+
         // 启动发现客户端
         ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
         scheduler.scheduleAtFixedRate(() -> {
@@ -185,7 +155,7 @@ public class NodeService {
                 if (discoveryRunning.get()) {
                     String message = "DISCOVER_NODE:" + nodeId + ":" + nodePort;
                     byte[] buffer = message.getBytes();
-                    
+
                     // 向配置中的发现端口发送广播，排除当前节点自己的端口
                     if (discoveryBroadcastPorts != null) {
                         for (String portStr : discoveryBroadcastPorts) {
@@ -209,8 +179,8 @@ public class NodeService {
                     logger.error("Error in discovery client: {}", e.getMessage());
                 }
             }
-        }, 0, Constants.DISCOVERY_INTERVAL, TimeUnit.MILLISECONDS);
-        
+        }, 0, Constants.NODE_DISCOVERY_INTERVAL_MS, TimeUnit.MILLISECONDS);
+
         // 保存scheduler引用，以便在停止时关闭
         this.discoveryScheduler = scheduler;
     }
@@ -251,17 +221,17 @@ public class NodeService {
 
                 if (nettyService != null) {
                     nettyService.connectToNode(peerId, host, port)
-                        .exceptionally(ex -> {
-                            logger.error("Failed to connect to static peer {}: {}", trimmed, ex.getMessage());
-                            return null;
-                        });
+                            .exceptionally(ex -> {
+                                logger.error("Failed to connect to static peer {}: {}", trimmed, ex.getMessage());
+                                return null;
+                            });
                 }
             } catch (Exception e) {
                 logger.warn("Invalid peer config: {}", trimmed);
             }
         }
     }
-    
+
     /**
      * 处理发现消息
      */
@@ -272,13 +242,13 @@ public class NodeService {
                 try {
                     int nodeId = Integer.parseInt(parts[1]);
                     int nodePort = Integer.parseInt(parts[2]);
-                    
+
                     // 不添加自己
                     if (nodeId != this.nodeId) {
                         NodeInfo nodeInfo = new NodeInfo(nodeId, address.getHostAddress(), nodePort);
                         nodes.put(nodeId, nodeInfo);
                         logger.info("Discovered node: {} at {}:{}", nodeId, address.getHostAddress(), nodePort);
-                        
+
                         // 自动连接到新发现的节点
                         if (nettyService != null) {
                             submitTask(() -> {
@@ -297,7 +267,7 @@ public class NodeService {
             }
         }
     }
-    
+
     /**
      * 停止P2P服务器
      */
@@ -305,7 +275,7 @@ public class NodeService {
         return ThreadPoolUtil.submitIoTask(() -> {
             running.set(false);
             discoveryRunning.set(false);
-            
+
             if (discoveryScheduler != null) {
                 discoveryScheduler.shutdown();
                 try {
@@ -317,13 +287,13 @@ public class NodeService {
                     Thread.currentThread().interrupt();
                 }
             }
-            
+
             if (nettyService != null) {
                 nettyService.shutdown();
             }
         });
     }
-    
+
     /**
      * 发送消息到指定节点
      */
@@ -333,7 +303,7 @@ public class NodeService {
             logger.warn("sendMessage: receiver {} not in nodes map (known={}) for type {}", receiverId, nodes.keySet(), message.type);
             return CompletableFuture.failedFuture(new RuntimeException("Node " + receiverId + " not found in network"));
         }
-        
+
         if (nettyService == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Netty service not initialized"));
         }
@@ -341,56 +311,58 @@ public class NodeService {
         var channel = nettyService.getNodeChannel(receiverId);
         if (channel == null || !channel.isActive()) {
             return nettyService.connectToNode(receiverId, nodeInfo.host, nodeInfo.port)
-                .thenCompose(v -> nettyService.sendMessage(receiverId, message))
+                    .thenCompose(v -> nettyService.sendMessage(receiverId, message))
+                    .exceptionally(ex -> {
+                        logger.error("Failed to send message to node {}: {}", receiverId, ex.getMessage());
+                        throw new RuntimeException(ex);
+                    });
+        }
+
+        return nettyService.sendMessage(receiverId, message)
                 .exceptionally(ex -> {
                     logger.error("Failed to send message to node {}: {}", receiverId, ex.getMessage());
                     throw new RuntimeException(ex);
                 });
-        }
-
-        return nettyService.sendMessage(receiverId, message)
-            .exceptionally(ex -> {
-                logger.error("Failed to send message to node {}: {}", receiverId, ex.getMessage());
-                throw new RuntimeException(ex);
-            });
     }
-    
+
     /**
      * 广播消息到所有其他节点
      */
     public CompletableFuture<Void> broadcastMessage(Message message) {
-        logger.info("=== broadcastMessage START: type={}, fromNode={}, knownNodes={} ===", 
-            message.type, nodeId, nodes.keySet());
+        logger.info("=== broadcastMessage START: type={}, fromNode={}, knownNodes={} ===",
+                message.type, nodeId, nodes.keySet());
         // 回退到传统方式，使用并行发送
         List<CompletableFuture<Void>> futures = new ArrayList<>();
-        
+
         // 并行发送消息到所有节点
         for (NodeInfo nodeInfo : nodes.values()) {
             if (nodeInfo.id != nodeId) {
                 logger.info("=== broadcastMessage: sending {} to node {} ===", message.type, nodeInfo.id);
                 CompletableFuture<Void> future = sendMessage(nodeInfo.id, message)
-                    .exceptionally(ex -> {
-                        logger.error("=== FAILED to broadcast message to node {}: {} ===", nodeInfo.id, ex.getMessage());
-                        return null;
-                    });
+                        .exceptionally(ex -> {
+                            logger.error("=== FAILED to broadcast message to node {}: {} ===", nodeInfo.id, ex.getMessage());
+                            return null;
+                        });
                 futures.add(future);
             }
         }
-        
+
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
     }
-    
+
     /**
      * 注册消息处理器
-     * @param nodeId 节点ID
+     *
+     * @param nodeId  节点ID
      * @param handler 消息处理器
      */
     public void registerMessageHandler(int nodeId, MessageHandler handler) {
         messageHandlers.computeIfAbsent(nodeId, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(handler);
     }
-    
+
     /**
      * 取消注册消息处理器
+     *
      * @param nodeId 节点ID
      */
     public void unregisterMessageHandler(int nodeId) {
@@ -399,7 +371,8 @@ public class NodeService {
 
     /**
      * 取消注册消息处理器（按处理器实例）
-     * @param nodeId 节点ID
+     *
+     * @param nodeId  节点ID
      * @param handler 消息处理器
      */
     public void unregisterMessageHandler(int nodeId, MessageHandler handler) {
@@ -412,9 +385,10 @@ public class NodeService {
             messageHandlers.remove(nodeId, handlers);
         }
     }
-    
+
     /**
      * 获取当前网络中的节点列表
+     *
      * @return 节点列表
      */
     public List<NodeInfo> getNodes() {
@@ -424,9 +398,10 @@ public class NodeService {
     public Map<Integer, NodeInfo> getNodesSnapshot() {
         return new HashMap<>(nodes);
     }
-    
+
     /**
      * 等待网络稳定（至少发现所有节点）
+     *
      * @throws InterruptedException 中断异常
      */
     public CompletableFuture<Void> waitForNetworkReady() {
@@ -443,17 +418,19 @@ public class NodeService {
             }
         });
     }
-    
+
     /**
      * 检查网络是否稳定
+     *
      * @return 是否稳定
      */
     public boolean isNetworkReady() {
         return nodes.size() >= nodesCount - 1;
     }
-    
+
     /**
      * 获取线程池状态
+     *
      * @return 线程池状态信息
      */
     public Map<String, Object> getThreadPoolStatus() {
@@ -466,15 +443,16 @@ public class NodeService {
         }
         return status;
     }
-    
+
     /**
      * 提交任务并记录执行时间
+     *
      * @param task 任务
      */
     public void submitTask(Runnable task) {
         long startTime = System.currentTimeMillis();
         taskCount.incrementAndGet();
-        
+
         ThreadPoolUtil.getIoThreadPool().submit(() -> {
             try {
                 task.run();

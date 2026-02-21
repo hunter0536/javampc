@@ -9,7 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class DkgTask {
+public class GennaroDkgTask {
     public final String taskId;
     public final int nodesCount;
     public List<BigInteger> coefficients;
@@ -30,7 +30,7 @@ public class DkgTask {
     public boolean groupPublicKeyGenerated = false;
     public volatile long startedAtMs = 0L;
 
-    public DkgTask(String taskId, int nodesCount) {
+    public GennaroDkgTask(String taskId, int nodesCount) {
         this.taskId = taskId;
         this.nodesCount = nodesCount;
         this.commitmentsReceivedLatch = new CountDownLatch(nodesCount - 1);

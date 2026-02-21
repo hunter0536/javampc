@@ -2,7 +2,7 @@ package com.example.mpc.dao;
 
 import com.example.mpc.model.KeyShare;
 import com.example.mpc.service.DatabaseService;
-import com.example.mpc.util.ThreadPoolUtil;
+import com.example.mpc.common.util.ThreadPoolUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
