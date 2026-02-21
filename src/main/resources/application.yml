@@ -19,7 +19,9 @@ discovery:
 # 日志配置
 logging:
   level:
-    com.example.mpc: info
+    com.example.mpc: debug
+    com.example.mpc.service.NodeService: warn
+    com.example.mpc.service.netty: warn
 
 # 应用初始化配置
 app:

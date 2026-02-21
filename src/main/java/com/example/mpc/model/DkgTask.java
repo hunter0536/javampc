@@ -27,8 +27,6 @@ public class DkgTask {
     public String groupPublicKey;
     public volatile String errorMessage;
     public final AtomicReference<TaskStatus> status = new AtomicReference<>(TaskStatus.PENDING);
-    public boolean inProgress = false;
-    public boolean completed = false;
     public boolean groupPublicKeyGenerated = false;
     public volatile long startedAtMs = 0L;
 
@@ -42,7 +40,6 @@ public class DkgTask {
 
     public boolean start() {
         if (status.compareAndSet(TaskStatus.PENDING, TaskStatus.IN_PROGRESS)) {
-            inProgress = true;
             startedAtMs = System.currentTimeMillis();
             return true;
         }
@@ -51,13 +48,10 @@ public class DkgTask {
 
     public void complete() {
         status.set(TaskStatus.COMPLETED);
-        inProgress = false;
-        completed = true;
     }
 
     public void fail() {
         status.set(TaskStatus.FAILED);
-        inProgress = false;
     }
 
     public boolean isInProgress() {

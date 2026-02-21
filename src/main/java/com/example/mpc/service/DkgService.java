@@ -1,6 +1,7 @@
 package com.example.mpc.service;
 
 import com.example.mpc.constant.Constants;
+import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.model.DkgTask;
 import com.example.mpc.model.KeyShare;
 import com.example.mpc.util.ThreadPoolUtil;
@@ -22,9 +23,6 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.ECGenParameterSpec;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,6 +40,9 @@ public class DkgService implements NodeService.MessageHandler {
     
     @Autowired
     private NodeService nodeService;
+    
+    @Autowired
+    private KeyShareDao keyShareDao;
     
     @Value("${node.id}")
     private int nodeId;
@@ -87,8 +88,8 @@ public class DkgService implements NodeService.MessageHandler {
         Map<String, Object> status = new HashMap<>();
         status.put("taskId", task.taskId);
         status.put("status", task.status.get().name());
-        status.put("inProgress", task.inProgress);
-        status.put("completed", task.completed);
+        status.put("inProgress", task.isInProgress());
+        status.put("completed", task.isCompleted());
         status.put("groupPublicKey", task.groupPublicKey);
         status.put("errorMessage", task.errorMessage);
         status.put("receivedCommitments", task.receivedCommitments.size());
@@ -107,8 +108,7 @@ public class DkgService implements NodeService.MessageHandler {
             throw new RuntimeException("DKG task not found: " + taskId);
         }
         
-        if (!task.completed) {
-            // 任务未完成时返回null，而不是抛出异常
+        if (!task.isCompleted()) {
             return null;
         }
         
@@ -229,31 +229,36 @@ public class DkgService implements NodeService.MessageHandler {
                 // 广播DKG_INIT消息，通知其他节点启动对应的DKG任务
                 Map<String, Object> initData = new HashMap<>();
                 initData.put("taskId", taskId);
-                try {
-                    for (int attempt = 1; attempt <= 3; attempt++) {
+                boolean initBroadcastSuccess = false;
+                for (int attempt = 1; attempt <= 3; attempt++) {
+                    try {
                         nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.DKG_INIT, initData)).join();
                         logger.info("Broadcasted DKG_INIT message for task: {} (attempt {}/3)", taskId, attempt);
+                        initBroadcastSuccess = true;
+                        break;
+                    } catch (Exception e) {
+                        logger.warn("Failed to broadcast DKG_INIT (attempt {}/3): {}", attempt, e.getMessage());
                         if (attempt < 3) {
                             Thread.sleep(1000);
                         }
                     }
-                } catch (Exception e) {
-                    logger.warn("Failed to broadcast DKG_INIT message, but proceeding with DKG process: {}", e.getMessage());
+                }
+                
+                if (!initBroadcastSuccess) {
+                    logger.warn("Failed to broadcast DKG_INIT after 3 attempts, proceeding with DKG process anyway");
                 }
                 
                 // 开始DKG流程
                 generateDistributedKey(taskId).join();
                 
                 dkgInProgress.set(false);
-                task.inProgress = false;
-                task.completed = true;
+                task.complete();
                 logger.info("DKG process completed for task: {}", taskId);
             } catch (Exception e) {
                 if (started) {
                     dkgInProgress.set(false);
                 }
                 if (task != null) {
-                    task.inProgress = false;
                     task.fail();
                     task.errorMessage = e.getMessage();
                 }
@@ -335,12 +340,23 @@ public class DkgService implements NodeService.MessageHandler {
                 }
                 commitmentData.put("verificationPoints", encodedVerificationPoints);
                 commitmentData.put("maskingVerificationPoints", encodedMaskingVerificationPoints);
+                boolean commitmentBroadcastSuccess = false;
                 for (int attempt = 1; attempt <= 3; attempt++) {
-                    nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.COMMITMENT, commitmentData)).join();
-                    logger.info("Broadcasted verification points for task: {} (attempt {}/3)", taskId, attempt);
-                    if (attempt < 3) {
-                        Thread.sleep(1000);
+                    try {
+                        nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.COMMITMENT, commitmentData)).join();
+                        logger.info("Broadcasted verification points for task: {} (attempt {}/3)", taskId, attempt);
+                        commitmentBroadcastSuccess = true;
+                        break;
+                    } catch (Exception e) {
+                        logger.warn("Failed to broadcast COMMITMENT (attempt {}/3): {}", attempt, e.getMessage());
+                        if (attempt < 3) {
+                            Thread.sleep(1000);
+                        }
                     }
+                }
+                
+                if (!commitmentBroadcastSuccess) {
+                    throw new RuntimeException("Failed to broadcast COMMITMENT after 3 attempts");
                 }
                 
                 // 步骤4: 等待接收所有其他节点的验证点
@@ -369,7 +385,7 @@ public class DkgService implements NodeService.MessageHandler {
                         // 生成遮蔽份额
                         BigInteger maskingShare = evaluatePolynomial(task.maskingCoefficients, BigInteger.valueOf(nodeInfo.id));
                         // 组合份额 = 实际份额 + 遮蔽份额
-                        BigInteger combinedShare = actualShare.add(maskingShare);
+                        BigInteger combinedShare = actualShare.add(maskingShare).mod(getCurveOrder());
                         
                         Map<String, Object> shareData = new HashMap<>();
                         shareData.put("taskId", taskId);
@@ -404,13 +420,14 @@ public class DkgService implements NodeService.MessageHandler {
                 logger.info("Verified all received shares for task: {}", taskId);
                 
                 // 步骤9: 计算最终份额（所有收到的份额之和 + 自己的份额）
+                BigInteger curveOrder = getCurveOrder();
                 task.finalKeyShare = BigInteger.ZERO;
                 for (BigInteger share : task.receivedShares.values()) {
-                    task.finalKeyShare = task.finalKeyShare.add(share);
+                    task.finalKeyShare = task.finalKeyShare.add(share).mod(curveOrder);
                 }
                 BigInteger selfActualShare = evaluatePolynomial(task.coefficients, BigInteger.valueOf(nodeId));
                 BigInteger selfMaskingShare = evaluatePolynomial(task.maskingCoefficients, BigInteger.valueOf(nodeId));
-                task.finalKeyShare = task.finalKeyShare.add(selfActualShare.add(selfMaskingShare));
+                task.finalKeyShare = task.finalKeyShare.add(selfActualShare.add(selfMaskingShare)).mod(curveOrder);
                 logger.info("Calculated final key share for task: {}", taskId);
                 
                 // 步骤10: 去中心化生成群公钥
@@ -552,38 +569,47 @@ public class DkgService implements NodeService.MessageHandler {
      * @param degree 多项式次数
      * @return 多项式系数
      */
-    private List<BigInteger> generateRandomPolynomial(int degree) {
+    private List<BigInteger> generateRandomPolynomial(int degree) throws Exception {
         List<BigInteger> coefficients = new ArrayList<>();
+        BigInteger curveOrder = getCurveOrder();
         
-        // 生成随机常数项（节点的秘密）
-        BigInteger secret = new BigInteger(256, new SecureRandom());
+        BigInteger secret = new BigInteger(curveOrder.bitLength() - 1, new SecureRandom()).mod(curveOrder);
         coefficients.add(secret);
         
-        // 生成随机系数
         for (int i = 1; i <= degree; i++) {
-            coefficients.add(new BigInteger(256, new SecureRandom()));
+            coefficients.add(new BigInteger(curveOrder.bitLength() - 1, new SecureRandom()).mod(curveOrder));
         }
         
         return coefficients;
     }
     
-    /**
-     * 生成遮蔽多项式（Gennaro DKG）
-     * @param degree 多项式次数
-     * @return 遮蔽多项式系数
-     */
-    private List<BigInteger> generateMaskingPolynomial(int degree) {
+    private List<BigInteger> generateMaskingPolynomial(int degree) throws Exception {
         List<BigInteger> coefficients = new ArrayList<>();
+        BigInteger curveOrder = getCurveOrder();
         
-        // 遮蔽多项式的常数项为0
         coefficients.add(BigInteger.ZERO);
         
-        // 生成随机系数
         for (int i = 1; i <= degree; i++) {
-            coefficients.add(new BigInteger(256, new SecureRandom()));
+            coefficients.add(new BigInteger(curveOrder.bitLength() - 1, new SecureRandom()).mod(curveOrder));
         }
         
         return coefficients;
+    }
+    
+    private BigInteger getCurveOrder() throws Exception {
+        String cacheKey = "curveOrder_" + Constants.CURVE_NAME;
+        return (BigInteger) cryptoCache.computeIfAbsent(cacheKey, k -> {
+            try {
+                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
+                ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
+                keyPairGenerator.initialize(ecSpec);
+                KeyPair keyPair = keyPairGenerator.generateKeyPair();
+                ECPublicKey publicKey = (ECPublicKey) keyPair.getPublic();
+                return publicKey.getParameters().getN();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
     }
     
     /**
@@ -692,215 +718,29 @@ public class DkgService implements NodeService.MessageHandler {
      * @param x 点的x坐标
      * @return 多项式在x点的值
      */
-    private BigInteger evaluatePolynomial(List<BigInteger> coefficients, BigInteger x) {
+    private BigInteger evaluatePolynomial(List<BigInteger> coefficients, BigInteger x) throws Exception {
+        BigInteger curveOrder = getCurveOrder();
         BigInteger result = BigInteger.ZERO;
         BigInteger xPower = BigInteger.ONE;
         
         for (BigInteger coefficient : coefficients) {
-            result = result.add(coefficient.multiply(xPower));
-            xPower = xPower.multiply(x);
+            result = result.add(coefficient.multiply(xPower)).mod(curveOrder);
+            xPower = xPower.multiply(x).mod(curveOrder);
         }
         
         return result;
     }
     
-    /**
-     * 保存密钥份额到本节点数据库
-     * @param keyShare 密钥份额对象
-     * @throws SQLException 异常
-     */
-    private void saveKeyShareToDatabase(KeyShare keyShare) throws SQLException {
-        String insertSql;
-        String selectSql = "SELECT last_insert_rowid()";
-
-        Connection conn = null;
-        PreparedStatement insertStmt = null;
-        PreparedStatement selectStmt = null;
-        try {
-            boolean hasWalletId = false;
-            try (var metaConn = databaseService.getShareConnection(keyShare.getShareIndex());
-                 var metaStmt = metaConn.createStatement();
-                 var rs = metaStmt.executeQuery("PRAGMA table_info(key_shares)")) {
-                while (rs.next()) {
-                    String name = rs.getString("name");
-                    if ("wallet_id".equalsIgnoreCase(name)) {
-                        hasWalletId = true;
-                        break;
-                    }
-                }
-            } catch (Exception e) {
-                hasWalletId = false;
-            }
-
-            insertSql = hasWalletId
-                ? "INSERT INTO key_shares (wallet_id, share_index, key_share, group_public_key, dkg_task_id) VALUES (?, ?, ?, ?, ?)"
-                : "INSERT INTO key_shares (share_index, key_share, group_public_key, dkg_task_id) VALUES (?, ?, ?, ?)";
-
-            conn = databaseService.getShareConnection(keyShare.getShareIndex());
-            insertStmt = conn.prepareStatement(insertSql);
-            selectStmt = conn.prepareStatement(selectSql);
-
-            int index = 1;
-            if (hasWalletId) {
-                insertStmt.setInt(index++, 0);
-            }
-            insertStmt.setInt(index++, keyShare.getShareIndex());
-            insertStmt.setString(index++, keyShare.getKeyShare());
-            insertStmt.setString(index++, keyShare.getGroupPublicKey());
-            insertStmt.setString(index, keyShare.getDkgTaskId());
-            insertStmt.executeUpdate();
-            
-            // 获取生成的ID
-            var rs = selectStmt.executeQuery();
-            if (rs.next()) {
-                keyShare.setId(rs.getLong(1));
-            }
-        } finally {
-            // 关闭语句
-            if (selectStmt != null) {
-                try {
-                    selectStmt.close();
-                } catch (SQLException e) {
-                    logger.error("Error closing statement: {}", e.getMessage());
-                }
-            }
-            if (insertStmt != null) {
-                try {
-                    insertStmt.close();
-                } catch (SQLException e) {
-                    logger.error("Error closing statement: {}", e.getMessage());
-                }
-            }
-            // 回收连接
-            if (conn != null) {
-                databaseService.releaseShareConnection(conn, keyShare.getShareIndex());
-            }
-        }
+    private void saveKeyShareToDatabase(KeyShare keyShare) throws Exception {
+        keyShareDao.save(keyShare);
     }
     
-    /**
-     * 从本节点数据库加载密钥份额
-     * @param groupPublicKey 群公钥
-     * @return 密钥份额
-     * @throws SQLException 异常
-     */
     public CompletableFuture<KeyShare> loadKeyShareByGroupPublicKey(String groupPublicKey) {
-        return CompletableFuture.supplyAsync(() -> {
-            Connection conn = null;
-            PreparedStatement pstmt = null;
-            try {
-                logger.info("Loading key share for group public key: {}", groupPublicKey);
-                logger.info("Node ID: {}", nodeId);
-                
-                // 先查询所有记录，看看数据库中有什么
-                String debugSql = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares ORDER BY id DESC LIMIT 5";
-                conn = databaseService.getShareConnection(nodeId);
-                logger.info("Connected to database successfully");
-                
-                // 执行调试查询
-                try (PreparedStatement debugStmt = conn.prepareStatement(debugSql)) {
-                    var debugRs = debugStmt.executeQuery();
-                    logger.info("Debug query results:");
-                    while (debugRs.next()) {
-                        String dbGroupPublicKey = debugRs.getString("group_public_key");
-                        logger.info("DB Group Public Key: {}", dbGroupPublicKey);
-                        logger.info("Match: {}", groupPublicKey.equals(dbGroupPublicKey));
-                        logger.info("Length match: {}", groupPublicKey.length() == dbGroupPublicKey.length());
-                        if (groupPublicKey.length() == dbGroupPublicKey.length()) {
-                            for (int i = 0; i < groupPublicKey.length(); i++) {
-                                if (groupPublicKey.charAt(i) != dbGroupPublicKey.charAt(i)) {
-                                    logger.info("Mismatch at position {}: '{}' vs '{}'", i, groupPublicKey.charAt(i), dbGroupPublicKey.charAt(i));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // 执行正式查询
-                String sql = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares WHERE group_public_key = ? ORDER BY id DESC LIMIT 1";
-                pstmt = conn.prepareStatement(sql);
-                pstmt.setString(1, groupPublicKey);
-                logger.info("Executing query with group public key");
-                var rs = pstmt.executeQuery();
-                
-                if (rs.next()) {
-                    logger.info("Found key share in database!");
-                    KeyShare keyShare = new KeyShare();
-                    keyShare.setId(rs.getLong("id"));
-                    keyShare.setShareIndex(rs.getInt("share_index"));
-                    keyShare.setKeyShare(rs.getString("key_share"));
-                    keyShare.setGroupPublicKey(rs.getString("group_public_key"));
-                    keyShare.setDkgTaskId(rs.getString("dkg_task_id"));
-                    logger.info("Loaded key share: {}", keyShare);
-                    return keyShare;
-                } else {
-                    logger.info("No key share found for group public key: {}", groupPublicKey);
-                    return null;
-                }
-            } catch (Exception e) {
-                logger.error("Error loading key share: {}", e.getMessage());
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            } finally {
-                // 关闭语句
-                if (pstmt != null) {
-                    try {
-                        pstmt.close();
-                    } catch (SQLException e) {
-                        logger.error("Error closing statement: {}", e.getMessage());
-                    }
-                }
-                // 回收连接
-                if (conn != null) {
-                    databaseService.releaseShareConnection(conn, nodeId);
-                }
-            }
-        }, ThreadPoolUtil.getComputationThreadPool());
+        return keyShareDao.findByGroupPublicKey(nodeId, groupPublicKey);
     }
     
-    /**
-     * 从指定节点的数据库加载密钥份额
-     * @param shareIndex 节点份额索引
-     * @param groupPublicKey 群公钥
-     * @return 密钥份额
-     */
     public CompletableFuture<KeyShare> loadKeyShareByIndexAndGroupPublicKey(int shareIndex, String groupPublicKey) {
-        return CompletableFuture.supplyAsync(() -> {
-            Connection conn = null;
-            PreparedStatement pstmt = null;
-            try {
-                String sql = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares WHERE group_public_key = ? ORDER BY id DESC LIMIT 1";
-                conn = databaseService.getShareConnection(shareIndex);
-                pstmt = conn.prepareStatement(sql);
-                pstmt.setString(1, groupPublicKey);
-                var rs = pstmt.executeQuery();
-                if (rs.next()) {
-                    KeyShare keyShare = new KeyShare();
-                    keyShare.setId(rs.getLong("id"));
-                    keyShare.setShareIndex(rs.getInt("share_index"));
-                    keyShare.setKeyShare(rs.getString("key_share"));
-                    keyShare.setGroupPublicKey(rs.getString("group_public_key"));
-                    keyShare.setDkgTaskId(rs.getString("dkg_task_id"));
-                    return keyShare;
-                }
-                return null;
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            } finally {
-                if (pstmt != null) {
-                    try {
-                        pstmt.close();
-                    } catch (SQLException e) {
-                        logger.error("Error closing statement: {}", e.getMessage());
-                    }
-                }
-                if (conn != null) {
-                    databaseService.releaseShareConnection(conn, shareIndex);
-                }
-            }
-        }, ThreadPoolUtil.getComputationThreadPool());
+        return keyShareDao.findByGroupPublicKey(shareIndex, groupPublicKey);
     }
     
     /**
@@ -931,14 +771,13 @@ public class DkgService implements NodeService.MessageHandler {
                                 CompletableFuture.runAsync(() -> {
                                     try {
                                         generateDistributedKey(taskId).join();
-                                        newTask.completed = true;
+                                        newTask.complete();
                                     } catch (Exception e) {
                                         newTask.errorMessage = e.getMessage();
                                         newTask.fail();
                                         logger.error("Error in DKG process (COMMITMENT) for task {}: {}", taskId, e.getMessage(), e);
                                     } finally {
                                         dkgInProgress.set(false);
-                                        newTask.inProgress = false;
                                     }
                                 }, ThreadPoolUtil.getIoThreadPool());
                                 task = newTask;
@@ -975,11 +814,13 @@ public class DkgService implements NodeService.MessageHandler {
                                             .toList();
                                     }
                                     
-                                    task.receivedCommitments.put(senderId, verificationPoints);
+                                    boolean firstCommitment = task.receivedCommitments.putIfAbsent(senderId, verificationPoints) == null;
                                     if (maskingVerificationPoints != null) {
-                                        task.receivedMaskingCommitments.put(senderId, maskingVerificationPoints);
+                                        task.receivedMaskingCommitments.putIfAbsent(senderId, maskingVerificationPoints);
                                     }
-                                    task.commitmentsReceivedLatch.countDown();
+                                    if (firstCommitment) {
+                                        task.commitmentsReceivedLatch.countDown();
+                                    }
                                     logger.info("Received commitment from node {} for task: {}", senderId, taskId);
                                 } catch (Exception e) {
                                     logger.error("Error processing commitment: {}", e.getMessage());
@@ -996,8 +837,10 @@ public class DkgService implements NodeService.MessageHandler {
                             
                             DkgTask task = dkgTasks.get(taskId);
                             if (task != null) {
-                                task.receivedShares.put(senderId, share);
-                                task.sharesReceivedLatch.countDown();
+                                boolean firstShare = task.receivedShares.putIfAbsent(senderId, share) == null;
+                                if (firstShare) {
+                                    task.sharesReceivedLatch.countDown();
+                                }
                                 logger.info("Received share from node {} for task: {}", senderId, taskId);
                             }
                         }
@@ -1046,9 +889,8 @@ public class DkgService implements NodeService.MessageHandler {
                                         }
                                         CompletableFuture.runAsync(() -> {
                                             try {
-                                                // 直接启动DKG流程，不广播DKG_INIT消息，避免循环调用
                                                 generateDistributedKey(taskId).join();
-                                                task.completed = true;
+                                                task.complete();
                                                 logger.info("DKG process completed for task: {}", taskId);
                                             } catch (Exception e) {
                                                 task.errorMessage = e.getMessage();
@@ -1056,7 +898,6 @@ public class DkgService implements NodeService.MessageHandler {
                                                 logger.error("Error in DKG process (DKG_INIT) for task {}: {}", taskId, e.getMessage(), e);
                                             } finally {
                                                 dkgInProgress.set(false);
-                                                task.inProgress = false;
                                             }
                                         }, ThreadPoolUtil.getIoThreadPool());
                                     } else {
@@ -1093,8 +934,10 @@ public class DkgService implements NodeService.MessageHandler {
         ECPoint publicKeyContribution = decodeECPoint(publicKeyBytes);
         
         // 步骤3: 存储其他节点的公钥贡献
-        task.receivedPublicKeyContributions.put(senderId, publicKeyContribution);
-        task.publicKeyContributionsReceivedLatch.countDown();
+        boolean firstContribution = task.receivedPublicKeyContributions.putIfAbsent(senderId, publicKeyContribution) == null;
+        if (firstContribution) {
+            task.publicKeyContributionsReceivedLatch.countDown();
+        }
         logger.info("Received public key contribution from node {} for task: {}", senderId, taskId);
         
         // 步骤4: 当收集到所有公钥贡献后，生成群公钥

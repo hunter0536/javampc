@@ -50,13 +50,14 @@ public class CGGMP {
         logger.info("Node {} starting DKG Round 1", nodeId);
         
         BigInteger[] coefficients = new BigInteger[threshold];
-        coefficients[0] = new BigInteger(pedersen.getCurveOrder().bitLength() - 1, random).mod(pedersen.getCurveOrder());
+        BigInteger curveOrder = pedersen.getCurveOrder();
+        do {
+            coefficients[0] = new BigInteger(curveOrder.bitLength() - 1, random).mod(curveOrder);
+        } while (coefficients[0].signum() == 0);
         
         for (int i = 1; i < threshold; i++) {
-            coefficients[i] = new BigInteger(pedersen.getCurveOrder().bitLength() - 1, random).mod(pedersen.getCurveOrder());
+            coefficients[i] = new BigInteger(curveOrder.bitLength() - 1, random).mod(curveOrder);
         }
-        
-        this.secretShare = coefficients[0];
         
         List<ECPoint> commitments = new ArrayList<>();
         for (BigInteger coeff : coefficients) {
@@ -106,6 +107,11 @@ public class CGGMP {
             if (senderId != nodeId) {
                 DkgRound2Output output = entry.getValue();
                 BigInteger share = output.shares.get(nodeId);
+                if (share == null) {
+                    logger.warn("Missing share from node {} for recipient {}", senderId, nodeId);
+                    allValid = false;
+                    continue;
+                }
                 
                 ECPoint expected = computeExpectedShare(round1Outputs.get(senderId).commitments, BigInteger.valueOf(nodeId));
                 ECPoint actual = pedersen.getG().multiply(share).normalize();
@@ -145,24 +151,20 @@ public class CGGMP {
         return publicKey;
     }
 
+    public void setSecretShare(BigInteger secretShare) {
+        this.secretShare = secretShare;
+    }
+
+    public void setPublicKey(ECPoint publicKey) {
+        this.publicKey = publicKey;
+    }
+
     public int getNodeId() {
         return nodeId;
     }
 
     public PedersenCommitment getPedersen() {
         return pedersen;
-    }
-
-    private BigInteger evaluatePolynomial(List<ECPoint> commitments, BigInteger x) {
-        BigInteger result = BigInteger.ZERO;
-        BigInteger xPower = BigInteger.ONE;
-        
-        for (int i = 0; i < commitments.size(); i++) {
-            result = result.add(xPower).mod(pedersen.getCurveOrder());
-            xPower = xPower.multiply(x).mod(pedersen.getCurveOrder());
-        }
-        
-        return result;
     }
 
     private BigInteger evaluatePolynomial(BigInteger[] coefficients, BigInteger x) {

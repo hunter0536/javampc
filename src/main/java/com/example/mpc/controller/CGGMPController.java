@@ -26,6 +26,7 @@ public class CGGMPController {
                 logger.info("Created CGGMP DKG task {}", taskId);
 
                 cggmpKeyService.startDkgProcess(taskId)
+                    .thenAccept(result -> logger.info("DKG process completed for task {}", taskId))
                     .exceptionally(ex -> {
                         logger.error("Async CGGMP DKG process failed for task {}: {}", taskId, ex.getMessage(), ex);
                         return null;
@@ -89,7 +90,11 @@ public class CGGMPController {
                 
                 String signatureTaskId = cggmpKeyService.createSignatureTaskWithGroupKey(groupPublicKey, message);
                 
-                cggmpKeyService.startSignatureTask(signatureTaskId).join();
+                cggmpKeyService.startSignatureTask(signatureTaskId)
+                    .exceptionally(ex -> {
+                        logger.error("Async GG20 signature process failed for task {}: {}", signatureTaskId, ex.getMessage(), ex);
+                        return null;
+                    });
                 
                 Map<String, Object> response = new HashMap<>();
                 response.put("signatureTaskId", signatureTaskId);

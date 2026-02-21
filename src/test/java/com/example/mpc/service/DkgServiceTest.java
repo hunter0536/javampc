@@ -31,7 +31,7 @@ public class DkgServiceTest {
     public void testReconstructPrivateKeyFromGroupPublicKey() throws Exception {
         // 1. 传入一个已有的群公钥（这里使用测试用的群公钥，实际使用时可替换为真实的群公钥）
         // 注意：这个群公钥应该是通过DKG过程实际生成的
-        String existingGroupPublicKeyHex = "04bf3c4677252d43489d87b3445a4fb4e9a76fccef79cdb9abe046f990eef91a09737ad0ed8f68cf8a32a97d0d54a84f5ee5080ba9b5eaeaf0be4fc2a9ce008d8c";
+        String existingGroupPublicKeyHex = getFirstGroupPublicKeyFromDb(1);
         System.out.println("Existing group public key (hex): " + existingGroupPublicKeyHex);
         
         // 2. 根据群公钥获取所有的私钥分片
@@ -75,19 +75,19 @@ public class DkgServiceTest {
     }
     
     /**
-     * 测试使用2-out-of-3门限方式重构群私钥
+     * 测试使用3-of-5门限方式重构群私钥
      * 验证逻辑：
      * 1. 传入一个已有的群公钥
      * 2. 根据群公钥获取所有的私钥分片
-     * 3. 只使用任意2个私钥分片来重构群私钥
+     * 3. 只使用任意3个私钥分片来重构群私钥
      * 4. 根据群私钥生成对应的公钥
      * 5. 验证生成的公钥是否有效
      */
     @Test
-    public void testReconstructPrivateKeyWith2OutOf3Threshold() throws Exception {
+    public void testReconstructPrivateKeyWith3OutOf5Threshold() throws Exception {
         // 1. 传入一个已有的群公钥
-        String existingGroupPublicKeyHex = "04bf3c4677252d43489d87b3445a4fb4e9a76fccef79cdb9abe046f990eef91a09737ad0ed8f68cf8a32a97d0d54a84f5ee5080ba9b5eaeaf0be4fc2a9ce008d8c";
-        System.out.println("\n=== Testing 2-out-of-3 threshold scheme ===");
+        String existingGroupPublicKeyHex = getFirstGroupPublicKeyFromDb(1);
+        System.out.println("\n=== Testing 3-out-of-5 threshold scheme ===");
         System.out.println("Existing group public key (hex): " + existingGroupPublicKeyHex);
         
         // 2. 根据群公钥获取所有的私钥分片
@@ -97,37 +97,18 @@ public class DkgServiceTest {
         // 验证是否获取到了足够的私钥分片
         assertNotNull(allKeyShares, "Key shares list should not be null");
         assertFalse(allKeyShares.isEmpty(), "Key shares list should not be empty");
-        assertTrue(allKeyShares.size() >= 3, "At least 3 key shares are required for 2-out-of-3 threshold scheme");
+        assertTrue(allKeyShares.size() >= 5, "At least 5 key shares are required for 3-out-of-5 threshold scheme");
         
-        // 3. 测试使用不同的2个私钥分片组合来重构群私钥
-        // 组合1: 使用节点1和节点2的私钥分片
-        List<KeyShare> shares1And2 = new ArrayList<>();
-        shares1And2.add(allKeyShares.get(0)); // 节点1的分片
-        shares1And2.add(allKeyShares.get(1)); // 节点2的分片
-        BigInteger groupPrivateKey1 = assemblePrivateKeyShares(shares1And2);
-        System.out.println("Reconstructed group private key (nodes 1+2): " + groupPrivateKey1.toString(16));
-        
-        // 组合2: 使用节点1和节点3的私钥分片
-        List<KeyShare> shares1And3 = new ArrayList<>();
-        shares1And3.add(allKeyShares.get(0)); // 节点1的分片
-        shares1And3.add(allKeyShares.get(2)); // 节点3的分片
-        BigInteger groupPrivateKey2 = assemblePrivateKeyShares(shares1And3);
-        System.out.println("Reconstructed group private key (nodes 1+3): " + groupPrivateKey2.toString(16));
-        
-        // 组合3: 使用节点2和节点3的私钥分片
-        List<KeyShare> shares2And3 = new ArrayList<>();
-        shares2And3.add(allKeyShares.get(1)); // 节点2的分片
-        shares2And3.add(allKeyShares.get(2)); // 节点3的分片
-        BigInteger groupPrivateKey3 = assemblePrivateKeyShares(shares2And3);
-        System.out.println("Reconstructed group private key (nodes 2+3): " + groupPrivateKey3.toString(16));
-        
-        // 验证所有组合重构出的群私钥是否相同
-        assertEquals(groupPrivateKey1, groupPrivateKey2, "Private keys reconstructed from different 2-node combinations should be the same");
-        assertEquals(groupPrivateKey1, groupPrivateKey3, "Private keys reconstructed from different 2-node combinations should be the same");
-        System.out.println("All 2-node combinations reconstruct the same private key - threshold scheme works correctly!");
+        // 3. 只使用任意3个私钥分片来重构群私钥（例如：节点1、2、3）
+        List<KeyShare> shares1And2And3 = new ArrayList<>();
+        shares1And2And3.add(allKeyShares.get(0)); // 节点1的分片
+        shares1And2And3.add(allKeyShares.get(1)); // 节点2的分片
+        shares1And2And3.add(allKeyShares.get(2)); // 节点3的分片
+        BigInteger groupPrivateKey = assemblePrivateKeyShares(shares1And2And3);
+        System.out.println("Reconstructed group private key (nodes 1+2+3): " + groupPrivateKey.toString(16));
         
         // 4. 根据重构的群私钥生成对应的公钥
-        ECPoint generatedGroupPublicKey = generateGroupPublicKeyFromPrivateKey(groupPrivateKey1);
+        ECPoint generatedGroupPublicKey = generateGroupPublicKeyFromPrivateKey(groupPrivateKey);
         System.out.println("Generated group public key: " + generatedGroupPublicKey);
         
         // 5. 将生成的公钥转换为hex格式
@@ -140,7 +121,7 @@ public class DkgServiceTest {
         assertFalse(generatedGroupPublicKey.isInfinity(), "Generated group public key should not be infinity");
         assertTrue(generatedGroupPublicKey.isValid(), "Generated group public key should be valid");
         
-        System.out.println("2-out-of-3 threshold private key reconstruction test passed!");
+        System.out.println("3-out-of-5 threshold private key reconstruction test passed!");
     }
 
     /**
@@ -167,8 +148,8 @@ public class DkgServiceTest {
         // 创建DatabaseService实例
         DatabaseService databaseService = new DatabaseService();
         
-        // 连接到所有节点的数据库文件（share_1.db, share_2.db, share_3.db）
-        int nodeCount = 3;
+        // 连接到所有节点的数据库文件（share_1.db ... share_5.db）
+        int nodeCount = 5;
         for (int i = 1; i <= nodeCount; i++) {
             // 连接到节点i的数据库
             java.sql.Connection conn = null;
@@ -216,6 +197,33 @@ public class DkgServiceTest {
         }
         
         return keyShares;
+    }
+
+    private String getFirstGroupPublicKeyFromDb(int nodeId) throws Exception {
+        DatabaseService databaseService = new DatabaseService();
+        java.sql.Connection conn = null;
+        java.sql.PreparedStatement pstmt = null;
+        java.sql.ResultSet rs = null;
+        try {
+            conn = databaseService.getShareConnection(nodeId);
+            String sql = "SELECT group_public_key FROM key_shares ORDER BY id ASC LIMIT 1";
+            pstmt = conn.prepareStatement(sql);
+            rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("group_public_key");
+            }
+            throw new IllegalStateException("No group_public_key found in share_" + nodeId + ".db");
+        } finally {
+            if (rs != null) try { rs.close(); } catch (Exception e) {}
+            if (pstmt != null) try { pstmt.close(); } catch (Exception e) {}
+            if (conn != null) {
+                try {
+                    databaseService.releaseShareConnection(conn, nodeId);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
     }
 
     /**

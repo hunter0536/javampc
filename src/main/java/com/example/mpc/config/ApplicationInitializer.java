@@ -3,7 +3,8 @@ package com.example.mpc.config;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.service.CGGMPKeyService;
 import com.example.mpc.service.DkgService;
-import com.example.mpc.service.SignatureService;
+import com.example.mpc.service.NodeService;
+//import com.example.mpc.service.SignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,11 +19,14 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Autowired
     private DkgService dkgService;
 
-    @Autowired
-    private SignatureService signatureService;
+//    @Autowired
+//    private SignatureService signatureService;
 
     @Autowired
     private CGGMPKeyService cggmpKeyService;
+
+    @Autowired
+    private NodeService nodeService;
 
     @Value("${node.id}")
     private int nodeId;
@@ -41,6 +45,9 @@ public class ApplicationInitializer implements CommandLineRunner {
 
         if (enableCggmp) {
             initializeCggmp();
+        } else {
+            nodeService.startP2PServer().join();
+            logger.info("P2P server started successfully");
         }
 
         if (enableLegacy) {
@@ -71,9 +78,9 @@ public class ApplicationInitializer implements CommandLineRunner {
             dkgService.init().join();
             logger.info("DKG service initialized successfully");
 
-            logger.info("Initializing Signature service...");
-            signatureService.init(Constants.NODES_COUNT).join();
-            logger.info("Signature service initialized successfully");
+//            logger.info("Initializing Signature service...");
+//            signatureService.init(Constants.NODES_COUNT).join();
+//            logger.info("Signature service initialized successfully");
         } catch (Exception e) {
             logger.error("Failed to initialize legacy services", e);
         }

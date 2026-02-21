@@ -99,7 +99,14 @@ public class NodeService {
             CGGMP_SIGN_INIT,          // CGGMP签名初始化
             CGGMP_SIGN_ROUND1,        // CGGMP签名第1轮
             CGGMP_SIGN_ROUND2,        // CGGMP签名第2轮
-            CGGMP_SIGN_ROUND3         // CGGMP签名第3轮
+            CGGMP_SIGN_ROUND3,        // CGGMP签名第3轮
+            // GG20相关消息
+            GG20_SIGN_INIT,           // GG20签名初始化
+            GG20_GAMMA_COMMITMENT,    // GG20 Gamma承诺
+            GG20_MTA_INIT,            // GG20 MTA初始化
+            GG20_MTA_RESPONSE,        // GG20 MTA响应
+            GG20_OFFLINE,             // GG20 离线阶段数据
+            GG20_PARTIAL_S            // GG20 部分签名s
         }
         
         public final int senderId;
@@ -352,17 +359,18 @@ public class NodeService {
      * 广播消息到所有其他节点
      */
     public CompletableFuture<Void> broadcastMessage(Message message) {
-        logger.info("broadcastMessage: type {} to {} nodes (self={}) nodes={}", message.type, nodes.size(), nodeId, nodes.keySet());
+        logger.info("=== broadcastMessage START: type={}, fromNode={}, knownNodes={} ===", 
+            message.type, nodeId, nodes.keySet());
         // 回退到传统方式，使用并行发送
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         
         // 并行发送消息到所有节点
         for (NodeInfo nodeInfo : nodes.values()) {
             if (nodeInfo.id != nodeId) {
-                logger.info("broadcastMessage: sending {} to node {}", message.type, nodeInfo.id);
+                logger.info("=== broadcastMessage: sending {} to node {} ===", message.type, nodeInfo.id);
                 CompletableFuture<Void> future = sendMessage(nodeInfo.id, message)
                     .exceptionally(ex -> {
-                        logger.error("Failed to broadcast message to node {}: {}", nodeInfo.id, ex.getMessage());
+                        logger.error("=== FAILED to broadcast message to node {}: {} ===", nodeInfo.id, ex.getMessage());
                         return null;
                     });
                 futures.add(future);

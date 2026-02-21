@@ -30,9 +30,8 @@ public class SignatureTask {
         this.message = message;
         this.groupPublicKey = groupPublicKey;
         this.nodesCount = nodesCount;
-        // 使用门限数量而不是节点总数，实现真正的CGGMP门限签名
-        this.commitmentsReceivedLatch = new CountDownLatch(com.example.mpc.constant.Constants.THRESHOLD - 1);
-        this.sharesReceivedLatch = new CountDownLatch(com.example.mpc.constant.Constants.THRESHOLD - 1);
+        this.commitmentsReceivedLatch = new CountDownLatch(nodesCount - 1);
+        this.sharesReceivedLatch = new CountDownLatch(nodesCount - 1);
     }
 
     public boolean start() {

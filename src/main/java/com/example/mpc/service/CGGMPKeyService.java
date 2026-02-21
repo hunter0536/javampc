@@ -3,11 +3,12 @@ package com.example.mpc.service;
 import com.example.mpc.cggmp.CGGMP;
 import com.example.mpc.cggmp.CGGMPProtocol;
 import com.example.mpc.cggmp.PaillierEncryption;
+import com.example.mpc.cggmp.Gg20Codec;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.TaskStatus;
+import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.model.CggmpDkgTask;
-import com.example.mpc.model.CggmpSignatureTask;
+import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.model.KeyShare;
 import com.example.mpc.util.ThreadPoolUtil;
 import org.bouncycastle.jce.interfaces.ECPublicKey;
@@ -22,14 +23,38 @@ import org.springframework.stereotype.Service;
 import java.math.BigInteger;
 import java.security.*;
 import java.security.spec.ECGenParameterSpec;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Base64;
+import org.exploit.gmp.BigInt;
+import org.exploit.secp256k1.Secp256k1;
+import org.exploit.secp256k1.Secp256k1CurveParams;
+import org.exploit.secp256k1.Secp256k1PointOps;
+import org.exploit.sodium.SecretBox;
+import org.exploit.tss.TSS;
+import org.exploit.tss.ecdsa.GG20Client;
+import org.exploit.tss.ecdsa.commitment.ChaumPedersenCommitment;
+import org.exploit.tss.ecdsa.commitment.ChaumPedersenCommitmentWithValue;
+import org.exploit.tss.ecdsa.commitment.GammaCommitment;
+import org.exploit.tss.ecdsa.constant.GG20;
+import org.exploit.tss.ecdsa.context.GG20Context;
+import org.exploit.tss.ecdsa.context.crypto.CryptoContext;
+import org.exploit.tss.ecdsa.context.init.InitContext;
+import org.exploit.tss.ecdsa.context.mta.MtAContext;
+import org.exploit.tss.ecdsa.context.signature.SignatureContext;
+import org.exploit.tss.ecdsa.generator.GG20CommitmentGenerator;
+import org.exploit.tss.mta.model.MtAInitiatorMessage;
+import org.exploit.tss.mta.model.MtAResult;
+import org.exploit.tss.pallier.key.PaillierPublicKey;
+import org.exploit.tss.proof.model.ZKSetup;
+import org.exploit.tss.signature.ECDSASignature;
+import org.exploit.tss.util.Hash;
+import org.exploit.tss.util.ZKRandom;
 
 @Service
 public class CGGMPKeyService implements NodeService.MessageHandler {
@@ -41,6 +66,9 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
     @Autowired
     private NodeService nodeService;
 
+    @Autowired
+    private KeyShareDao keyShareDao;
+
     @Value("${node.id}")
     private int nodeId;
 
@@ -49,9 +77,13 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
     private PaillierEncryption paillier;
 
     private final Map<String, CggmpDkgTask> dkgTasks = new ConcurrentHashMap<>();
-    private final Map<String, CggmpSignatureTask> signatureTasks = new ConcurrentHashMap<>();
-    private final Map<String, CGGMPProtocol.ECDSASignature> signatures = new ConcurrentHashMap<>();
-    private final Map<String, SignState> signStates = new ConcurrentHashMap<>();
+    private final Map<String, Gg20SignatureTask> signatureTasks = new ConcurrentHashMap<>();
+
+    private static final ExecutorService dkgExecutorService = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "CGGMP-DKG-Thread");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final AtomicBoolean dkgInProgress = new AtomicBoolean(false);
     private final AtomicBoolean signatureInProgress = new AtomicBoolean(false);
@@ -79,22 +111,14 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
 
     public CompletableFuture<Void> startDkgProcess(String taskId) {
         return CompletableFuture.runAsync(() -> {
-            logger.info("startDkgProcess invoked for task {}", taskId);
+            logger.info("=================== startDkgProcess START: taskId={} ===================", taskId);
             CggmpDkgTask task = null;
             try {
-                if (dkgInProgress.get()) {
-                    throw new RuntimeException("CGGMP DKG process is already in progress");
-                }
-
                 task = getDkgTask(taskId);
-                if (task.isInProgress() || task.isCompleted()) {
-                    throw new RuntimeException("CGGMP DKG task is already in progress or completed");
-                }
-
-                dkgInProgress.set(true);
+                
                 if (!task.start()) {
-                    dkgInProgress.set(false);
-                    throw new RuntimeException("Failed to start CGGMP DKG task");
+                    logger.warn("DKG task {} failed to start (may already be in progress), skipping", taskId);
+                    return;
                 }
 
                 logger.info("Starting CGGMP DKG process for task: {}", taskId);
@@ -109,23 +133,32 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                 logger.info("Network ready with {} nodes", networkSize);
 
                 try {
-                    Thread.sleep(2000);
+                    Thread.sleep(Constants.DKG_INIT_WAIT_TIME_MS);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 }
 
                 Map<String, Object> initData = new HashMap<>();
                 initData.put("taskId", taskId);
-                try {
-                    for (int attempt = 1; attempt <= 3; attempt++) {
+                initData.put("nodesCount", Constants.NODES_COUNT);
+                
+                boolean initBroadcastSuccess = false;
+                for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
+                    try {
                         nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_DKG_INIT, initData)).join();
-                        logger.info("Broadcasted CGGMP_DKG_INIT for task: {} (attempt {}/3)", taskId, attempt);
-                        if (attempt < 3) {
-                            Thread.sleep(1000);
+                        logger.info("Broadcasted CGGMP_DKG_INIT for task: {} (attempt {}/{})", taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
+                        initBroadcastSuccess = true;
+                        break;
+                    } catch (Exception e) {
+                        logger.warn("Failed to broadcast CGGMP_DKG_INIT (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
+                        if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
+                            Thread.sleep(Constants.DKG_BROADCAST_RETRY_DELAY_MS);
                         }
                     }
-                } catch (Exception e) {
-                    logger.warn("Failed to broadcast CGGMP_DKG_INIT, proceeding: {}", e.getMessage());
+                }
+                
+                if (!initBroadcastSuccess) {
+                    throw new RuntimeException("Failed to broadcast CGGMP_DKG_INIT after 3 attempts");
                 }
 
                 executeDkgRounds(task);
@@ -133,18 +166,16 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                 saveKeyShareToDatabase(task);
 
                 task.complete();
-                dkgInProgress.set(false);
                 logger.info("CGGMP DKG process completed for task: {}", taskId);
             } catch (Exception e) {
                 if (task != null) {
                     task.fail();
                     task.errorMessage = e.getMessage();
                 }
-                dkgInProgress.set(false);
                 logger.error("Error in CGGMP DKG process", e);
                 throw new RuntimeException(e);
             }
-        }, ThreadPoolUtil.getIoThreadPool());
+        }, dkgExecutorService);
     }
 
     private void executeDkgRounds(CggmpDkgTask task) throws Exception {
@@ -160,16 +191,29 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         round1Data.put("commitments", encodeCommitments(round1Output.commitments));
         round1Data.put("paillierKey", round1Output.paillierKey.n.toString(16));
 
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_DKG_ROUND1, round1Data)).join();
-            logger.info("Broadcasted CGGMP_DKG_ROUND1 for task: {} (attempt {}/3)", task.taskId, attempt);
-            if (attempt < 3) {
-                Thread.sleep(1000);
+        boolean round1BroadcastSuccess = false;
+        for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
+            try {
+                nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_DKG_ROUND1, round1Data)).join();
+                logger.info("Broadcasted CGGMP_DKG_ROUND1 for task: {} (attempt {}/{})", task.taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
+                round1BroadcastSuccess = true;
+                break;
+            } catch (Exception e) {
+                logger.warn("Failed to broadcast CGGMP_DKG_ROUND1 (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
+                if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
+                    Thread.sleep(Constants.DKG_BROADCAST_RETRY_DELAY_MS);
+                }
             }
         }
+        
+        if (!round1BroadcastSuccess) {
+            throw new RuntimeException("Failed to broadcast CGGMP_DKG_ROUND1 after " + Constants.DKG_BROADCAST_RETRY_COUNT + " attempts");
+        }
 
+        task.startRound1Waiting();
         logger.info("Node {} waiting for Round 1 messages...", nodeId);
-        if (!task.round1ReceivedLatch.await(180, TimeUnit.SECONDS)) {
+        if (!task.round1ReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            task.timeout();
             throw new Exception("Timeout waiting for Round 1 messages");
         }
 
@@ -177,24 +221,44 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         CGGMP.DkgRound2Output round2Output = task.cggmpInstance.dkgRound2(task.round1Outputs);
         task.round2Outputs.put(nodeId, round2Output);
 
-        Map<String, Object> round2Data = new HashMap<>();
-        round2Data.put("taskId", task.taskId);
-        round2Data.put("nodeId", round2Output.nodeId);
-        round2Data.put("shares", round2Output.shares);
+        boolean round2SendSuccess = false;
+        for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
+            try {
+                for (Map.Entry<Integer, BigInteger> entry : round2Output.shares.entrySet()) {
+                    int receiverId = entry.getKey();
+                    BigInteger share = entry.getValue();
 
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_DKG_ROUND2, round2Data)).join();
-            logger.info("Broadcasted CGGMP_DKG_ROUND2 for task: {} (attempt {}/3)", task.taskId, attempt);
-            if (attempt < 3) {
-                Thread.sleep(1000);
+                    Map<String, Object> round2Data = new HashMap<>();
+                    round2Data.put("taskId", task.taskId);
+                    round2Data.put("nodeId", round2Output.nodeId);
+                    round2Data.put("receiverId", receiverId);
+                    round2Data.put("share", share.toString(16));
+
+                    nodeService.sendMessage(receiverId, new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_DKG_ROUND2, round2Data)).join();
+                }
+                logger.info("Sent CGGMP_DKG_ROUND2 shares for task: {} (attempt {}/{})", task.taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
+                round2SendSuccess = true;
+                break;
+            } catch (Exception e) {
+                logger.warn("Failed to send CGGMP_DKG_ROUND2 shares (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
+                if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
+                    Thread.sleep(Constants.DKG_BROADCAST_RETRY_DELAY_MS);
+                }
             }
         }
+        
+        if (!round2SendSuccess) {
+            throw new RuntimeException("Failed to send CGGMP_DKG_ROUND2 shares after " + Constants.DKG_BROADCAST_RETRY_COUNT + " attempts");
+        }
 
+        task.startRound2Waiting();
         logger.info("Node {} waiting for Round 2 messages...", nodeId);
-        if (!task.round2ReceivedLatch.await(180, TimeUnit.SECONDS)) {
+        if (!task.round2ReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+            task.timeout();
             throw new Exception("Timeout waiting for Round 2 messages");
         }
 
+        task.startValidating();
         logger.info("Node {} completing DKG", nodeId);
         boolean success = task.cggmpInstance.dkgRound3(task.round2Outputs, task.round1Outputs);
         
@@ -214,8 +278,8 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         Map<String, Object> status = new HashMap<>();
         status.put("taskId", task.taskId);
         status.put("status", task.status.get().name());
-        status.put("inProgress", task.inProgress);
-        status.put("completed", task.completed);
+        status.put("inProgress", task.isInProgress());
+        status.put("completed", task.isCompleted());
         status.put("groupPublicKey", task.groupPublicKeyHex);
         status.put("errorMessage", task.errorMessage);
         status.put("receivedRound1", task.round1Outputs.size());
@@ -251,7 +315,20 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         if (data instanceof Map) {
             Map<?, ?> dataMap = (Map<?, ?>) data;
             String taskId = (String) dataMap.get("taskId");
-            logger.info("Received CGGMP_DKG_INIT from node {} for task: {}", senderId, taskId);
+            int nodesCount = (Integer) dataMap.get("nodesCount");
+            logger.info("Received CGGMP_DKG_INIT from node {} for task: {}, nodesCount: {}", senderId, taskId, nodesCount);
+            
+            CggmpDkgTask task = new CggmpDkgTask(taskId, nodesCount, threshold);
+            CggmpDkgTask existingTask = dkgTasks.putIfAbsent(taskId, task);
+            
+            if (existingTask != null) {
+                logger.info("DKG task {} already exists, skipping creation", taskId);
+                return;
+            }
+            
+            logger.info("Created DKG task {} on node {}", taskId, nodeId);
+            
+            startDkgProcess(taskId);
         }
     }
 
@@ -261,6 +338,67 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             Map<?, ?> dataMap = (Map<?, ?>) data;
             String taskId = (String) dataMap.get("taskId");
             logger.info("Received CGGMP_DKG_ROUND1 from node {} for task: {}", senderId, taskId);
+            
+            try {
+                CggmpDkgTask task = dkgTasks.get(taskId);
+                if (task == null) {
+                    logger.warn("Task {} not found in dkgTasks, ignoring Round1 from node {}", taskId, senderId);
+                    return;
+                }
+                
+                int senderNodeId = (Integer) dataMap.get("nodeId");
+                if (senderNodeId != senderId) {
+                    logger.warn("Discarding CGGMP_DKG_ROUND1: senderId {} does not match payload nodeId {}", senderId, senderNodeId);
+                    return;
+                }
+                
+                // 检查是否是重复消息（自己已经处理过了）
+                // 注意：如果 senderNodeId == nodeId（当前节点），则这是我们自己之前已经处理过的消息，应该跳过
+                if (senderNodeId == nodeId) {
+                    logger.info("Received Round1 from self (node {}), this is our own message, skipping", senderNodeId);
+                    return;
+                }
+                
+                logger.info("=== DEBUG: senderId={}, senderNodeId={}, match={} ===", senderId, senderNodeId, senderId == senderNodeId);
+                
+                if (task.round1Outputs.containsKey(senderNodeId)) {
+                    logger.info("Already received Round1 from node {}, skipping", senderNodeId);
+                    return;
+                }
+                
+                List<String> commitmentHexList = (List<String>) dataMap.get("commitments");
+                String paillierKeyHex = (String) dataMap.get("paillierKey");
+                
+                logger.info("Processing Round1 from node {}: commitments={}, paillierKey={}", 
+                    senderNodeId, commitmentHexList != null ? commitmentHexList.size() : "null", 
+                    paillierKeyHex != null ? "present" : "null");
+                
+                if (commitmentHexList == null || commitmentHexList.size() != threshold) {
+                    logger.warn("Invalid commitments size from node {}: expected {}, got {}", senderNodeId, threshold, commitmentHexList == null ? "null" : commitmentHexList.size());
+                    return;
+                }
+                List<ECPoint> commitments = new ArrayList<>();
+                for (String hex : commitmentHexList) {
+                    ECPoint point = decodeECPoint(HexUtils.hexToBytes(hex));
+                    if (point == null || point.isInfinity() || !point.isValid()) {
+                        logger.warn("Invalid commitment point from node {} for task {}", senderNodeId, taskId);
+                        return;
+                    }
+                    commitments.add(point);
+                }
+                
+                PaillierEncryption.PublicKey paillierKey = new PaillierEncryption.PublicKey(new BigInteger(paillierKeyHex, 16));
+                CGGMP.DkgRound1Output output = new CGGMP.DkgRound1Output(senderNodeId, null, commitments, paillierKey);
+                boolean first = task.round1Outputs.putIfAbsent(senderNodeId, output) == null;
+                if (first) {
+                    logger.info("=== BEFORE countDown: latch count = {} ===", task.round1ReceivedLatch.getCount());
+                    task.round1ReceivedLatch.countDown();
+                    logger.info("=== AFTER countDown: latch count = {} ===", task.round1ReceivedLatch.getCount());
+                }
+                logger.info("Stored Round1 from node {} for task: {}", senderNodeId, taskId);
+            } catch (Exception e) {
+                logger.error("Error handling CGGMP_DKG_ROUND1: {}", e.getMessage(), e);
+            }
         }
     }
 
@@ -270,6 +408,49 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             Map<?, ?> dataMap = (Map<?, ?>) data;
             String taskId = (String) dataMap.get("taskId");
             logger.info("Received CGGMP_DKG_ROUND2 from node {} for task: {}", senderId, taskId);
+            
+            try {
+                CggmpDkgTask task = dkgTasks.get(taskId);
+                if (task != null) {
+                    int senderNodeId = (Integer) dataMap.get("nodeId");
+                    if (senderNodeId != senderId) {
+                        logger.warn("Discarding CGGMP_DKG_ROUND2: senderId {} does not match payload nodeId {}", senderId, senderNodeId);
+                        return;
+                    }
+                    
+                    if (senderNodeId == nodeId) {
+                        logger.info("Received Round2 from self (node {}), this is our own message, skipping", senderNodeId);
+                        return;
+                    }
+                    
+                    if (task.round2Outputs.containsKey(senderNodeId)) {
+                        logger.info("Already received Round2 from node {}, skipping", senderNodeId);
+                        return;
+                    }
+                    
+                    Integer receiverId = (Integer) dataMap.get("receiverId");
+                    String shareHex = (String) dataMap.get("share");
+                    if (receiverId == null || shareHex == null) {
+                        logger.warn("Invalid CGGMP_DKG_ROUND2 payload from node {} for task {}", senderNodeId, taskId);
+                        return;
+                    }
+                    if (receiverId != nodeId) {
+                        logger.info("CGGMP_DKG_ROUND2 not intended for this node (receiverId={}, nodeId={}), ignoring", receiverId, nodeId);
+                        return;
+                    }
+                    Map<Integer, BigInteger> shares = new HashMap<>();
+                    shares.put(nodeId, new BigInteger(shareHex, 16));
+                    
+                    CGGMP.DkgRound2Output output = new CGGMP.DkgRound2Output(senderNodeId, shares);
+                    boolean first = task.round2Outputs.putIfAbsent(senderNodeId, output) == null;
+                    if (first) {
+                        task.round2ReceivedLatch.countDown();
+                    }
+                    logger.info("Stored Round2 from node {} for task: {}", senderNodeId, taskId);
+                }
+            } catch (Exception e) {
+                logger.error("Error handling CGGMP_DKG_ROUND2: {}", e.getMessage(), e);
+            }
         }
     }
 
@@ -301,84 +482,14 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         try {
             String shareHex = task.secretShare.toString(16);
             KeyShare keyShare = new KeyShare(nodeId, shareHex, task.groupPublicKeyHex, task.taskId);
-            saveKeyShareToDatabase(keyShare);
+            keyShareDao.save(keyShare);
             logger.info("Saved CGGMP key share to database for task: {}", task.taskId);
         } catch (Exception e) {
             logger.error("Failed to save CGGMP key share to database", e);
         }
     }
 
-    private void saveKeyShareToDatabase(KeyShare keyShare) throws Exception {
-        String insertSql;
-        String selectSql = "SELECT last_insert_rowid()";
-
-        Connection conn = null;
-        PreparedStatement insertStmt = null;
-        PreparedStatement selectStmt = null;
-        try {
-            boolean hasWalletId = false;
-            try (var metaConn = databaseService.getShareConnection(keyShare.getShareIndex());
-                 var metaStmt = metaConn.createStatement();
-                 var rs = metaStmt.executeQuery("PRAGMA table_info(key_shares)")) {
-                while (rs.next()) {
-                    String name = rs.getString("name");
-                    if ("wallet_id".equalsIgnoreCase(name)) {
-                        hasWalletId = true;
-                        break;
-                    }
-                }
-            } catch (Exception e) {
-                hasWalletId = false;
-            }
-
-            insertSql = hasWalletId
-                ? "INSERT INTO key_shares (wallet_id, share_index, key_share, group_public_key, dkg_task_id) VALUES (?, ?, ?, ?, ?)"
-                : "INSERT INTO key_shares (share_index, key_share, group_public_key, dkg_task_id) VALUES (?, ?, ?, ?)";
-
-            conn = databaseService.getShareConnection(keyShare.getShareIndex());
-            insertStmt = conn.prepareStatement(insertSql);
-            selectStmt = conn.prepareStatement(selectSql);
-
-            int index = 1;
-            if (hasWalletId) {
-                insertStmt.setInt(index++, 0);
-            }
-            insertStmt.setInt(index++, keyShare.getShareIndex());
-            insertStmt.setString(index++, keyShare.getKeyShare());
-            insertStmt.setString(index++, keyShare.getGroupPublicKey());
-            insertStmt.setString(index, keyShare.getDkgTaskId());
-            insertStmt.executeUpdate();
-
-            var rs = selectStmt.executeQuery();
-            if (rs.next()) {
-                keyShare.setId(rs.getLong(1));
-            }
-        } finally {
-            if (selectStmt != null) {
-                try {
-                    selectStmt.close();
-                } catch (Exception e) {
-                    logger.error("Error closing statement", e);
-                }
-            }
-            if (insertStmt != null) {
-                try {
-                    insertStmt.close();
-                } catch (Exception e) {
-                    logger.error("Error closing statement", e);
-                }
-            }
-            if (conn != null) {
-                databaseService.releaseShareConnection(conn, keyShare.getShareIndex());
-            }
-        }
-    }
-
-    private static class SignState {
-        CGGMPProtocol.SignRound1Output round1Output;
-        String message;
-        BigInteger k;
-    }
+    private static final int GG20_MEM_KEY_SIZE = 32;
 
     public String createSignatureTaskWithGroupKey(String groupPublicKey, String message) {
         String fixedGroupPublicKey = null;
@@ -389,12 +500,12 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         }
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         String taskId = UUID.randomUUID().toString();
-        CggmpSignatureTask task = new CggmpSignatureTask(taskId, message, fixedGroupPublicKey, nodesCount);
+        Gg20SignatureTask task = new Gg20SignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId);
         signatureTasks.put(taskId, task);
         return taskId;
     }
 
-    public String createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message) {
+    public String createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants) {
         String fixedGroupPublicKey = null;
         try {
             fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
@@ -402,7 +513,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             fixedGroupPublicKey = groupPublicKey;
         }
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
-        CggmpSignatureTask task = new CggmpSignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount);
+        Gg20SignatureTask task = new Gg20SignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount, threshold, initiatorId, participants);
         signatureTasks.put(signatureTaskId, task);
         return signatureTaskId;
     }
@@ -416,7 +527,7 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             return CompletableFuture.failedFuture(new RuntimeException("Signature process is already in progress"));
         }
 
-        CggmpSignatureTask task = signatureTasks.get(taskId);
+        Gg20SignatureTask task = signatureTasks.get(taskId);
         if (task == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Signature task not found: " + taskId));
         }
@@ -425,105 +536,92 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
             return CompletableFuture.failedFuture(new RuntimeException("Signature task is already in progress or completed"));
         }
 
+        if (!task.participants.contains(nodeId)) {
+            logger.info("Node {} not selected for signature task {}, participants={}, skipping", nodeId, taskId, task.participants);
+            return CompletableFuture.completedFuture(null);
+        }
+
         signatureInProgress.set(true);
         if (!task.start()) {
             signatureInProgress.set(false);
             return CompletableFuture.failedFuture(new RuntimeException("Failed to start signature task"));
         }
 
-        try {
-            if (broadcastInit) {
-                Map<String, Object> initData = new HashMap<>();
-                initData.put("signatureTaskId", task.taskId);
-                initData.put("groupPublicKey", task.groupPublicKey);
-                initData.put("message", task.message);
-                try {
-                    for (int attempt = 1; attempt <= 3; attempt++) {
-                        nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_SIGN_INIT, initData)).join();
-                        logger.info("Broadcasted CGGMP_SIGN_INIT for signature task: {} (attempt {}/3)", task.taskId, attempt);
-                        if (attempt < 3) {
-                            Thread.sleep(1000);
-                        }
-                    }
-                } catch (Exception e) {
-                    logger.warn("Failed to broadcast CGGMP_SIGN_INIT, proceeding with signature: {}", e.getMessage());
-                }
-            }
-
-            task.k_i = generateSecureRandom();
-            task.R_i = generateCommitment(task.k_i);
-            task.receivedCommitments.put(nodeId, task.R_i);
-
-            return broadcastCommitment(taskId, task.R_i)
-                .thenCompose(v -> {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                if (broadcastInit) {
+                    Map<String, Object> initData = new HashMap<>();
+                    initData.put("signatureTaskId", task.taskId);
+                    initData.put("groupPublicKey", task.groupPublicKey);
+                    initData.put("message", task.message);
+                    initData.put("initiatorId", task.initiatorId);
+                    initData.put("participants", new ArrayList<>(task.participants));
+                    initData.put("messageHash", Base64.getEncoder().encodeToString(hashMessage(task.message)));
                     try {
-                        if (!task.commitmentsReceivedLatch.await(60, TimeUnit.SECONDS)) {
-                            throw new Exception("Timeout waiting for commitments");
+                        for (int attempt = 1; attempt <= Constants.SIGNATURE_BROADCAST_RETRY_COUNT; attempt++) {
+                            nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.GG20_SIGN_INIT, initData)).join();
+                            logger.info("Broadcasted GG20_SIGN_INIT for signature task: {} (attempt {}/{})", task.taskId, attempt, Constants.SIGNATURE_BROADCAST_RETRY_COUNT);
+                            if (attempt < Constants.SIGNATURE_BROADCAST_RETRY_COUNT) {
+                                Thread.sleep(Constants.SIGNATURE_BROADCAST_RETRY_DELAY_MS);
+                            }
                         }
-
-                        task.R = calculateGlobalCommitment(task);
-
-                        byte[] messageHash = calculateMessageHash(task.message, task.R);
-                        BigInteger h = new BigInteger(1, messageHash);
-
-                        return generateSignatureShare(task, task.k_i, h)
-                            .thenCompose(signatureShare -> {
-                                task.receivedSignatureShares.put(nodeId, signatureShare);
-                                return broadcastSignatureShare(taskId, signatureShare);
-                            })
-                            .thenRun(() -> {
-                                try {
-                                    if (!task.sharesReceivedLatch.await(60, TimeUnit.SECONDS)) {
-                                        throw new Exception("Timeout waiting for signature shares");
-                                    }
-
-                                    BigInteger sigma = combineSignatureShares(task);
-                                    String finalSignature = convertToECDSASignature(task.R, sigma);
-
-                                    verifySignature(taskId, task.message, finalSignature)
-                                        .thenAccept(verified -> {
-                                            task.signature = finalSignature;
-                                            task.verified = verified;
-                                            task.complete();
-                                            signatureInProgress.set(false);
-                                            logger.info("CGGMP signature task {} completed successfully, verified: {}", taskId, verified);
-                                        })
-                                        .exceptionally(ex -> {
-                                            logger.error("Failed to verify signature: {}", ex.getMessage());
-                                            task.fail(ex.getMessage());
-                                            signatureInProgress.set(false);
-                                            return null;
-                                        });
-                                } catch (Exception e) {
-                                    logger.error("Error in signature process: {}", e.getMessage());
-                                    task.fail(e.getMessage());
-                                    signatureInProgress.set(false);
-                                    throw new RuntimeException(e);
-                                }
-                            });
                     } catch (Exception e) {
-                        logger.error("Error in signature process: {}", e.getMessage());
-                        task.fail(e.getMessage());
-                        signatureInProgress.set(false);
-                        throw new RuntimeException(e);
+                        logger.warn("Failed to broadcast GG20_SIGN_INIT, proceeding with signature: {}", e.getMessage());
                     }
-                })
-                .exceptionally(ex -> {
-                    logger.error("Error in signature process: {}", ex.getMessage());
-                    task.fail(ex.getMessage());
+                }
+
+                initGg20Client(task);
+
+                // Round 1: Gamma commitment
+                broadcastGammaCommitment(task).join();
+                if (!task.gammaCommitmentLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    throw new RuntimeException("Timeout waiting for gamma commitments");
+                }
+
+                // MtA init and responses (only for local initiator)
+                broadcastMtaInit(task).join();
+                if (!task.mtaResponseLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    throw new RuntimeException("Timeout waiting for MtA responses");
+                }
+
+                // Offline phase data
+                broadcastOfflineData(task).join();
+                if (!task.offlineLatch.await(Constants.SIGNATURE_SHARE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                    throw new RuntimeException("Timeout waiting for offline phase");
+                }
+
+                BigInt partialS = task.client.signature().computePartialS();
+                if (nodeId == task.initiatorId) {
+                    storePartialS(task, nodeId, partialS);
+                    if (!task.partialSLatch.await(Constants.SIGNATURE_SHARE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                        throw new RuntimeException("Timeout waiting for partial signatures");
+                    }
+                    ECDSASignature signature = task.client.aggregator().calculateSignature();
+                    String finalSignature = Base64.getEncoder().encodeToString(signature.der());
+                    byte[] sigBytes = signature.encode();
+                    byte[] pubCompressed = task.client.context().crypto().publicKey().encode(true);
+                    boolean verified = Secp256k1.verifyRecoverable(task.messageHash, sigBytes, pubCompressed);
+                    task.signature = finalSignature;
+                    task.verified = verified;
+                    task.complete();
                     signatureInProgress.set(false);
-                    return null;
-                });
-        } catch (Exception e) {
-            logger.error("Error starting signature process: {}", e.getMessage());
-            task.fail(e.getMessage());
-            signatureInProgress.set(false);
-            return CompletableFuture.failedFuture(e);
-        }
+                    logger.info("GG20 signature task {} completed successfully, verified: {}", taskId, verified);
+                } else {
+                    sendPartialS(task, partialS);
+                    task.complete();
+                    signatureInProgress.set(false);
+                }
+            } catch (Exception e) {
+                logger.error("Error in GG20 signature process: {}", e.getMessage());
+                task.fail(e.getMessage());
+                signatureInProgress.set(false);
+                throw new RuntimeException(e);
+            }
+        }, ThreadPoolUtil.getIoThreadPool());
     }
 
     public Map<String, Object> getSignatureTaskStatus(String taskId) {
-        CggmpSignatureTask task = signatureTasks.get(taskId);
+        Gg20SignatureTask task = signatureTasks.get(taskId);
         if (task == null) {
             throw new RuntimeException("Signature task not found: " + taskId);
         }
@@ -536,13 +634,16 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         status.put("status", task.status.get().name());
         status.put("message", task.message);
         status.put("errorMessage", task.errorMessage);
-        status.put("receivedCommitments", task.receivedCommitments.size());
-        status.put("receivedSignatureShares", task.receivedSignatureShares.size());
+        status.put("participants", new ArrayList<>(task.participants));
+        status.put("receivedGammaCommitments", task.participants.size() - 1 - (int) task.gammaCommitmentLatch.getCount());
+        status.put("receivedMtaResponses", task.participants.size() - 1 - (int) task.mtaResponseLatch.getCount());
+        status.put("receivedOffline", task.participants.size() - 1 - (int) task.offlineLatch.getCount());
+        status.put("receivedPartialS", task.participants.size() - 1 - (int) task.partialSLatch.getCount());
         return status;
     }
 
     public Map<String, Object> getSignatureResult(String taskId) {
-        CggmpSignatureTask task = signatureTasks.get(taskId);
+        Gg20SignatureTask task = signatureTasks.get(taskId);
         if (task == null) {
             throw new RuntimeException("Signature task not found: " + taskId);
         }
@@ -560,144 +661,128 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         return result;
     }
 
-    private CompletableFuture<Void> broadcastSignatureShare(String taskId, BigInteger signatureShare) {
-        Map<String, Object> shareData = new HashMap<>();
-        shareData.put("taskId", taskId);
-        shareData.put("signatureShare", signatureShare);
+    private byte[] hashMessage(String message) {
+        return Hash.sha256(message.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
 
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_SIGN_ROUND2, shareData))
+    private void initGg20Client(Gg20SignatureTask task) {
+        if (task.client != null) {
+            return;
+        }
+        TSS.loadLibraries();
+        if (task.curveParams == null) {
+            task.curveParams = new Secp256k1CurveParams();
+        }
+        if (task.messageHash == null) {
+            task.messageHash = hashMessage(task.message);
+        }
+        if (task.memKey == null) {
+            task.memKey = new byte[GG20_MEM_KEY_SIZE];
+            ZKRandom.getRandom().nextBytes(task.memKey);
+        }
+
+        KeyShare keyShare = loadKeyShareByGroupPublicKey(task.groupPublicKey).join();
+        if (keyShare == null) {
+            throw new RuntimeException("Key share not found");
+        }
+        BigInteger share = new BigInteger(keyShare.getKeyShare(), 16);
+        SecretBox ski = SecretBox.of(share.toByteArray(), task.memKey, false);
+        Secp256k1PointOps publicKey = task.curveParams.decodePoint(HexUtils.hexToBytes(task.groupPublicKey));
+
+        InitContext initContext = InitContext.inMemoryBuilder()
+            .additionalContext(task.taskId.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            .message(task.messageHash)
+            .build();
+
+        CryptoContext<Secp256k1PointOps> cryptoContext = CryptoContext.inMemoryBuilder(Secp256k1PointOps.class)
+            .idx(nodeId)
+            .ski(ski)
+            .participants(new ArrayList<>(task.participants))
+            .memKey(() -> task.memKey.clone())
+            .publicKey(publicKey)
+            .curve(task.curveParams)
+            .build();
+
+        GG20Context<Secp256k1PointOps> context = GG20Context.newBuilder(Secp256k1PointOps.class)
+            .init(initContext)
+            .mta(MtAContext.inMemory())
+            .crypto(cryptoContext)
+            .signature(SignatureContext.inMemory())
+            .build();
+
+        GG20CommitmentGenerator<Secp256k1PointOps> generator = new GG20CommitmentGenerator<>(
+            task.curveParams.getCurveOrder(),
+            task.curveParams.getG(),
+            task.curveParams.getGeneratorH()
+        );
+        task.client = new GG20Client<>(task.taskId, context, generator);
+        task.client.init();
+    }
+
+    private CompletableFuture<Void> broadcastGammaCommitment(Gg20SignatureTask task) {
+        var commitment = task.client.context().crypto().ephemeral();
+        GammaCommitment<Secp256k1PointOps> gammaCommitment = new GammaCommitment<>(commitment.commitment(), commitment.r_i());
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("commitment", Gg20Codec.encodeGammaCommitment(gammaCommitment));
+        return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.GG20_GAMMA_COMMITMENT, data))
             .exceptionally(ex -> {
-                logger.error("Failed to broadcast signature share: {}", ex.getMessage());
+                logger.error("Failed to broadcast GG20_GAMMA_COMMITMENT: {}", ex.getMessage());
                 return null;
             });
     }
 
-    private CompletableFuture<Void> broadcastCommitment(String taskId, ECPoint R_i) {
-        Map<String, Object> commitmentData = new HashMap<>();
-        commitmentData.put("taskId", taskId);
-        commitmentData.put("R_i", Base64.getEncoder().encodeToString(R_i.getEncoded(false)));
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.CGGMP_SIGN_ROUND1, commitmentData))
+    private CompletableFuture<Void> broadcastMtaInit(Gg20SignatureTask task) {
+        MtAInitiatorMessage initiatorMessage = task.client.context().mta().initiator().message();
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("initiatorId", nodeId);
+        data.put("paillierPublicKey", Gg20Codec.encodePaillierPublicKey(task.client.context().crypto().paillier().publicKey()));
+        data.put("zkSetup", Gg20Codec.encodeZkSetup(task.client.context().crypto().zkSetup()));
+        data.put("initiatorMessage", Gg20Codec.encodeMtAInitiatorMessage(initiatorMessage));
+        return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.GG20_MTA_INIT, data))
             .exceptionally(ex -> {
-                logger.error("Failed to broadcast commitment: {}", ex.getMessage());
+                logger.error("Failed to broadcast GG20_MTA_INIT: {}", ex.getMessage());
                 return null;
             });
     }
 
-    private ECPoint calculateGlobalCommitment(CggmpSignatureTask task) throws Exception {
-        if (task.receivedCommitments.size() < Constants.THRESHOLD) {
-            throw new Exception("Not enough commitments: " + task.receivedCommitments.size() + " < " + Constants.THRESHOLD);
-        }
+    private CompletableFuture<Void> broadcastOfflineData(Gg20SignatureTask task) {
+        var commitment = task.client.context().crypto().ephemeral();
+        var gamma = commitment.Gamma_i();
+        BigInt deltaShare = task.client.signature().computeDeltaShare();
+        ChaumPedersenCommitmentWithValue<Secp256k1PointOps> lambdaCommitment = task.client.integrity().computeLambdaI();
+        ChaumPedersenCommitment<Secp256k1PointOps> sigmaCommitment = task.client.integrity().computeSigmaCommitment();
 
-        ECPoint globalR = getInfinityPoint();
-
-        for (ECPoint R_i : task.receivedCommitments.values()) {
-            globalR = globalR.add(R_i);
-        }
-
-        return globalR.normalize();
-    }
-
-    private byte[] calculateMessageHash(String message, ECPoint R) throws Exception {
-        ECPoint normalized = R.normalize();
-        byte[] RxBytes = normalized.getAffineXCoord().getEncoded();
-        byte[] messageBytes = message.getBytes("UTF-8");
-        byte[] input = new byte[messageBytes.length + RxBytes.length];
-        System.arraycopy(messageBytes, 0, input, 0, messageBytes.length);
-        System.arraycopy(RxBytes, 0, input, messageBytes.length, RxBytes.length);
-        byte[] hash = MessageDigest.getInstance("SHA-256").digest(input);
-        logger.info("Message bytes length: {}", messageBytes.length);
-        logger.info("Rx bytes length: {}", RxBytes.length);
-        logger.info("Total input length: {}", input.length);
-        logger.info("Calculated hash: {}", java.util.Arrays.toString(hash));
-        return hash;
-    }
-
-    private CompletableFuture<BigInteger> generateSignatureShare(CggmpSignatureTask task, BigInteger k_i, BigInteger h) {
-        return loadKeyShareByGroupPublicKey(task.groupPublicKey)
-            .thenApply(keyShare -> {
-                if (keyShare == null) {
-                    throw new RuntimeException("Key share not found");
-                }
-                try {
-                    BigInteger s_i = new BigInteger(keyShare.getKeyShare(), 16);
-                    return k_i.add(s_i.multiply(h)).mod(getCurveOrder());
-                } catch (Exception e) {
-                    throw new RuntimeException("Failed to generate signature share: " + e.getMessage());
-                }
-            })
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("gamma", Gg20Codec.encodePoint(gamma));
+        data.put("deltaShare", Gg20Codec.encodeBigInt(deltaShare));
+        data.put("lambdaCommitment", Gg20Codec.encodeChaumCommitmentWithValue(lambdaCommitment));
+        data.put("sigmaCommitment", Gg20Codec.encodeChaumCommitment(sigmaCommitment));
+        return nodeService.broadcastMessage(new NodeService.Message(nodeId, NodeService.Message.Type.GG20_OFFLINE, data))
             .exceptionally(ex -> {
-                logger.error("Error generating signature share: {}", ex.getMessage());
-                throw new RuntimeException(ex);
+                logger.error("Failed to broadcast GG20_OFFLINE: {}", ex.getMessage());
+                return null;
             });
     }
 
-    private BigInteger combineSignatureShares(CggmpSignatureTask task) throws Exception {
-        var shares = task.receivedSignatureShares;
-        if (shares.size() < Constants.THRESHOLD) {
-            throw new Exception("Not enough signature shares: " + shares.size() + " < " + Constants.THRESHOLD);
-        }
-
-        BigInteger sigma = BigInteger.ZERO;
-        for (BigInteger share : shares.values()) {
-            sigma = sigma.add(share).mod(getCurveOrder());
-        }
-
-        return sigma;
-    }
-
-    private String convertToECDSASignature(ECPoint R, BigInteger sigma) throws Exception {
-        try {
-            ECPoint normalized = R.normalize();
-            BigInteger r = normalized.getAffineXCoord().toBigInteger().mod(getCurveOrder());
-            BigInteger s = sigma.multiply(r.modInverse(getCurveOrder())).mod(getCurveOrder());
-
-            logger.info("Signature r: {}", r);
-            logger.info("Signature s: {}", s);
-
-            byte[] der = encodeEcdsaDer(r, s);
-            String signature = Base64.getEncoder().encodeToString(der);
-            logger.info("Generated signature: {}", signature);
-            return signature;
-        } catch (Exception e) {
-            logger.error("Error converting to ECDSA signature: {}", e.getMessage());
-            e.printStackTrace();
-            throw e;
+    private void storePartialS(Gg20SignatureTask task, int senderId, BigInt partialS) {
+        task.client.context().aggregator().storePartialS(senderId, partialS);
+        if (senderId != task.initiatorId && task.partialSReceived.putIfAbsent(senderId, Boolean.TRUE) == null) {
+            task.partialSLatch.countDown();
         }
     }
 
-    private byte[] encodeEcdsaDer(BigInteger r, BigInteger s) {
-        byte[] rBytes = toUnsignedBytes(r);
-        byte[] sBytes = toUnsignedBytes(s);
-
-        int len = 2 + rBytes.length + 2 + sBytes.length;
-        byte[] der = new byte[2 + len];
-        int pos = 0;
-        der[pos++] = 0x30;
-        der[pos++] = (byte) len;
-        der[pos++] = 0x02;
-        der[pos++] = (byte) rBytes.length;
-        System.arraycopy(rBytes, 0, der, pos, rBytes.length);
-        pos += rBytes.length;
-        der[pos++] = 0x02;
-        der[pos++] = (byte) sBytes.length;
-        System.arraycopy(sBytes, 0, der, pos, sBytes.length);
-        return der;
-    }
-
-    private byte[] toUnsignedBytes(BigInteger value) {
-        byte[] bytes = value.toByteArray();
-        if (bytes.length > 1 && bytes[0] == 0) {
-            byte[] trimmed = new byte[bytes.length - 1];
-            System.arraycopy(bytes, 1, trimmed, 0, trimmed.length);
-            bytes = trimmed;
-        }
-        if ((bytes[0] & 0x80) != 0) {
-            byte[] prefixed = new byte[bytes.length + 1];
-            prefixed[0] = 0x00;
-            System.arraycopy(bytes, 0, prefixed, 1, bytes.length);
-            bytes = prefixed;
-        }
-        return bytes;
+    private void sendPartialS(Gg20SignatureTask task, BigInt partialS) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("partialS", Gg20Codec.encodeBigInt(partialS));
+        nodeService.sendMessage(task.initiatorId, new NodeService.Message(nodeId, NodeService.Message.Type.GG20_PARTIAL_S, data))
+            .exceptionally(ex -> {
+                logger.error("Failed to send GG20_PARTIAL_S: {}", ex.getMessage());
+                return null;
+            });
     }
 
     private ECPublicKey getEcPublicKey() throws Exception {
@@ -746,280 +831,9 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         return G.multiply(k);
     }
 
-    private CompletableFuture<Boolean> verifySignature(String taskId, String message, String signature) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                CggmpSignatureTask task = signatureTasks.get(taskId);
-                if (task == null) {
-                    throw new RuntimeException("Signature task not found: " + taskId);
-                }
-
-                String groupPublicKey = task.groupPublicKey;
-                if (groupPublicKey == null) {
-                    throw new RuntimeException("Group public key not found for task: " + taskId);
-                }
-
-                return verifyWithPublicKey(groupPublicKey, message, signature);
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            }
-        }, ThreadPoolUtil.getSingleThreadPool());
-    }
-
-    private boolean verifyWithPublicKey(String publicKeyHex, String message, String signature) throws Exception {
-        try {
-            byte[] pointBytes = HexUtils.hexToBytes(publicKeyHex);
-            ECPoint Q = getEcPublicKey().getParameters().getCurve().decodePoint(pointBytes);
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-            ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-            keyPairGenerator.initialize(ecSpec);
-            KeyPair keyPair = keyPairGenerator.generateKeyPair();
-            ECPublicKey paramsPub = (ECPublicKey) keyPair.getPublic();
-            org.bouncycastle.jce.spec.ECPublicKeySpec spec = new org.bouncycastle.jce.spec.ECPublicKeySpec(Q, paramsPub.getParameters());
-            KeyFactory keyFactory = KeyFactory.getInstance("EC", "BC");
-            PublicKey publicKey = keyFactory.generatePublic(spec);
-
-            String cleanedSignature = signature.replaceAll("\\s+", "")
-                                              .replaceAll("[^A-Za-z0-9+/=]", "");
-
-            while (cleanedSignature.length() % 4 != 0) {
-                cleanedSignature += "=";
-            }
-
-            logger.info("Public key algorithm: {}", publicKey.getAlgorithm());
-            logger.info("Public key format: {}", publicKey.getFormat());
-            logger.info("Public key (hex): {}", publicKeyHex);
-            logger.info("Data: {}", message);
-            logger.info("Data bytes length: {}", message.getBytes("UTF-8").length);
-            logger.info("Original signature: {}", signature);
-            logger.info("Cleaned signature: {}", cleanedSignature);
-
-            byte[] signatureBytes = Base64.getDecoder().decode(cleanedSignature);
-            logger.info("Signature bytes length: {}", signatureBytes.length);
-            BigInteger[] rs = decodeEcdsaDer(signatureBytes);
-            BigInteger r = rs[0];
-            BigInteger s = rs[1];
-            logger.info("Extracted r: {}", r);
-            logger.info("Extracted s: {}", s);
-
-            ECPoint R = reconstructPointFromR(r);
-            logger.info("Reconstructed R point: {}", R);
-
-            byte[] messageHash = calculateMessageHash(message, R);
-            BigInteger h = new BigInteger(1, messageHash);
-            logger.info("Calculated hash during verification: {}", java.util.Arrays.toString(messageHash));
-
-            boolean result = verifyCggmpSignature(publicKey, R, h, r, s);
-            logger.info("CGGMP verification result: {}", result);
-
-            return result;
-        } catch (Exception e) {
-            logger.error("Error verifying signature: {}", e.getMessage());
-            e.printStackTrace();
-            throw e;
-        }
-    }
-
-    private BigInteger[] decodeEcdsaDer(byte[] derEncoded) throws Exception {
-        int pos = 0;
-        if (derEncoded[pos++] != 0x30) {
-            throw new Exception("Invalid DER encoding: expected SEQUENCE");
-        }
-        int len = derEncoded[pos++];
-        if (len > derEncoded.length - pos) {
-            throw new Exception("Invalid DER encoding: length too long");
-        }
-
-        if (derEncoded[pos++] != 0x02) {
-            throw new Exception("Invalid DER encoding: expected INTEGER for r");
-        }
-        int rLen = derEncoded[pos++];
-        byte[] rBytes = new byte[rLen];
-        System.arraycopy(derEncoded, pos, rBytes, 0, rLen);
-        pos += rLen;
-        BigInteger r = new BigInteger(1, rBytes);
-
-        if (derEncoded[pos++] != 0x02) {
-            throw new Exception("Invalid DER encoding: expected INTEGER for s");
-        }
-        int sLen = derEncoded[pos++];
-        byte[] sBytes = new byte[sLen];
-        System.arraycopy(derEncoded, pos, sBytes, 0, sLen);
-        BigInteger s = new BigInteger(1, sBytes);
-
-        return new BigInteger[]{r, s};
-    }
-
-    private ECPoint reconstructPointFromR(BigInteger r) throws Exception {
-        org.bouncycastle.jce.spec.ECParameterSpec ecSpec = getEcPublicKey().getParameters();
-        org.bouncycastle.math.ec.ECCurve curve = ecSpec.getCurve();
-
-        try {
-            byte[] xBytes = new byte[32];
-            byte[] rBytes = r.toByteArray();
-
-            if (rBytes.length <= 32) {
-                int offset = 32 - rBytes.length;
-                System.arraycopy(rBytes, 0, xBytes, offset, rBytes.length);
-                for (int i = 0; i < offset; i++) {
-                    xBytes[i] = 0;
-                }
-            } else {
-                System.arraycopy(rBytes, rBytes.length - 32, xBytes, 0, 32);
-            }
-
-            byte[] encodedR = new byte[33];
-            encodedR[0] = 0x02;
-            System.arraycopy(xBytes, 0, encodedR, 1, 32);
-
-            try {
-                ECPoint point = curve.decodePoint(encodedR);
-                logger.info("Reconstructed R point using compressed format (0x02)");
-                return point;
-            } catch (Exception e) {
-                encodedR[0] = 0x03;
-                ECPoint point = curve.decodePoint(encodedR);
-                logger.info("Reconstructed R point using compressed format (0x03)");
-                return point;
-            }
-        } catch (Exception e) {
-            logger.error("Failed to reconstruct R point from r: {}", e.getMessage());
-            throw new Exception("Failed to reconstruct R point from r: " + e.getMessage());
-        }
-    }
-
-    private boolean verifyCggmpSignature(PublicKey publicKey, ECPoint R, BigInteger h, BigInteger r, BigInteger s) throws Exception {
-        ECPublicKey ecPublicKey = (ECPublicKey) publicKey;
-        org.bouncycastle.jce.spec.ECParameterSpec ecSpec = ecPublicKey.getParameters();
-        ECPoint G = ecSpec.getG();
-        BigInteger n = ecSpec.getN();
-        ECPoint Q = ecPublicKey.getQ();
-
-        if (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0) {
-            logger.warn("Invalid r value: out of range");
-            return false;
-        }
-        if (s.compareTo(BigInteger.ZERO) <= 0 || s.compareTo(n) >= 0) {
-            logger.warn("Invalid s value: out of range");
-            return false;
-        }
-
-        h = h.mod(n);
-
-        BigInteger sigma = s.multiply(r).mod(n);
-        logger.info("Calculated sigma: {}", sigma);
-
-        ECPoint sigmaG = G.multiply(sigma).normalize();
-        logger.info("Calculated sigma * G: {}", sigmaG);
-
-        ECPoint hQ = Q.multiply(h).normalize();
-        ECPoint rightSide = R.add(hQ).normalize();
-        logger.info("Calculated R + h * Q: {}", rightSide);
-
-        boolean result = sigmaG.equals(rightSide);
-        logger.info("CGGMP verification result: {}", result);
-
-        BigInteger rX = R.getAffineXCoord().toBigInteger().mod(n);
-        logger.info("R's x-coordinate mod n: {}", rX);
-        logger.info("Expected r: {}", r);
-        boolean rXMatch = rX.equals(r);
-        logger.info("R's x-coordinate match: {}", rXMatch);
-
-        if (!result) {
-            ECPoint ROdd = reconstructPointFromRWithYCoordinate(r, true);
-            logger.info("Reconstructed R point (odd y): {}", ROdd);
-
-            ECPoint rightSideOdd = ROdd.add(hQ).normalize();
-            logger.info("Calculated ROdd + h * Q: {}", rightSideOdd);
-
-            boolean resultOdd = sigmaG.equals(rightSideOdd);
-            logger.info("CGGMP verification result (odd y): {}", resultOdd);
-
-            if (resultOdd) {
-                return true;
-            }
-        }
-
-        return result && rXMatch;
-    }
-
-    private ECPoint reconstructPointFromRWithYCoordinate(BigInteger r, boolean useOddY) throws Exception {
-        org.bouncycastle.jce.spec.ECParameterSpec ecSpec = getEcPublicKey().getParameters();
-        org.bouncycastle.math.ec.ECCurve curve = ecSpec.getCurve();
-
-        try {
-            byte[] xBytes = new byte[32];
-            byte[] rBytes = r.toByteArray();
-
-            if (rBytes.length <= 32) {
-                int offset = 32 - rBytes.length;
-                System.arraycopy(rBytes, 0, xBytes, offset, rBytes.length);
-                for (int i = 0; i < offset; i++) {
-                    xBytes[i] = 0;
-                }
-            } else {
-                System.arraycopy(rBytes, rBytes.length - 32, xBytes, 0, 32);
-            }
-
-            byte[] encodedR = new byte[33];
-            int formatByte = useOddY ? 0x03 : 0x02;
-            encodedR[0] = (byte) formatByte;
-            System.arraycopy(xBytes, 0, encodedR, 1, 32);
-
-            ECPoint point = curve.decodePoint(encodedR);
-            return point;
-        } catch (Exception e) {
-            logger.error("Failed to reconstruct R point from r: {}", e.getMessage());
-            throw new Exception("Failed to reconstruct R point from r: " + e.getMessage());
-        }
-    }
 
     private CompletableFuture<KeyShare> loadKeyShareByGroupPublicKey(String groupPublicKey) {
-        return CompletableFuture.supplyAsync(() -> {
-            Connection conn = null;
-            PreparedStatement pstmt = null;
-            try {
-                logger.info("Loading key share for group public key: {}", groupPublicKey);
-                logger.info("Node ID: {}", nodeId);
-                
-                String sql = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares WHERE group_public_key = ? ORDER BY id DESC LIMIT 1";
-                conn = databaseService.getShareConnection(nodeId);
-                pstmt = conn.prepareStatement(sql);
-                pstmt.setString(1, groupPublicKey);
-                var rs = pstmt.executeQuery();
-                
-                if (rs.next()) {
-                    logger.info("Found key share in database!");
-                    KeyShare keyShare = new KeyShare();
-                    keyShare.setId(rs.getLong("id"));
-                    keyShare.setShareIndex(rs.getInt("share_index"));
-                    keyShare.setKeyShare(rs.getString("key_share"));
-                    keyShare.setGroupPublicKey(rs.getString("group_public_key"));
-                    keyShare.setDkgTaskId(rs.getString("dkg_task_id"));
-                    logger.info("Loaded key share: {}", keyShare);
-                    return keyShare;
-                } else {
-                    logger.info("No key share found for group public key: {}", groupPublicKey);
-                    return null;
-                }
-            } catch (Exception e) {
-                logger.error("Error loading key share: {}", e.getMessage());
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            } finally {
-                if (pstmt != null) {
-                    try {
-                        pstmt.close();
-                    } catch (Exception e) {
-                        logger.error("Error closing statement", e);
-                    }
-                }
-                if (conn != null) {
-                    databaseService.releaseShareConnection(conn, nodeId);
-                }
-            }
-        }, ThreadPoolUtil.getComputationThreadPool());
+        return keyShareDao.findByGroupPublicKey(nodeId, groupPublicKey);
     }
 
     private ECPoint decodeECPoint(byte[] encoded) throws Exception {
@@ -1028,8 +842,11 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
 
     @Override
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
+        logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===", 
+            senderId, message.type, message.data instanceof Map ? ((Map<?,?>)message.data).get("taskId") : "N/A");
         return CompletableFuture.runAsync(() -> {
             try {
+                logger.info("=== CGGMP processing: type={} ===", message.type);
                 switch (message.type) {
                     case CGGMP_DKG_INIT:
                         handleCggmpDkgInit(senderId, message.data);
@@ -1040,14 +857,23 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
                     case CGGMP_DKG_ROUND2:
                         handleCggmpDkgRound2(senderId, message.data);
                         break;
-                    case CGGMP_SIGN_INIT:
-                        handleCggmpSignInit(senderId, message.data);
+                    case GG20_SIGN_INIT:
+                        handleGg20SignInit(senderId, message.data);
                         break;
-                    case CGGMP_SIGN_ROUND1:
-                        handleCggmpSignRound1(senderId, message.data);
+                    case GG20_GAMMA_COMMITMENT:
+                        handleGg20GammaCommitment(senderId, message.data);
                         break;
-                    case CGGMP_SIGN_ROUND2:
-                        handleCggmpSignRound2(senderId, message.data);
+                    case GG20_MTA_INIT:
+                        handleGg20MtaInit(senderId, message.data);
+                        break;
+                    case GG20_MTA_RESPONSE:
+                        handleGg20MtaResponse(senderId, message.data);
+                        break;
+                    case GG20_OFFLINE:
+                        handleGg20Offline(senderId, message.data);
+                        break;
+                    case GG20_PARTIAL_S:
+                        handleGg20PartialS(senderId, message.data);
                         break;
                     default:
                         logger.debug("Ignoring message of type {} for CGGMP service", message.type);
@@ -1059,94 +885,230 @@ public class CGGMPKeyService implements NodeService.MessageHandler {
         }, ThreadPoolUtil.getSingleThreadPool());
     }
 
-    private void handleCggmpSignInit(int senderId, Object data) {
+    private void handleGg20SignInit(int senderId, Object data) {
         if (data instanceof Map) {
             Map<?, ?> dataMap = (Map<?, ?>) data;
             String signatureTaskId = (String) dataMap.get("signatureTaskId");
             String groupPublicKey = (String) dataMap.get("groupPublicKey");
             String msg = (String) dataMap.get("message");
+            Integer initiatorId = null;
+            Object initiatorValue = dataMap.get("initiatorId");
+            if (initiatorValue instanceof Number) {
+                initiatorId = ((Number) initiatorValue).intValue();
+            }
+            List<Integer> participants = null;
+            Object participantsValue = dataMap.get("participants");
+            if (participantsValue instanceof List<?> list) {
+                participants = new ArrayList<>();
+                for (Object v : list) {
+                    if (v instanceof Number n) {
+                        participants.add(n.intValue());
+                    }
+                }
+            }
+            byte[] messageHash = null;
+            Object messageHashValue = dataMap.get("messageHash");
+            if (messageHashValue instanceof String hashString) {
+                messageHash = Base64.getDecoder().decode(hashString);
+            }
+            final byte[] messageHashFinal = messageHash;
+
             if (signatureTaskId != null && msg != null && groupPublicKey != null) {
                 if (!signatureTasks.containsKey(signatureTaskId)) {
-                    createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg);
-                    logger.info("Created CGGMP signature task with group key from CGGMP_SIGN_INIT: {}", signatureTaskId);
+                    int resolvedInitiatorId = initiatorId != null ? initiatorId : senderId;
+                    Set<Integer> participantsSet = participants == null ? null : new LinkedHashSet<>(participants);
+                    createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg, resolvedInitiatorId, participantsSet);
+                    logger.info("Created GG20 signature task with group key from GG20_SIGN_INIT: {}", signatureTaskId);
                     CompletableFuture.runAsync(() -> {
+                        Gg20SignatureTask task = signatureTasks.get(signatureTaskId);
+                        if (task == null) {
+                            return;
+                        }
+                        if (messageHashFinal != null) {
+                            task.messageHash = messageHashFinal;
+                        }
+                        if (!task.participants.contains(nodeId)) {
+                            logger.info("Node {} not selected for GG20 signature task {}, participants={}, skipping", nodeId, signatureTaskId, task.participants);
+                            return;
+                        }
                         startSignatureTaskInternal(signatureTaskId, false)
                             .exceptionally(ex -> {
-                                logger.error("Failed to start CGGMP signature task {} from CGGMP_SIGN_INIT: {}", signatureTaskId, ex.getMessage());
+                                logger.error("Failed to start GG20 signature task {} from GG20_SIGN_INIT: {}", signatureTaskId, ex.getMessage());
                                 return null;
                             });
                     }, ThreadPoolUtil.getIoThreadPool());
                 } else {
-                    logger.info("CGGMP signature task {} already exists, ignoring CGGMP_SIGN_INIT", signatureTaskId);
+                    logger.info("GG20 signature task {} already exists, ignoring GG20_SIGN_INIT", signatureTaskId);
                 }
             } else {
-                logger.warn("Invalid CGGMP_SIGN_INIT payload from node {}", senderId);
+                logger.warn("Invalid GG20_SIGN_INIT payload from node {}", senderId);
             }
         }
     }
 
     @SuppressWarnings("unchecked")
-    private void handleCggmpSignRound1(int senderId, Object data) {
-        if (data instanceof Map) {
-            Map<?, ?> dataMap = (Map<?, ?>) data;
-            String taskId = (String) dataMap.get("taskId");
-            String encoded = (String) dataMap.get("R_i");
-            ECPoint R_i = null;
-            if (encoded != null) {
-                try {
-                    R_i = decodeECPoint(Base64.getDecoder().decode(encoded));
-                } catch (Exception e) {
-                    logger.error("Failed to decode R_i from node {}", senderId, e);
-                }
+    private void handleGg20GammaCommitment(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
+        }
+        String taskId = (String) dataMap.get("taskId");
+        Object commitmentObj = dataMap.get("commitment");
+        if (!(commitmentObj instanceof Map<?, ?> commitmentMap)) {
+            logger.warn("Invalid GG20_GAMMA_COMMITMENT payload from node {}", senderId);
+            return;
+        }
+        Gg20SignatureTask task = signatureTasks.get(taskId);
+        if (task == null || !task.participants.contains(senderId)) {
+            return;
+        }
+        try {
+            initGg20Client(task);
+            GammaCommitment<Secp256k1PointOps> commitment = Gg20Codec.decodeGammaCommitment(task.curveParams, commitmentMap);
+            task.client.context().integrity().storeGammaCommitment(senderId, commitment);
+            if (task.gammaCommitmentLatch.getCount() > 0) {
+                task.gammaCommitmentLatch.countDown();
             }
-
-            if (R_i != null) {
-                CggmpSignatureTask task = signatureTasks.get(taskId);
-                if (task != null) {
-                    task.receivedCommitments.put(senderId, R_i);
-                    task.commitmentsReceivedLatch.countDown();
-                    logger.info("Received CGGMP_SIGN_ROUND1 from node {} for task: {}", senderId, taskId);
-                } else {
-                    logger.warn("Received commitment for non-existent CGGMP signature task: {}", taskId);
-                }
-            } else {
-                logger.warn("Invalid CGGMP_SIGN_ROUND1 payload from node {}", senderId);
-            }
+            logger.info("Received GG20_GAMMA_COMMITMENT from node {} for task {}", senderId, taskId);
+        } catch (Exception e) {
+            logger.error("Failed to handle GG20_GAMMA_COMMITMENT from node {}: {}", senderId, e.getMessage());
         }
     }
 
     @SuppressWarnings("unchecked")
-    private void handleCggmpSignRound2(int senderId, Object data) {
-        if (data instanceof Map) {
-            Map<?, ?> dataMap = (Map<?, ?>) data;
-            String taskId = (String) dataMap.get("taskId");
-            BigInteger signatureShare = (BigInteger) dataMap.get("signatureShare");
-
-            CggmpSignatureTask task = signatureTasks.get(taskId);
-            if (task != null) {
-                task.receivedSignatureShares.put(senderId, signatureShare);
-                task.sharesReceivedLatch.countDown();
-                logger.info("Received CGGMP_SIGN_ROUND2 from node {} for task: {}", senderId, taskId);
-            } else {
-                logger.warn("Received signature share for non-existent CGGMP signature task: {}", taskId);
-            }
+    private void handleGg20MtaInit(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
         }
+        String taskId = (String) dataMap.get("taskId");
+        Number initiatorValue = (Number) dataMap.get("initiatorId");
+        if (initiatorValue == null) {
+            logger.warn("Invalid GG20_MTA_INIT payload from node {}", senderId);
+            return;
+        }
+        int initiatorId = initiatorValue.intValue();
+        if (initiatorId == nodeId) {
+            return;
+        }
+        Gg20SignatureTask task = signatureTasks.get(taskId);
+        if (task == null || !task.participants.contains(nodeId)) {
+            return;
+        }
+        try {
+            initGg20Client(task);
+            PaillierPublicKey publicKey = Gg20Codec.decodePaillierPublicKey((Map<?, ?>) dataMap.get("paillierPublicKey"));
+            ZKSetup zkSetup = Gg20Codec.decodeZkSetup((Map<?, ?>) dataMap.get("zkSetup"));
+            MtAInitiatorMessage initiatorMessage = Gg20Codec.decodeMtAInitiatorMessage((Map<?, ?>) dataMap.get("initiatorMessage"));
+            MtAResult alpha = task.client.mta().asRespondent().compute(GG20.ComputationType.GAMMA, initiatorId, publicKey, zkSetup, initiatorMessage);
+            MtAResult mu = task.client.mta().asRespondent().compute(GG20.ComputationType.LAGRANGE, initiatorId, publicKey, zkSetup, initiatorMessage);
+
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("taskId", taskId);
+            resp.put("initiatorId", initiatorId);
+            resp.put("responderId", nodeId);
+            resp.put("alpha", Gg20Codec.encodeMtAResult(alpha));
+            resp.put("mu", Gg20Codec.encodeMtAResult(mu));
+            nodeService.sendMessage(initiatorId, new NodeService.Message(nodeId, NodeService.Message.Type.GG20_MTA_RESPONSE, resp)).join();
+        } catch (Exception e) {
+            logger.error("Failed to handle GG20_MTA_INIT from node {}: {}", senderId, e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void handleGg20MtaResponse(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
+        }
+        String taskId = (String) dataMap.get("taskId");
+        Number initiatorValue = (Number) dataMap.get("initiatorId");
+        Number responderValue = (Number) dataMap.get("responderId");
+        if (initiatorValue == null || responderValue == null) {
+            return;
+        }
+        int initiatorId = initiatorValue.intValue();
+        int responderId = responderValue.intValue();
+        if (initiatorId != nodeId) {
+            return;
+        }
+        Gg20SignatureTask task = signatureTasks.get(taskId);
+        if (task == null) {
+            return;
+        }
+        try {
+            initGg20Client(task);
+            MtAResult alpha = Gg20Codec.decodeMtAResult((Map<?, ?>) dataMap.get("alpha"));
+            MtAResult mu = Gg20Codec.decodeMtAResult((Map<?, ?>) dataMap.get("mu"));
+            task.client.mta().asInitiator().store(GG20.ComputationType.GAMMA, responderId, alpha);
+            task.client.mta().asInitiator().store(GG20.ComputationType.LAGRANGE, responderId, mu);
+            if (task.mtaResponses.putIfAbsent(responderId, Boolean.TRUE) == null) {
+                task.mtaResponseLatch.countDown();
+            }
+            logger.info("Received GG20_MTA_RESPONSE from node {} for task {}", senderId, taskId);
+        } catch (Exception e) {
+            logger.error("Failed to handle GG20_MTA_RESPONSE from node {}: {}", senderId, e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void handleGg20Offline(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
+        }
+        String taskId = (String) dataMap.get("taskId");
+        Gg20SignatureTask task = signatureTasks.get(taskId);
+        if (task == null || !task.participants.contains(senderId)) {
+            return;
+        }
+        try {
+            initGg20Client(task);
+            Secp256k1PointOps gamma = Gg20Codec.decodePoint(task.curveParams, (String) dataMap.get("gamma"));
+            BigInt deltaShare = Gg20Codec.decodeBigInt((String) dataMap.get("deltaShare"));
+            ChaumPedersenCommitmentWithValue<Secp256k1PointOps> lambdaCommitment =
+                Gg20Codec.decodeChaumCommitmentWithValue(task.curveParams, (Map<?, ?>) dataMap.get("lambdaCommitment"));
+            ChaumPedersenCommitment<Secp256k1PointOps> sigmaCommitment =
+                Gg20Codec.decodeChaumCommitment(task.curveParams, (Map<?, ?>) dataMap.get("sigmaCommitment"));
+
+            task.client.signature().storeGamma(senderId, gamma);
+            task.client.context().signature().storeDeltaShare(senderId, deltaShare);
+            task.client.integrity().storeLambdaCommitment(senderId, lambdaCommitment);
+            task.client.integrity().storeSigmaCommitment(senderId, sigmaCommitment);
+            if (task.offlineReceived.putIfAbsent(senderId, Boolean.TRUE) == null) {
+                task.offlineLatch.countDown();
+            }
+            logger.info("Received GG20_OFFLINE from node {} for task {}", senderId, taskId);
+        } catch (Exception e) {
+            logger.error("Failed to handle GG20_OFFLINE from node {}: {}", senderId, e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void handleGg20PartialS(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
+        }
+        String taskId = (String) dataMap.get("taskId");
+        String sEncoded = (String) dataMap.get("partialS");
+        if (sEncoded == null) {
+            return;
+        }
+        Gg20SignatureTask task = signatureTasks.get(taskId);
+        if (task == null || nodeId != task.initiatorId) {
+            return;
+        }
+        BigInt partialS = Gg20Codec.decodeBigInt(sEncoded);
+        storePartialS(task, senderId, partialS);
+        logger.info("Received GG20_PARTIAL_S from node {} for task {}", senderId, taskId);
     }
 
     public CompletableFuture<Void> init(int nodesCount) {
-        return CompletableFuture.runAsync(() -> {
+        return ThreadPoolUtil.submitIoTask(() -> {
             try {
-                for (int i = 1; i <= nodesCount; i++) {
-                    if (i != nodeId) {
-                        nodeService.registerMessageHandler(i, this);
-                    }
-                }
-
+                nodeService.startP2PServer().join();
+                nodeService.registerMessageHandler(-1, this);
                 logger.info("CGGMP signature service initialized successfully for node {} with {} total nodes", nodeId, nodesCount);
             } catch (Exception e) {
                 e.printStackTrace();
                 throw new RuntimeException(e);
             }
-        }, ThreadPoolUtil.getSingleThreadPool());
+        });
     }
 }
