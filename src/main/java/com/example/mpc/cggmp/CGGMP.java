@@ -4,6 +4,12 @@ import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
+import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
+import com.example.mpc.cggmp.proof.NoSmallFactorProof;
+import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
+import com.example.mpc.cggmp.zk.ZKSetup;
+
 import java.math.BigInteger;
 import java.security.SecureRandom;
 import java.util.*;
@@ -20,6 +26,7 @@ public class CGGMP {
     private PedersenCommitment pedersen;
     private PaillierEncryption paillier;
     private PaillierEncryption.PublicKey paillierPublicKey;
+    private ZKSetup zkSetup;
     
     private BigInteger secretShare;
     private ECPoint publicKey;
@@ -43,10 +50,11 @@ public class CGGMP {
     private void initialize() throws Exception {
         this.pedersen = new PedersenCommitment(curveName);
         this.paillier = new PaillierEncryption();
-        this.paillierPublicKey = new PaillierEncryption.PublicKey(paillier.getPublicKey());
+        this.paillierPublicKey = paillier.getPublicKeyInfo();
+        this.zkSetup = ZKSetup.generate(paillier.getBitLength());
     }
 
-    public DkgRound1Output dkgRound1() {
+    public DkgRound1Output dkgRound1(byte[] context) {
         logger.info("Node {} starting DKG Round 1", nodeId);
         
         BigInteger[] coefficients = new BigInteger[threshold];
@@ -66,8 +74,14 @@ public class CGGMP {
         
         ECPoint publicKeyCommitment = commitments.get(0);
         this.publicKey = publicKeyCommitment;
-        
-        return new DkgRound1Output(nodeId, coefficients, commitments, paillierPublicKey);
+
+        BiPrimeProofGenerator biPrimeProofGenerator = new BiPrimeProofGenerator();
+        NoSmallFactorProofGenerator noSmallFactorProofGenerator = new NoSmallFactorProofGenerator(zkSetup);
+
+        BiPrimeBlumProof biPrimeProof = biPrimeProofGenerator.createProof(paillier.getPrivateKeyInfo(), context);
+        NoSmallFactorProof factorProof = noSmallFactorProofGenerator.createProof(paillier.getPrivateKeyInfo(), context);
+
+        return new DkgRound1Output(nodeId, coefficients, commitments, paillierPublicKey, zkSetup, biPrimeProof, factorProof);
     }
 
     public DkgRound2Output dkgRound2(Map<Integer, DkgRound1Output> round1Outputs) throws Exception {
@@ -151,6 +165,14 @@ public class CGGMP {
         return publicKey;
     }
 
+    public PaillierEncryption getPaillier() {
+        return paillier;
+    }
+
+    public ZKSetup getZkSetup() {
+        return zkSetup;
+    }
+
     public void setSecretShare(BigInteger secretShare) {
         this.secretShare = secretShare;
     }
@@ -191,17 +213,28 @@ public class CGGMP {
         return result;
     }
 
+    public BigInteger getCurveOrder() {
+        return pedersen.getCurveOrder();
+    }
+
     public static class DkgRound1Output {
         public final int nodeId;
         public final BigInteger[] coefficients;
         public final List<ECPoint> commitments;
         public final PaillierEncryption.PublicKey paillierKey;
+        public final ZKSetup zkSetup;
+        public final BiPrimeBlumProof biPrimeProof;
+        public final NoSmallFactorProof factorProof;
 
-        public DkgRound1Output(int nodeId, BigInteger[] coefficients, List<ECPoint> commitments, PaillierEncryption.PublicKey paillierKey) {
+        public DkgRound1Output(int nodeId, BigInteger[] coefficients, List<ECPoint> commitments, PaillierEncryption.PublicKey paillierKey,
+                               ZKSetup zkSetup, BiPrimeBlumProof biPrimeProof, NoSmallFactorProof factorProof) {
             this.nodeId = nodeId;
             this.coefficients = coefficients;
             this.commitments = commitments;
             this.paillierKey = paillierKey;
+            this.zkSetup = zkSetup;
+            this.biPrimeProof = biPrimeProof;
+            this.factorProof = factorProof;
         }
     }
 

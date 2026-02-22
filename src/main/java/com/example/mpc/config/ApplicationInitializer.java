@@ -31,7 +31,7 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Value("${app.init.cggmp.enabled:true}")
     private boolean enableCggmp;
 
-    @Value("${app.init.legacy.enabled:false}")
+    @Value("${app.init.legacy.enabled:true}")
     private boolean enableLegacy;
 
     @Override

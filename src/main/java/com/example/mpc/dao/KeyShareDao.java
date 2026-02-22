@@ -90,7 +90,7 @@ public class KeyShareDao {
                     databaseService.releaseShareConnection(conn, shareIndex);
                 }
             }
-        }, ThreadPoolUtil.getComputationThreadPool());
+        }, ThreadPoolUtil.getIoThreadPool());
     }
 
     private void closeStatement(PreparedStatement stmt) {

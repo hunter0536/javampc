@@ -1,10 +1,12 @@
 package com.example.mpc.model;
 
 import com.example.mpc.enums.TaskStatus;
-import org.exploit.secp256k1.Secp256k1CurveParams;
-import org.exploit.secp256k1.Secp256k1PointOps;
-import org.exploit.tss.ecdsa.GG20Client;
+import com.example.mpc.cggmp.PaillierEncryption;
+import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
+import org.bouncycastle.math.ec.ECPoint;
 
+import java.math.BigInteger;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -20,17 +22,43 @@ public class Gg20SignatureTask {
     public final Set<Integer> participants;
 
     public byte[] messageHash;
-    public byte[] memKey;
-    public Secp256k1CurveParams curveParams;
-    public GG20Client<Secp256k1PointOps> client;
+    public ECPoint groupPublicKeyPoint;
+    public PaillierEncryption paillier;
+    public ZKSetup zkSetup;
+    public final ConcurrentHashMap<Integer, PaillierEncryption.PublicKey> peerPaillierKeys = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ZKSetup> peerZkSetups = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, MtAInitiatorMessage> mtaKaInitiatorMessages = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, MtAInitiatorMessage> mtaStInitiatorMessages = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, java.math.BigInteger> peerShares = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, java.math.BigInteger> mtaBetas = new ConcurrentHashMap<>();
 
-    public final CountDownLatch gammaCommitmentLatch;
-    public final CountDownLatch mtaResponseLatch;
-    public final CountDownLatch offlineLatch;
-    public final CountDownLatch partialSLatch;
-    public final ConcurrentHashMap<Integer, Boolean> mtaResponses = new ConcurrentHashMap<>();
-    public final ConcurrentHashMap<Integer, Boolean> offlineReceived = new ConcurrentHashMap<>();
-    public final ConcurrentHashMap<Integer, Boolean> partialSReceived = new ConcurrentHashMap<>();
+    public BigInteger k_i;
+    public BigInteger a_i;
+    public BigInteger kInv_i;
+    public BigInteger t_i;
+    public BigInteger r;
+    public final ConcurrentHashMap<Integer, ECPoint> gammaPoints = new ConcurrentHashMap<>();
+
+    public final ConcurrentHashMap<Integer, BigInteger> kaAlphas = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> kaBetas = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> stAlphas = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> stBetas = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> uShares = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> sShares = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, String> uCommitments = new ConcurrentHashMap<>();
+    public BigInteger uCommitRand;
+
+    public final CountDownLatch gammaLatch;
+    public final CountDownLatch kaInitLatch;
+    public final CountDownLatch kaResponseLatch;
+    public final CountDownLatch uCommitLatch;
+    public final CountDownLatch uShareLatch;
+    public final CountDownLatch uOpenLatch;
+    public final CountDownLatch stInitLatch;
+    public final CountDownLatch stResponseLatch;
+    public final CountDownLatch sShareLatch;
+
+    public final ConcurrentHashMap<Integer, Boolean> shareResponses = new ConcurrentHashMap<>();
 
     public String signature;
     public boolean verified = false;
@@ -52,10 +80,15 @@ public class Gg20SignatureTask {
                 ? java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(participantsOverride))
                 : selectParticipants(initiatorId, nodesCount, threshold);
         int waitCount = Math.max(0, this.participants.size() - 1);
-        this.gammaCommitmentLatch = new CountDownLatch(waitCount);
-        this.mtaResponseLatch = new CountDownLatch(waitCount);
-        this.offlineLatch = new CountDownLatch(waitCount);
-        this.partialSLatch = new CountDownLatch(waitCount);
+        this.gammaLatch = new CountDownLatch(waitCount);
+        this.kaInitLatch = new CountDownLatch(waitCount);
+        this.kaResponseLatch = new CountDownLatch(waitCount);
+        this.uCommitLatch = new CountDownLatch(waitCount);
+        this.uShareLatch = new CountDownLatch(waitCount);
+        this.uOpenLatch = new CountDownLatch(1);
+        this.stInitLatch = new CountDownLatch(waitCount);
+        this.stResponseLatch = new CountDownLatch(waitCount);
+        this.sShareLatch = new CountDownLatch(waitCount);
     }
 
     public boolean start() {

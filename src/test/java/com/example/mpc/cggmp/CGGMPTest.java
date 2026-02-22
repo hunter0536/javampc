@@ -83,7 +83,7 @@ public class CGGMPTest {
         CGGMPProtocol protocol = new CGGMPProtocol(cggmp);
         
         Map<Integer, CGGMP.DkgRound1Output> round1Outputs = new HashMap<>();
-        CGGMP.DkgRound1Output round1 = cggmp.dkgRound1();
+        CGGMP.DkgRound1Output round1 = cggmp.dkgRound1("test".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         round1Outputs.put(1, round1);
         
         Map<Integer, CGGMP.DkgRound2Output> round2Outputs = new HashMap<>();
@@ -128,7 +128,7 @@ public class CGGMPTest {
         CGGMPProtocol protocol = new CGGMPProtocol(cggmp);
         
         Map<Integer, CGGMP.DkgRound1Output> round1Outputs = new HashMap<>();
-        CGGMP.DkgRound1Output round1 = cggmp.dkgRound1();
+        CGGMP.DkgRound1Output round1 = cggmp.dkgRound1("test".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         round1Outputs.put(1, round1);
         
         Map<Integer, CGGMP.DkgRound2Output> round2Outputs = new HashMap<>();

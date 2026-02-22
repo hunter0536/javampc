@@ -2,6 +2,8 @@ package com.example.mpc.model;
 
 import com.example.mpc.cggmp.CGGMP;
 import com.example.mpc.cggmp.PaillierEncryption;
+import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
+import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.TaskStatus;
 import org.bouncycastle.math.ec.ECPoint;
@@ -24,6 +26,10 @@ public class CggmpDkgTask {
 
     public final ConcurrentHashMap<Integer, CGGMP.DkgRound1Output> round1Outputs = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, CGGMP.DkgRound2Output> round2Outputs = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, PaillierEncryption.PublicKey> peerPaillierKeys = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ZKSetup> peerZkSetups = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, MtAInitiatorMessage> mtaInitiatorMessages = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> mtaBetas = new ConcurrentHashMap<>();
 
     public final CountDownLatch round1ReceivedLatch;
     public final CountDownLatch round2ReceivedLatch;

@@ -25,10 +25,16 @@ public class DatabaseService {
 
     // 数据库连接池（按数据库路径分池）
     private final Map<String, ConnectionPool> connectionPools = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final int MAX_POOL_SIZE = 10;
+    private final Map<String, java.util.concurrent.atomic.AtomicBoolean> initializedDbs = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int MAX_POOL_SIZE = 1;
     private static final long MAX_IDLE_TIME = 30000; // 30秒
 
     public DatabaseService() {
+        try {
+            Class.forName("org.sqlite.JDBC");
+        } catch (ClassNotFoundException e) {
+            throw new RuntimeException("SQLite JDBC driver not found", e);
+        }
     }
 
     // 内部连接池类
@@ -112,6 +118,7 @@ public class DatabaseService {
         private PooledConnection createConnection() throws SQLException {
             String url = "jdbc:sqlite:" + dbPath;
             Connection conn = DriverManager.getConnection(url);
+            applyPragmas(conn);
             totalConnections.incrementAndGet();
             connectionCount.incrementAndGet();
             return new PooledConnection(conn);
@@ -470,6 +477,11 @@ public class DatabaseService {
 
         // 数据库文件路径
         String dbPath = Constants.DATABASE_DIR + File.separator + "share_" + shareIndex + ".db";
+        java.util.concurrent.atomic.AtomicBoolean initFlag =
+                initializedDbs.computeIfAbsent(dbPath, k -> new java.util.concurrent.atomic.AtomicBoolean(false));
+        if (initFlag.get()) {
+            return;
+        }
 
         // 连接数据库
         Connection conn = null;
@@ -491,7 +503,9 @@ public class DatabaseService {
                 statementCount.incrementAndGet();
                 ensureKeyShareColumn(stmt, "group_public_key", "TEXT");
                 ensureKeyShareColumn(stmt, "dkg_task_id", "TEXT");
+                ensureKeyShareIndex(stmt);
             }
+            initFlag.set(true);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SQLException("Connection interrupted", e);
@@ -500,6 +514,15 @@ public class DatabaseService {
             if (conn != null) {
                 releaseConnection(conn, dbPath);
             }
+        }
+    }
+
+    private void ensureKeyShareIndex(Statement stmt) {
+        try {
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_key_shares_group_public_key ON key_shares(group_public_key, id DESC)");
+            statementCount.incrementAndGet();
+        } catch (SQLException e) {
+            // Ignore index creation errors to avoid breaking startup on existing DBs.
         }
     }
 
@@ -534,6 +557,16 @@ public class DatabaseService {
         // 获取或创建对应数据库的连接池
         ConnectionPool pool = connectionPools.computeIfAbsent(dbPath, ConnectionPool::new);
         return pool.getConnection();
+    }
+
+    private void applyPragmas(Connection conn) {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("PRAGMA journal_mode=WAL");
+            stmt.execute("PRAGMA synchronous=NORMAL");
+            stmt.execute("PRAGMA busy_timeout=3000");
+        } catch (SQLException e) {
+            // Ignore PRAGMA errors for compatibility.
+        }
     }
 
     /**
@@ -595,6 +628,8 @@ public class DatabaseService {
      * @return 影响的行数
      */
     public int[] executeBatch(Connection conn, String sql, List<Object[]> batchParams) throws SQLException {
+        boolean previousAutoCommit = conn.getAutoCommit();
+        conn.setAutoCommit(false);
         try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
             for (Object[] params : batchParams) {
                 for (int i = 0; i < params.length; i++) {
@@ -603,8 +638,22 @@ public class DatabaseService {
                 pstmt.addBatch();
             }
             int[] result = pstmt.executeBatch();
+            conn.commit();
             batchStatementCount.incrementAndGet();
             return result;
+        } catch (SQLException e) {
+            try {
+                conn.rollback();
+            } catch (SQLException ignore) {
+                // ignore rollback failures
+            }
+            throw e;
+        } finally {
+            try {
+                conn.setAutoCommit(previousAutoCommit);
+            } catch (SQLException ignore) {
+                // ignore restore failures
+            }
         }
     }
 

@@ -29,4 +29,4 @@ app:
     cggmp:
       enabled: true  # 是否启用CGGMP服务
     legacy:
-      enabled: false  # 是否启用旧的DKG/Signature服务
+      enabled: true  # 是否启用旧的DKG服务

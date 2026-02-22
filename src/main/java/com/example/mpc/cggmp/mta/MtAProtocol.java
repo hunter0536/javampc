@@ -1,0 +1,118 @@
+package com.example.mpc.cggmp.mta;
+
+import com.example.mpc.cggmp.PaillierEncryption;
+import com.example.mpc.cggmp.proof.*;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
+import com.example.mpc.cggmp.zk.ZKSetup;
+
+import java.math.BigInteger;
+import java.security.SecureRandom;
+import java.util.Objects;
+
+public class MtAProtocol {
+    private final PaillierRangeProofGenerator rangeGenerator = new PaillierRangeProofGenerator();
+    private final PaillierRangeProofValidator rangeValidator = new PaillierRangeProofValidator();
+    private final BiPrimeProofGenerator biPrimeProofGenerator = new BiPrimeProofGenerator();
+    private final BiPrimeProofValidator biPrimeProofValidator = new BiPrimeProofValidator();
+    private final PaillierRespondentProofGenerator respondentProofGenerator = new PaillierRespondentProofGenerator();
+    private final PaillierRespondentProofValidator respondentProofValidator = new PaillierRespondentProofValidator();
+
+    private final PaillierEncryption paillier;
+    private final BigInteger q;
+
+    public MtAProtocol(PaillierEncryption paillier, BigInteger q) {
+        this.paillier = paillier;
+        this.q = Objects.requireNonNull(q, "q");
+        if (paillier != null) {
+            validatePaillierN(paillier.getPublicKeyInfo(), q);
+        }
+    }
+
+    public MtAInitiatorMessage generateInitiatorMessage(BigInteger a_i, ZKSetup zkSetup, byte[] context) {
+        if (paillier == null) {
+            throw new IllegalStateException("Paillier keypair required for initiator");
+        }
+        if (a_i == null || a_i.signum() < 0 || a_i.compareTo(q) >= 0) {
+            throw new IllegalArgumentException("a_i must be in [0, q)");
+        }
+
+        PaillierEncryption.Encryption encryption = paillier.encryptWithRandomness(a_i);
+        BigInteger cA = encryption.c;
+        BigInteger r = encryption.r;
+
+        PaillierRangeEncryptionWitness witness = new PaillierRangeEncryptionWitness(
+                a_i, r, cA, paillier.getPublicKeyInfo(), zkSetup, q
+        );
+        PaillierRangeProof rangeProof = rangeGenerator.createProof(witness, context);
+
+        BiPrimeBlumProof biPrimeProof = biPrimeProofGenerator.createProof(paillier.getPrivateKeyInfo(), context);
+        NoSmallFactorProof factorProof = new NoSmallFactorProofGenerator(zkSetup).createProof(paillier.getPrivateKeyInfo(), context);
+
+        return new MtAInitiatorMessage(cA, rangeProof, biPrimeProof, factorProof);
+    }
+
+    public boolean verifyInitiatorRangeProof(MtAInitiatorMessage msg, PaillierEncryption.PublicKey publicKey, ZKSetup zkSetup, byte[] context) {
+        PaillierRangeProofContext ctx = new PaillierRangeProofContext(msg.cA(), q, zkSetup, context);
+        return rangeValidator.verifyProof(msg.rangeProof(), publicKey, ctx);
+    }
+
+    public boolean verifyInitiatorFactorProof(MtAInitiatorMessage msg, PaillierEncryption.PublicKey publicKey, ZKSetup zkSetup, byte[] context) {
+        NoSmallFactorProofValidator validator = new NoSmallFactorProofValidator(zkSetup);
+        return validator.verifyProof(msg.factorProof(), publicKey, context);
+    }
+
+    public boolean verifyInitiatorBiPrimeProof(MtAInitiatorMessage msg, PaillierEncryption.PublicKey publicKey, byte[] context) {
+        return biPrimeProofValidator.verifyProof(msg.biPrimeProof(), publicKey, context);
+    }
+
+    public MtAResult computeCjWithY(PaillierEncryption.PublicKey initiatorPublicKey, BigInteger c_i, BigInteger b_j, ZKSetup zkSetup, byte[] context) {
+        if (c_i == null || b_j == null || b_j.compareTo(q) >= 0) {
+            throw new IllegalArgumentException("Inputs cannot be null and b_j must be in [0, q)");
+        }
+
+        BigInteger nsq = initiatorPublicKey.nSquared;
+        BigInteger y = new BigInteger(q.bitLength(), new SecureRandom()).mod(q);
+
+        PaillierEncryption.PublicKey initiatorPk = initiatorPublicKey;
+        PaillierEncryption.Encryption encY = initiatorPk.encryptWithRandomness(y);
+
+        BigInteger c_j = c_i.modPow(b_j, nsq)
+                .multiply(encY.c)
+                .mod(nsq);
+
+        if (zkSetup != null) {
+            PaillierRespondentEncryptionWitness witness = new PaillierRespondentEncryptionWitness(
+                    b_j, y, c_i, c_j, encY.r, initiatorPk, zkSetup, q
+            );
+            PaillierRespondentProof proof = respondentProofGenerator.createProof(witness, context);
+            return new MtAResult(c_j, y, encY.r, proof);
+        }
+
+        return new MtAResult(c_j, y, encY.r);
+    }
+
+    public boolean verifyRespondentProof(MtAResult result, BigInteger c_i, PaillierEncryption.PublicKey publicKey, ZKSetup zkSetup, byte[] context) {
+        PaillierRespondentProofContext ctx = new PaillierRespondentProofContext(c_i, result.c_j(), q, zkSetup, context);
+        return respondentProofValidator.verifyProof(result.proof(), publicKey, ctx);
+    }
+
+    public BigInteger decryptCj(BigInteger c_j) {
+        if (paillier == null) {
+            throw new IllegalStateException("Paillier keypair required for decrypt");
+        }
+        return paillier.decrypt(c_j);
+    }
+
+    public BigInteger computeBeta(BigInteger y) {
+        if (y == null) {
+            throw new IllegalArgumentException("y cannot be null");
+        }
+        return y.negate().mod(q);
+    }
+
+    private static void validatePaillierN(PaillierEncryption.PublicKey publicKey, BigInteger q) {
+        if (publicKey.n.compareTo(q.pow(8)) < 0) {
+            throw new IllegalArgumentException("Paillier public key n must be at least 8 times larger than q");
+        }
+    }
+}

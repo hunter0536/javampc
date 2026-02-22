@@ -16,8 +16,9 @@ public class PaillierEncryption {
     private BigInteger mu;
     private BigInteger p;
     private BigInteger q;
+    private int bitLength;
 
-    private static final int KEY_SIZE = 2048;
+    private static final int KEY_SIZE = 3072;
     private static final BigInteger TWO = BigInteger.valueOf(2);
 
     public PaillierEncryption() {
@@ -32,42 +33,49 @@ public class PaillierEncryption {
 
     private void generateKeys() {
         SecureRandom random = new SecureRandom();
-        
-        p = new BigInteger(KEY_SIZE / 2, 64, random);
-        q = new BigInteger(KEY_SIZE / 2, 64, random);
-        
+        int half = KEY_SIZE / 2;
+
+        p = generateBlumPrime(half, random);
+        q = generateBlumPrime(half, random);
+
         while (p.equals(q)) {
-            q = new BigInteger(KEY_SIZE / 2, 64, random);
+            q = generateBlumPrime(half, random);
         }
-        
+
         initializeFromPQ();
     }
 
     private void initializeFromPQ() {
         n = p.multiply(q);
         nSquared = n.multiply(n);
+        bitLength = n.bitLength();
         
-        lambda = p.subtract(BigInteger.ONE).multiply(q.subtract(BigInteger.ONE));
+        lambda = lcm(p.subtract(BigInteger.ONE), q.subtract(BigInteger.ONE));
         g = n.add(BigInteger.ONE);
         
         mu = lambda.modInverse(n);
     }
 
     public BigInteger encrypt(BigInteger m) {
-        SecureRandom random = new SecureRandom();
-        BigInteger r;
-        
-        do {
-            r = new BigInteger(n.bitLength(), random);
-        } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
-        
-        return encryptWithRandom(m, r);
+        return encryptWithRandomness(m).c;
     }
 
     public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
         BigInteger gm = g.modPow(m, nSquared);
         BigInteger rn = r.modPow(n, nSquared);
         return gm.multiply(rn).mod(nSquared);
+    }
+
+    public Encryption encryptWithRandomness(BigInteger m) {
+        SecureRandom random = new SecureRandom();
+        BigInteger r;
+
+        do {
+            r = new BigInteger(n.bitLength(), random);
+        } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
+
+        BigInteger c = encryptWithRandom(m, r);
+        return new Encryption(c, r);
     }
 
     public BigInteger decrypt(BigInteger c) {
@@ -88,6 +96,14 @@ public class PaillierEncryption {
         return n;
     }
 
+    public PublicKey getPublicKeyInfo() {
+        return new PublicKey(n, nSquared, g, bitLength);
+    }
+
+    public PrivateKey getPrivateKeyInfo() {
+        return new PrivateKey(lambda, mu, p, q, n, bitLength);
+    }
+
     public BigInteger getN() {
         return n;
     }
@@ -100,32 +116,47 @@ public class PaillierEncryption {
         return g;
     }
 
+    public int getBitLength() {
+        return bitLength;
+    }
+
     public static class PublicKey {
         public final BigInteger n;
         public final BigInteger nSquared;
         public final BigInteger g;
+        public final int bitLength;
 
         public PublicKey(BigInteger n) {
+            this(n, n.multiply(n), n.add(BigInteger.ONE), n.bitLength());
+        }
+
+        public PublicKey(BigInteger n, BigInteger nSquared, BigInteger g, int bitLength) {
             this.n = n;
-            this.nSquared = n.multiply(n);
-            this.g = n.add(BigInteger.ONE);
+            this.nSquared = nSquared;
+            this.g = g;
+            this.bitLength = bitLength;
         }
 
         public BigInteger encrypt(BigInteger m) {
-            SecureRandom random = new SecureRandom();
-            BigInteger r;
-            
-            do {
-                r = new BigInteger(n.bitLength(), random);
-            } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
-            
-            return encryptWithRandom(m, r);
+            return encryptWithRandomness(m).c;
         }
 
         public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
             BigInteger gm = g.modPow(m, nSquared);
             BigInteger rn = r.modPow(n, nSquared);
             return gm.multiply(rn).mod(nSquared);
+        }
+
+        public Encryption encryptWithRandomness(BigInteger m) {
+            SecureRandom random = new SecureRandom();
+            BigInteger r;
+
+            do {
+                r = new BigInteger(n.bitLength(), random);
+            } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
+
+            BigInteger c = encryptWithRandom(m, r);
+            return new Encryption(c, r);
         }
 
         public BigInteger add(BigInteger c1, BigInteger c2) {
@@ -135,5 +166,45 @@ public class PaillierEncryption {
         public BigInteger multiply(BigInteger c, BigInteger k) {
             return c.modPow(k, nSquared);
         }
+    }
+
+    public static class PrivateKey {
+        public final BigInteger lambda;
+        public final BigInteger mu;
+        public final BigInteger p;
+        public final BigInteger q;
+        public final BigInteger n;
+        public final int bitLength;
+
+        public PrivateKey(BigInteger lambda, BigInteger mu, BigInteger p, BigInteger q, BigInteger n, int bitLength) {
+            this.lambda = lambda;
+            this.mu = mu;
+            this.p = p;
+            this.q = q;
+            this.n = n;
+            this.bitLength = bitLength;
+        }
+    }
+
+    public static class Encryption {
+        public final BigInteger c;
+        public final BigInteger r;
+
+        public Encryption(BigInteger c, BigInteger r) {
+            this.c = c;
+            this.r = r;
+        }
+    }
+
+    private static BigInteger lcm(BigInteger a, BigInteger b) {
+        return a.multiply(b).divide(a.gcd(b));
+    }
+
+    private static BigInteger generateBlumPrime(int bits, SecureRandom rnd) {
+        BigInteger p;
+        do {
+            p = BigInteger.probablePrime(bits, rnd);
+        } while (!p.testBit(0) || !p.mod(BigInteger.valueOf(4)).equals(BigInteger.valueOf(3)));
+        return p;
     }
 }

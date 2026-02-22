@@ -22,11 +22,7 @@ import java.math.BigInteger;
 import java.security.*;
 import java.security.spec.ECGenParameterSpec;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.*;
 
 @Service
 public class GennaroDkgService implements NodeService.MessageHandler {
@@ -51,7 +47,11 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     }
 
     private final ConcurrentHashMap<String, GennaroDkgTask> dkgTasks = new ConcurrentHashMap<>();
-    private final AtomicBoolean dkgInProgress = new AtomicBoolean(false);
+    private static final ExecutorService dkgExecutorService = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "Gennaro-DKG-Thread");
+        t.setDaemon(true);
+        return t;
+    });
     private final ConcurrentHashMap<String, Object> cryptoCache = new ConcurrentHashMap<>();
 
     public GennaroDkgService() {
@@ -111,35 +111,8 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     public CompletableFuture<Void> startDkgProcess(String taskId) {
         return CompletableFuture.runAsync(() -> {
             logger.info("startDkgProcess invoked for task {}", taskId);
-            boolean started = false;
             GennaroDkgTask task = null;
             try {
-                if (dkgInProgress.get()) {
-                    long now = System.currentTimeMillis();
-                    long staleMs = (Constants.DKG_COMMITMENT_TIMEOUT_SECONDS + Constants.DKG_SHARE_TIMEOUT_SECONDS + 30) * 1000L;
-                    GennaroDkgTask inProgressTask = null;
-                    for (GennaroDkgTask t : dkgTasks.values()) {
-                        if (t.isInProgress()) {
-                            inProgressTask = t;
-                            break;
-                        }
-                    }
-                    if (inProgressTask != null) {
-                        long ageMs = now - inProgressTask.startedAtMs;
-                        logger.warn("DKG already in progress (task {} age {}ms)", inProgressTask.taskId, ageMs);
-                        if (inProgressTask.startedAtMs > 0 && ageMs > staleMs) {
-                            logger.warn("Clearing stale DKG task {}", inProgressTask.taskId);
-                            inProgressTask.fail();
-                            inProgressTask.errorMessage = "Stale DKG task cleared before starting new one";
-                            dkgInProgress.set(false);
-                        } else {
-                            throw new RuntimeException("DKG process is already in progress");
-                        }
-                    } else {
-                        dkgInProgress.set(false);
-                    }
-                }
-
                 task = dkgTasks.get(taskId);
                 if (task == null) {
                     int attempts = 0;
@@ -158,14 +131,9 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     }
                 }
 
-                if (task.isInProgress() || task.isCompleted()) {
-                    throw new RuntimeException("DKG task is already in progress or completed");
-                }
-
-                dkgInProgress.set(true);
-                started = true;
                 if (!task.start()) {
-                    throw new RuntimeException("Failed to start DKG task");
+                    logger.warn("DKG task {} failed to start (may already be in progress), skipping", taskId);
+                    return;
                 }
                 logger.info("Starting Gennaro DKG process for task: {}", taskId);
 
@@ -193,33 +161,29 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                 Map<String, Object> initData = new HashMap<>();
                 initData.put("taskId", taskId);
                 boolean initBroadcastSuccess = false;
-                for (int attempt = 1; attempt <= 3; attempt++) {
+                for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
                     try {
-                        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.DKG_INIT, initData)).join();
-                        logger.info("Broadcasted DKG_INIT message for task: {} (attempt {}/3)", taskId, attempt);
+                        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_DKG_INIT, initData)).join();
+                        logger.info("Broadcasted DKG_INIT message for task: {} (attempt {}/{})", taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
                         initBroadcastSuccess = true;
                         break;
                     } catch (Exception e) {
-                        logger.warn("Failed to broadcast DKG_INIT (attempt {}/3): {}", attempt, e.getMessage());
-                        if (attempt < 3) {
-                            Thread.sleep(1000);
+                        logger.warn("Failed to broadcast DKG_INIT (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
+                        if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
+                            Thread.sleep(Constants.DKG_BROADCAST_RETRY_INTERVAL_MS);
                         }
                     }
                 }
 
                 if (!initBroadcastSuccess) {
-                    logger.warn("Failed to broadcast DKG_INIT after 3 attempts, proceeding with DKG process anyway");
+                    logger.warn("Failed to broadcast DKG_INIT after {} attempts, proceeding with DKG process anyway", Constants.DKG_BROADCAST_RETRY_COUNT);
                 }
 
                 generateDistributedKey(taskId).join();
 
-                dkgInProgress.set(false);
                 task.complete();
                 logger.info("Gennaro DKG process completed for task: {}", taskId);
             } catch (Exception e) {
-                if (started) {
-                    dkgInProgress.set(false);
-                }
                 if (task != null) {
                     task.fail();
                     task.errorMessage = e.getMessage();
@@ -227,7 +191,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                 logger.error("Error in DKG process: {}", e.getMessage(), e);
                 throw new RuntimeException(e);
             }
-        }, ThreadPoolUtil.getIoThreadPool());
+        }, dkgExecutorService);
     }
 
     public CompletableFuture<KeyShare> generateDistributedKey(String taskId) {
@@ -259,7 +223,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                 logger.info("Network ready with {} nodes", networkSize);
 
                 try {
-                    Thread.sleep(2000);
+                    Thread.sleep(Constants.DKG_INIT_WAIT_MS);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                 }
@@ -283,22 +247,22 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                 commitmentData.put("verificationPoints", encodedVerificationPoints);
                 commitmentData.put("maskingVerificationPoints", encodedMaskingVerificationPoints);
                 boolean commitmentBroadcastSuccess = false;
-                for (int attempt = 1; attempt <= 3; attempt++) {
+                for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
                     try {
-                        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.COMMITMENT, commitmentData)).join();
-                        logger.info("Broadcasted verification points for task: {} (attempt {}/3)", taskId, attempt);
+                        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, commitmentData)).join();
+                        logger.info("Broadcasted verification points for task: {} (attempt {}/{})", taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
                         commitmentBroadcastSuccess = true;
                         break;
                     } catch (Exception e) {
-                        logger.warn("Failed to broadcast COMMITMENT (attempt {}/3): {}", attempt, e.getMessage());
-                        if (attempt < 3) {
-                            Thread.sleep(1000);
+                        logger.warn("Failed to broadcast COMMITMENT (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
+                        if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
+                            Thread.sleep(Constants.DKG_BROADCAST_RETRY_INTERVAL_MS);
                         }
                     }
                 }
 
                 if (!commitmentBroadcastSuccess) {
-                    throw new RuntimeException("Failed to broadcast COMMITMENT after 3 attempts");
+                    throw new RuntimeException("Failed to broadcast COMMITMENT after " + Constants.DKG_BROADCAST_RETRY_COUNT + " attempts");
                 }
 
                 logger.info("Node {} waiting for commitments for task: {}", nodeId, taskId);
@@ -326,7 +290,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                         Map<String, Object> shareData = new HashMap<>();
                         shareData.put("taskId", taskId);
                         shareData.put("share", combinedShare);
-                        CompletableFuture<Void> future = nodeService.sendMessage(nodeInfo.id, new NodeService.Message(nodeId, MessageType.SHARE, shareData))
+                        CompletableFuture<Void> future = nodeService.sendMessage(nodeInfo.id, new NodeService.Message(nodeId, MessageType.GENNARO_SHARE, shareData))
                                 .exceptionally(ex -> {
                                     logger.error("Failed to send share to node {}: {}", nodeInfo.id, ex.getMessage());
                                     throw new RuntimeException(ex);
@@ -411,7 +375,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             publicKeyData.put("taskId", taskId);
             publicKeyData.put("publicKeyPart", publicKeyPart);
 
-            return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.PUBLIC_KEY_PART, publicKeyData))
+            return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData))
                     .thenRun(() -> {
                         logger.info("Broadcasted public key contribution for task: {}", taskId);
 
@@ -446,12 +410,6 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             logger.warn("Invalid commitments: wrong size. Expected {}, got {}", Constants.THRESHOLD, commitments.size());
             return false;
         }
-
-        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-        ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-        keyPairGenerator.initialize(ecSpec);
-        KeyPair keyPair = keyPairGenerator.generateKeyPair();
-        ECPublicKey publicKey = (ECPublicKey) keyPair.getPublic();
 
         for (int i = 0; i < commitments.size(); i++) {
             ECPoint point = commitments.get(i);
@@ -615,158 +573,23 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
         return CompletableFuture.runAsync(() -> {
             try {
                 switch (message.type) {
-                    case COMMITMENT:
-                        if (message.data instanceof Map) {
-                            Map<?, ?> dataMap = (Map<?, ?>) message.data;
-                            String taskId = (String) dataMap.get("taskId");
-                            List<String> encodedVerificationPoints = (List<String>) dataMap.get("verificationPoints");
-                            List<String> encodedMaskingVerificationPoints = (List<String>) dataMap.get("maskingVerificationPoints");
-
-                            GennaroDkgTask task = dkgTasks.get(taskId);
-                            if (task == null && taskId != null) {
-                                GennaroDkgTask newTask = new GennaroDkgTask(taskId, nodesCount);
-                                dkgTasks.put(taskId, newTask);
-                                dkgInProgress.set(true);
-                                newTask.start();
-                                logger.info("Created DKG task from COMMITMENT with id: {}", taskId);
-                                CompletableFuture.runAsync(() -> {
-                                    try {
-                                        generateDistributedKey(taskId).join();
-                                        newTask.complete();
-                                    } catch (Exception e) {
-                                        newTask.errorMessage = e.getMessage();
-                                        newTask.fail();
-                                        logger.error("Error in DKG process (COMMITMENT) for task {}: {}", taskId, e.getMessage(), e);
-                                    } finally {
-                                        dkgInProgress.set(false);
-                                    }
-                                }, ThreadPoolUtil.getIoThreadPool());
-                                task = newTask;
-                            }
-                            if (task != null) {
-                                try {
-                                    List<ECPoint> verificationPoints = encodedVerificationPoints.stream()
-                                            .map(encoded -> {
-                                                try {
-                                                    byte[] bytes = Base64.getDecoder().decode(encoded);
-                                                    return decodeECPoint(bytes);
-                                                } catch (Exception e) {
-                                                    logger.error("Failed to decode verification point: {}", e.getMessage());
-                                                    return null;
-                                                }
-                                            })
-                                            .filter(point -> point != null)
-                                            .toList();
-
-                                    List<ECPoint> maskingVerificationPoints = null;
-                                    if (encodedMaskingVerificationPoints != null) {
-                                        maskingVerificationPoints = encodedMaskingVerificationPoints.stream()
-                                                .map(encoded -> {
-                                                    try {
-                                                        byte[] bytes = Base64.getDecoder().decode(encoded);
-                                                        return decodeECPoint(bytes);
-                                                    } catch (Exception e) {
-                                                        logger.error("Failed to decode masking verification point: {}", e.getMessage());
-                                                        return null;
-                                                    }
-                                                })
-                                                .filter(point -> point != null)
-                                                .toList();
-                                    }
-
-                                    boolean firstCommitment = task.receivedCommitments.putIfAbsent(senderId, verificationPoints) == null;
-                                    if (maskingVerificationPoints != null) {
-                                        task.receivedMaskingCommitments.putIfAbsent(senderId, maskingVerificationPoints);
-                                    }
-                                    if (firstCommitment) {
-                                        task.commitmentsReceivedLatch.countDown();
-                                    }
-                                    logger.info("Received commitment from node {} for task: {}", senderId, taskId);
-                                } catch (Exception e) {
-                                    logger.error("Error processing commitment: {}", e.getMessage());
-                                }
-                            }
-                        }
+                    case GENNARO_COMMITMENT:
+                        handleCommitmentMessage(senderId, message);
                         break;
-                    case SHARE:
-                        if (message.data instanceof Map) {
-                            Map<?, ?> dataMap = (Map<?, ?>) message.data;
-                            String taskId = (String) dataMap.get("taskId");
-                            BigInteger share = (BigInteger) dataMap.get("share");
-
-                            GennaroDkgTask task = dkgTasks.get(taskId);
-                            if (task != null) {
-                                boolean firstShare = task.receivedShares.putIfAbsent(senderId, share) == null;
-                                if (firstShare) {
-                                    task.sharesReceivedLatch.countDown();
-                                }
-                                logger.info("Received share from node {} for task: {}", senderId, taskId);
-                            }
-                        }
+                    case GENNARO_SHARE:
+                        handleShareMessage(senderId, message);
                         break;
-                    case PUBLIC_KEY_PART:
-                        if (message.data instanceof Map) {
-                            Map<?, ?> dataMap = (Map<?, ?>) message.data;
-                            String taskId = (String) dataMap.get("taskId");
-                            String publicKeyPart = (String) dataMap.get("publicKeyPart");
-                            String groupPublicKey = (String) dataMap.get("groupPublicKey");
-
-                            if (groupPublicKey != null) {
-                                handleGroupPublicKey(senderId, taskId, groupPublicKey);
-                            } else if (publicKeyPart != null) {
-                                handlePublicKeyPart(senderId, taskId, publicKeyPart);
-                            }
-                        }
+                    case GENNARO_PUBLIC_KEY_PART:
+                        handlePublicKeyPartMessage(senderId, message);
                         break;
-
-                    case DKG_INIT:
-                        if (message.data instanceof Map) {
-                            Map<?, ?> dataMap = (Map<?, ?>) message.data;
-                            String taskId = (String) dataMap.get("taskId");
-                            logger.info("Received DKG_INIT from node {} for task {}", senderId, taskId);
-                        }
-                        if (!dkgInProgress.get()) {
-                            if (message.data instanceof Map) {
-                                Map<?, ?> dataMap = (Map<?, ?>) message.data;
-                                String taskId = (String) dataMap.get("taskId");
-                                if (taskId != null) {
-                                    if (!dkgTasks.containsKey(taskId)) {
-                                        GennaroDkgTask task = new GennaroDkgTask(taskId, nodesCount);
-                                        dkgTasks.put(taskId, task);
-                                        logger.info("Created DKG task with id: {}", taskId);
-                                        dkgInProgress.set(true);
-                                        task.start();
-                                        try {
-                                            nodeService.waitForNetworkReady().join();
-                                        } catch (Exception e) {
-                                            logger.warn("Network not ready before DKG_INIT, proceeding anyway: {}", e.getMessage());
-                                        }
-                                        CompletableFuture.runAsync(() -> {
-                                            try {
-                                                generateDistributedKey(taskId).join();
-                                                task.complete();
-                                                logger.info("DKG process completed for task: {}", taskId);
-                                            } catch (Exception e) {
-                                                task.errorMessage = e.getMessage();
-                                                task.fail();
-                                                logger.error("Error in DKG process (DKG_INIT) for task {}: {}", taskId, e.getMessage(), e);
-                                            } finally {
-                                                dkgInProgress.set(false);
-                                            }
-                                        }, ThreadPoolUtil.getIoThreadPool());
-                                    } else {
-                                        logger.info("DKG task with id: {} already exists, skipping initialization", taskId);
-                                    }
-                                }
-                            }
-                        } else {
-                            logger.warn("Ignoring DKG_INIT from node {} because dkgInProgress is true", senderId);
-                        }
+                    case GENNARO_DKG_INIT:
+                        handleDkgInitMessage(senderId, message);
+                        break;
+                    default:
                         break;
                 }
             } catch (Exception e) {
@@ -774,6 +597,145 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                 throw new RuntimeException(e);
             }
         }, ThreadPoolUtil.getSingleThreadPool());
+    }
+
+    @SuppressWarnings("unchecked")
+    private void handleCommitmentMessage(int senderId, NodeService.Message message) throws Exception {
+        if (!(message.data instanceof Map)) {
+            return;
+        }
+        Map<?, ?> dataMap = (Map<?, ?>) message.data;
+        String taskId = (String) dataMap.get("taskId");
+        List<String> encodedVerificationPoints = (List<String>) dataMap.get("verificationPoints");
+        List<String> encodedMaskingVerificationPoints = (List<String>) dataMap.get("maskingVerificationPoints");
+
+        GennaroDkgTask task = dkgTasks.get(taskId);
+        if (task == null && taskId != null) {
+            GennaroDkgTask newTask = new GennaroDkgTask(taskId, nodesCount);
+            GennaroDkgTask existingTask = dkgTasks.putIfAbsent(taskId, newTask);
+            if (existingTask != null) {
+                task = existingTask;
+            } else {
+                task = newTask;
+                if (task.start()) {
+                    logger.info("Created DKG task from COMMITMENT with id: {}", taskId);
+                    startDkgProcessInternal(taskId);
+                }
+            }
+        }
+
+        if (task != null) {
+            List<ECPoint> verificationPoints = decodeVerificationPoints(encodedVerificationPoints);
+            List<ECPoint> maskingVerificationPoints = decodeVerificationPoints(encodedMaskingVerificationPoints);
+
+            boolean firstCommitment = task.receivedCommitments.putIfAbsent(senderId, verificationPoints) == null;
+            if (maskingVerificationPoints != null) {
+                task.receivedMaskingCommitments.putIfAbsent(senderId, maskingVerificationPoints);
+            }
+            if (firstCommitment) {
+                task.commitmentsReceivedLatch.countDown();
+            }
+            logger.info("Received commitment from node {} for task: {}", senderId, taskId);
+        }
+    }
+
+    private void handleShareMessage(int senderId, NodeService.Message message) {
+        if (!(message.data instanceof Map)) {
+            return;
+        }
+        Map<?, ?> dataMap = (Map<?, ?>) message.data;
+        String taskId = (String) dataMap.get("taskId");
+        BigInteger share = (BigInteger) dataMap.get("share");
+
+        GennaroDkgTask task = dkgTasks.get(taskId);
+        if (task != null) {
+            boolean firstShare = task.receivedShares.putIfAbsent(senderId, share) == null;
+            if (firstShare) {
+                task.sharesReceivedLatch.countDown();
+            }
+            logger.info("Received share from node {} for task: {}", senderId, taskId);
+        }
+    }
+
+    private void handlePublicKeyPartMessage(int senderId, NodeService.Message message) throws Exception {
+        if (!(message.data instanceof Map)) {
+            return;
+        }
+        Map<?, ?> dataMap = (Map<?, ?>) message.data;
+        String taskId = (String) dataMap.get("taskId");
+        String publicKeyPart = (String) dataMap.get("publicKeyPart");
+        String groupPublicKey = (String) dataMap.get("groupPublicKey");
+
+        if (groupPublicKey != null) {
+            handleGroupPublicKey(senderId, taskId, groupPublicKey);
+        } else if (publicKeyPart != null) {
+            handlePublicKeyPart(senderId, taskId, publicKeyPart);
+        }
+    }
+
+    private void handleDkgInitMessage(int senderId, NodeService.Message message) {
+        if (!(message.data instanceof Map)) {
+            return;
+        }
+        Map<?, ?> dataMap = (Map<?, ?>) message.data;
+        String taskId = (String) dataMap.get("taskId");
+        logger.info("Received DKG_INIT from node {} for task {}", senderId, taskId);
+
+        if (taskId != null) {
+            GennaroDkgTask newTask = new GennaroDkgTask(taskId, nodesCount);
+            GennaroDkgTask existingTask = dkgTasks.putIfAbsent(taskId, newTask);
+            if (existingTask == null) {
+                logger.info("Created DKG task with id: {} from DKG_INIT", taskId);
+                if (newTask.start()) {
+                    try {
+                        nodeService.waitForNetworkReady().join();
+                    } catch (Exception e) {
+                        logger.warn("Network not ready before DKG_INIT, proceeding anyway: {}", e.getMessage());
+                    }
+                    startDkgProcessInternal(taskId);
+                }
+            } else {
+                logger.info("DKG task with id: {} already exists, skipping initialization", taskId);
+            }
+        }
+    }
+
+    private void startDkgProcessInternal(String taskId) {
+        CompletableFuture.runAsync(() -> {
+            try {
+                generateDistributedKey(taskId).join();
+                GennaroDkgTask task = dkgTasks.get(taskId);
+                if (task != null) {
+                    task.complete();
+                    logger.info("DKG process completed for task: {}", taskId);
+                }
+            } catch (Exception e) {
+                GennaroDkgTask task = dkgTasks.get(taskId);
+                if (task != null) {
+                    task.errorMessage = e.getMessage();
+                    task.fail();
+                }
+                logger.error("Error in DKG process for task {}: {}", taskId, e.getMessage(), e);
+            }
+        }, dkgExecutorService);
+    }
+
+    private List<ECPoint> decodeVerificationPoints(List<String> encodedPoints) {
+        if (encodedPoints == null) {
+            return null;
+        }
+        return encodedPoints.stream()
+                .map(encoded -> {
+                    try {
+                        byte[] bytes = Base64.getDecoder().decode(encoded);
+                        return decodeECPoint(bytes);
+                    } catch (Exception e) {
+                        logger.error("Failed to decode verification point: {}", e.getMessage());
+                        return null;
+                    }
+                })
+                .filter(point -> point != null)
+                .toList();
     }
 
     private void handlePublicKeyPart(int senderId, String taskId, String publicKeyPart) throws Exception {
@@ -845,7 +807,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         publicKeyData.put("taskId", taskId);
         publicKeyData.put("groupPublicKey", groupPublicKey);
 
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.PUBLIC_KEY_PART, publicKeyData))
+        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData))
                 .exceptionally(ex -> {
                     logger.error("Failed to broadcast group public key: {}", ex.getMessage());
                     return null;
@@ -858,18 +820,5 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             task.groupPublicKey = groupPublicKey;
             logger.info("Received group public key from node {} for task: {}", senderId, taskId);
         }
-    }
-
-    private String encodeGroupPublicKeyX509(ECPoint groupPublicKeyPoint) throws Exception {
-        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-        ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-        keyPairGenerator.initialize(ecSpec);
-        KeyPair keyPair = keyPairGenerator.generateKeyPair();
-        ECPublicKey paramsPub = (ECPublicKey) keyPair.getPublic();
-        org.bouncycastle.jce.spec.ECPublicKeySpec spec =
-                new org.bouncycastle.jce.spec.ECPublicKeySpec(groupPublicKeyPoint, paramsPub.getParameters());
-        KeyFactory keyFactory = KeyFactory.getInstance("EC", "BC");
-        PublicKey publicKey = keyFactory.generatePublic(spec);
-        return Base64.getEncoder().encodeToString(publicKey.getEncoded());
     }
 }
