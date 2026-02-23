@@ -4,6 +4,7 @@ import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
+import com.example.mpc.cggmp.presign.Presignature;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
@@ -32,12 +33,48 @@ public class Gg20SignatureTask {
     public final ConcurrentHashMap<Integer, java.math.BigInteger> peerShares = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.math.BigInteger> mtaBetas = new ConcurrentHashMap<>();
 
+    // Presign state (CGGMP21 3-round presigning)
+    public final ConcurrentHashMap<Integer, BigInteger> presignK = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignG = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignGamma = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignY = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignA1 = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignA2 = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignB1 = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignB2 = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, Boolean> presignR1Received = new ConcurrentHashMap<>();
+    public BigInteger presignYScalar;
+    public BigInteger presignAScalar;
+    public BigInteger presignBScalar;
+    public final ConcurrentHashMap<Integer, BigInteger> presignD = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignDhat = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignF = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignFhat = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignFOutgoing = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignFhatOutgoing = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignBeta = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignBetaHat = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignRho = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignMu = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignRhoHat = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignMuHat = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, BigInteger> presignDelta = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignDeltaPoint = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignSPoint = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, Boolean> presignR2Received = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignDeltaTilde = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> presignSTilde = new ConcurrentHashMap<>();
+    public Presignature presignature;
+    public volatile boolean presignatureUsed = false;
+
     public BigInteger k_i;
     public BigInteger a_i;
     public BigInteger kInv_i;
     public BigInteger t_i;
     public BigInteger r;
+    public BigInteger gammaCommitRand;
     public final ConcurrentHashMap<Integer, ECPoint> gammaPoints = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, ECPoint> gammaCommitments = new ConcurrentHashMap<>();
 
     public final ConcurrentHashMap<Integer, BigInteger> kaAlphas = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, BigInteger> kaBetas = new ConcurrentHashMap<>();
@@ -48,7 +85,9 @@ public class Gg20SignatureTask {
     public final ConcurrentHashMap<Integer, String> uCommitments = new ConcurrentHashMap<>();
     public BigInteger uCommitRand;
 
+    public final CountDownLatch gammaCommitLatch;
     public final CountDownLatch gammaLatch;
+    public final CountDownLatch presignR2Latch;
     public final CountDownLatch kaInitLatch;
     public final CountDownLatch kaResponseLatch;
     public final CountDownLatch uCommitLatch;
@@ -57,6 +96,10 @@ public class Gg20SignatureTask {
     public final CountDownLatch stInitLatch;
     public final CountDownLatch stResponseLatch;
     public final CountDownLatch sShareLatch;
+    public final CountDownLatch offlineDoneLatch;
+    public final CountDownLatch offlineReadyLatch;
+    public final CountDownLatch presignatureLatch;
+    public final ConcurrentHashMap<Integer, Boolean> offlineReady = new ConcurrentHashMap<>();
 
     public final ConcurrentHashMap<Integer, Boolean> shareResponses = new ConcurrentHashMap<>();
 
@@ -80,7 +123,9 @@ public class Gg20SignatureTask {
                 ? java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(participantsOverride))
                 : selectParticipants(initiatorId, nodesCount, threshold);
         int waitCount = Math.max(0, this.participants.size() - 1);
+        this.gammaCommitLatch = new CountDownLatch(waitCount);
         this.gammaLatch = new CountDownLatch(waitCount);
+        this.presignR2Latch = new CountDownLatch(waitCount);
         this.kaInitLatch = new CountDownLatch(waitCount);
         this.kaResponseLatch = new CountDownLatch(waitCount);
         this.uCommitLatch = new CountDownLatch(waitCount);
@@ -89,6 +134,9 @@ public class Gg20SignatureTask {
         this.stInitLatch = new CountDownLatch(waitCount);
         this.stResponseLatch = new CountDownLatch(waitCount);
         this.sShareLatch = new CountDownLatch(waitCount);
+        this.offlineDoneLatch = new CountDownLatch(waitCount);
+        this.offlineReadyLatch = new CountDownLatch(waitCount);
+        this.presignatureLatch = new CountDownLatch(1);
     }
 
     public boolean start() {

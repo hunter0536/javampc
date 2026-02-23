@@ -30,3 +30,15 @@ app:
       enabled: true  # 是否启用CGGMP服务
     legacy:
       enabled: true  # 是否启用旧的DKG服务
+
+# MPC 参数（可覆盖 Constants）
+mpc:
+  nodeDiscoveryIntervalMs: 5000
+  dkg:
+    commitmentTimeoutSeconds: 180
+    shareTimeoutSeconds: 180
+    roundTimeoutSeconds: 180
+    taskTimeoutMs: 300000
+    broadcastRetryCount: 3
+    broadcastRetryIntervalMs: 1000
+    initWaitMs: 2000

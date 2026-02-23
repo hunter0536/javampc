@@ -599,9 +599,8 @@ public class DatabaseService {
     public Connection getShareConnection(int shareIndex) throws SQLException {
         String dbPath = Constants.DATABASE_DIR + File.separator + "share_" + shareIndex + ".db";
         try {
-            Connection conn = getConnection(dbPath);
             initShareDatabase(shareIndex);
-            return conn;
+            return getConnection(dbPath);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SQLException("Connection interrupted", e);

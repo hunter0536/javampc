@@ -1,0 +1,124 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "org.springframework",
+    "module": "spring-context",
+    "version": "6.0.2",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "7.5.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.springframework",
+          "module": "spring-aop",
+          "version": {
+            "requires": "6.0.2"
+          }
+        },
+        {
+          "group": "org.springframework",
+          "module": "spring-beans",
+          "version": {
+            "requires": "6.0.2"
+          }
+        },
+        {
+          "group": "org.springframework",
+          "module": "spring-core",
+          "version": {
+            "requires": "6.0.2"
+          }
+        },
+        {
+          "group": "org.springframework",
+          "module": "spring-expression",
+          "version": {
+            "requires": "6.0.2"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "spring-context-6.0.2.jar",
+          "url": "spring-context-6.0.2.jar",
+          "size": 1173094,
+          "sha512": "630440cbfb5c7b854bc33353733bf80a0a28c51b480e822d9df443abe27d11c5f2b4ddc8722e2a00d382d6496b9d65a57a13edb239799bd023f1df712c613f89",
+          "sha256": "05d0c69f92ebe33ba7e95480b91a5f97cb180e44803ec92e95f2f25655098f45",
+          "sha1": "649dc1c9947da39a0d4e3869d61e7270489aaa25",
+          "md5": "a4e33c120aca02dd9bb635b6668ebb58"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.springframework",
+          "module": "spring-aop",
+          "version": {
+            "requires": "6.0.2"
+          }
+        },
+        {
+          "group": "org.springframework",
+          "module": "spring-beans",
+          "version": {
+            "requires": "6.0.2"
+          }
+        },
+        {
+          "group": "org.springframework",
+          "module": "spring-core",
+          "version": {
+            "requires": "6.0.2"
+          }
+        },
+        {
+          "group": "org.springframework",
+          "module": "spring-expression",
+          "version": {
+            "requires": "6.0.2"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "spring-context-6.0.2.jar",
+          "url": "spring-context-6.0.2.jar",
+          "size": 1173094,
+          "sha512": "630440cbfb5c7b854bc33353733bf80a0a28c51b480e822d9df443abe27d11c5f2b4ddc8722e2a00d382d6496b9d65a57a13edb239799bd023f1df712c613f89",
+          "sha256": "05d0c69f92ebe33ba7e95480b91a5f97cb180e44803ec92e95f2f25655098f45",
+          "sha1": "649dc1c9947da39a0d4e3869d61e7270489aaa25",
+          "md5": "a4e33c120aca02dd9bb635b6668ebb58"
+        }
+      ]
+    }
+  ]
+}

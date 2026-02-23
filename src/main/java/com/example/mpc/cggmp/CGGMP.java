@@ -54,6 +54,26 @@ public class CGGMP {
         this.zkSetup = ZKSetup.generate(paillier.getBitLength());
     }
 
+    public CGGMP(int threshold,
+                 int totalNodes,
+                 int nodeId,
+                 String curveName,
+                 PaillierEncryption paillier,
+                 ZKSetup zkSetup,
+                 PedersenCommitment pedersen) throws Exception {
+        this.threshold = threshold;
+        this.totalNodes = totalNodes;
+        this.nodeId = nodeId;
+        this.curveName = curveName;
+        this.random = new SecureRandom();
+        this.otherPaillierKeys = new ConcurrentHashMap<>();
+        this.otherPublicKeys = new ConcurrentHashMap<>();
+        this.pedersen = pedersen != null ? pedersen : new PedersenCommitment(curveName);
+        this.paillier = paillier != null ? paillier : new PaillierEncryption();
+        this.paillierPublicKey = this.paillier.getPublicKeyInfo();
+        this.zkSetup = zkSetup != null ? zkSetup : ZKSetup.generate(this.paillier.getBitLength());
+    }
+
     public DkgRound1Output dkgRound1(byte[] context) {
         logger.info("Node {} starting DKG Round 1", nodeId);
         

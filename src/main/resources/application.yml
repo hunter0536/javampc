@@ -30,3 +30,11 @@ app:
       enabled: true  # 是否启用CGGMP服务
     legacy:
       enabled: true  # 是否启用旧的DKG服务
+  cggmp:
+    proof:
+      kappa: 64   # Πdec/Πaff-g* 的挑战位长度（临时降低以排查卡顿）
+      epsBits: 16 # Πdec/Πaff-g* 取值范围扩展位数
+    presign:
+      retentionDays: 30 # 预签名使用记录保留天数
+    refresh:
+      paillierBits: 1024 # 演练用：降低 Paillier 密钥位数加速 refresh

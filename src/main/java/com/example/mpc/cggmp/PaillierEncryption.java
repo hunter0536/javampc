@@ -19,13 +19,20 @@ public class PaillierEncryption {
     private int bitLength;
 
     private static final int KEY_SIZE = 3072;
+    private final int keySize;
     private static final BigInteger TWO = BigInteger.valueOf(2);
 
     public PaillierEncryption() {
+        this(KEY_SIZE);
+    }
+
+    public PaillierEncryption(int keySize) {
+        this.keySize = Math.max(512, keySize);
         generateKeys();
     }
 
     public PaillierEncryption(BigInteger p, BigInteger q) {
+        this.keySize = Math.max(p.bitLength() + q.bitLength(), KEY_SIZE);
         this.p = p;
         this.q = q;
         initializeFromPQ();
@@ -33,7 +40,7 @@ public class PaillierEncryption {
 
     private void generateKeys() {
         SecureRandom random = new SecureRandom();
-        int half = KEY_SIZE / 2;
+        int half = keySize / 2;
 
         p = generateBlumPrime(half, random);
         q = generateBlumPrime(half, random);
@@ -82,6 +89,14 @@ public class PaillierEncryption {
         BigInteger cLambda = c.modPow(lambda, nSquared);
         BigInteger l = cLambda.subtract(BigInteger.ONE).divide(n);
         return l.multiply(mu).mod(n);
+    }
+
+    public BigInteger recoverRandomizer(BigInteger c, BigInteger m) {
+        BigInteger gm = g.modPow(m, nSquared);
+        BigInteger gmInv = gm.modInverse(nSquared);
+        BigInteger cOver = c.multiply(gmInv).mod(nSquared);
+        BigInteger nInv = n.modInverse(lambda);
+        return cOver.modPow(nInv, nSquared).mod(n);
     }
 
     public BigInteger add(BigInteger c1, BigInteger c2) {

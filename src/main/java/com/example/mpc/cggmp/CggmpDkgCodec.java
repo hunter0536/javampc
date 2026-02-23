@@ -5,6 +5,10 @@ import com.example.mpc.cggmp.mta.MtAResult;
 import com.example.mpc.cggmp.proof.*;
 import com.example.mpc.cggmp.zk.ZKSetup;
 
+import org.bouncycastle.math.ec.ECPoint;
+import com.example.mpc.cggmp.sign.Secp256k1Curve;
+import com.example.mpc.common.util.HexUtils;
+
 import java.math.BigInteger;
 import java.util.*;
 
@@ -26,6 +30,14 @@ public final class CggmpDkgCodec {
 
     private static byte[] fromB64(Object v) {
         return Base64.getDecoder().decode((String) v);
+    }
+
+    private static String bytesToHex(byte[] bytes) {
+        return HexUtils.bytesToHex(bytes);
+    }
+
+    private static byte[] hexToBytes(String hex) {
+        return HexUtils.hexToBytes(hex);
     }
 
     public static Map<String, Object> encodePaillierPublicKey(PaillierEncryption.PublicKey key) {
@@ -209,6 +221,148 @@ public final class CggmpDkgCodec {
         return new MtAResult(c_j, y, r);
     }
 
+    public static Map<String, Object> encodePiEncProof(PiEncProof proof) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("kProof", encodePaillierRangeProof(proof.kProof()));
+        map.put("gProof", encodePaillierRangeProof(proof.gProof()));
+        return map;
+    }
+
+    public static PiEncProof decodePiEncProof(Map<?, ?> map) {
+        PaillierRangeProof kProof = decodePaillierRangeProof((Map<?, ?>) map.get("kProof"));
+        PaillierRangeProof gProof = decodePaillierRangeProof((Map<?, ?>) map.get("gProof"));
+        return new PiEncProof(kProof, gProof);
+    }
+
+    public static Map<String, Object> encodePiEncElgProof(PiEncElgProof proof) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("S", toHex(proof.S()));
+        map.put("T", toHex(proof.T()));
+        map.put("D", toHex(proof.D()));
+        map.put("Y", toHexPoint(proof.Y()));
+        map.put("Z", toHexPoint(proof.Z()));
+        map.put("z1", toHex(proof.z1()));
+        map.put("z2", toHex(proof.z2()));
+        map.put("z3", toHex(proof.z3()));
+        map.put("w", toHex(proof.w()));
+        return map;
+    }
+
+    public static PiEncElgProof decodePiEncElgProof(Map<?, ?> map) {
+        BigInteger S = fromHex(map.get("S"));
+        BigInteger T = fromHex(map.get("T"));
+        BigInteger D = fromHex(map.get("D"));
+        ECPoint Y = fromHexPoint((String) map.get("Y"));
+        ECPoint Z = fromHexPoint((String) map.get("Z"));
+        BigInteger z1 = fromHex(map.get("z1"));
+        BigInteger z2 = fromHex(map.get("z2"));
+        BigInteger z3 = fromHex(map.get("z3"));
+        BigInteger w = fromHex(map.get("w"));
+        return new PiEncElgProof(S, T, D, Y, Z, z1, z2, z3, w);
+    }
+
+    public static Map<String, Object> encodePiAffGProof(PiAffGProof proof) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("A", encodeBigIntegerList(proof.A()));
+        map.put("B", encodeBigIntegerList(proof.B()));
+        map.put("R", encodeECPointList(proof.R()));
+        map.put("z", encodeBigIntegerList(proof.z()));
+        map.put("zPrime", encodeBigIntegerList(proof.zPrime()));
+        map.put("w", encodeBigIntegerList(proof.w()));
+        map.put("lambda", encodeBigIntegerList(proof.lambda()));
+        return map;
+    }
+
+    public static PiAffGProof decodePiAffGProof(Map<?, ?> map) {
+        List<BigInteger> A = decodeBigIntegerList((List<?>) map.get("A"));
+        List<BigInteger> B = decodeBigIntegerList((List<?>) map.get("B"));
+        List<ECPoint> R = decodeECPointList((List<?>) map.get("R"));
+        List<BigInteger> z = decodeBigIntegerList((List<?>) map.get("z"));
+        List<BigInteger> zPrime = decodeBigIntegerList((List<?>) map.get("zPrime"));
+        List<BigInteger> w = decodeBigIntegerList((List<?>) map.get("w"));
+        List<BigInteger> lambda = decodeBigIntegerList((List<?>) map.get("lambda"));
+        return new PiAffGProof(A, B, R, z, zPrime, w, lambda);
+    }
+
+    public static Map<String, Object> encodePiLogStarProof(PiLogStarProof proof) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("A", toHexPoint(proof.A()));
+        map.put("z", toHex(proof.z()));
+        return map;
+    }
+
+    public static PiLogStarProof decodePiLogStarProof(Map<?, ?> map) {
+        ECPoint A = fromHexPoint((String) map.get("A"));
+        BigInteger z = fromHex(map.get("z"));
+        return new PiLogStarProof(A, z);
+    }
+
+    public static Map<String, Object> encodePiSchProof(PiSchProof proof) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("A", toHexPoint(proof.A()));
+        map.put("z", toHex(proof.z()));
+        return map;
+    }
+
+    public static PiSchProof decodePiSchProof(Map<?, ?> map) {
+        ECPoint A = fromHexPoint((String) map.get("A"));
+        BigInteger z = fromHex(map.get("z"));
+        return new PiSchProof(A, z);
+    }
+
+    public static Map<String, Object> encodePiPrmProof(PiPrmProof proof) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("A", toHex(proof.A()));
+        map.put("z", toHex(proof.z()));
+        return map;
+    }
+
+    public static PiPrmProof decodePiPrmProof(Map<?, ?> map) {
+        BigInteger A = fromHex(map.get("A"));
+        BigInteger z = fromHex(map.get("z"));
+        return new PiPrmProof(A, z);
+    }
+
+    public static Map<String, Object> encodePiLogProof(PiLogProof proof) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("U1", toHexPoint(proof.U1()));
+        map.put("U2", toHexPoint(proof.U2()));
+        map.put("U3", toHexPoint(proof.U3()));
+        map.put("z1", toHex(proof.z1()));
+        map.put("z2", toHex(proof.z2()));
+        return map;
+    }
+
+    public static PiLogProof decodePiLogProof(Map<?, ?> map) {
+        ECPoint U1 = fromHexPoint((String) map.get("U1"));
+        ECPoint U2 = fromHexPoint((String) map.get("U2"));
+        ECPoint U3 = fromHexPoint((String) map.get("U3"));
+        BigInteger z1 = fromHex(map.get("z1"));
+        BigInteger z2 = fromHex(map.get("z2"));
+        return new PiLogProof(U1, U2, U3, z1, z2);
+    }
+
+    public static Map<String, Object> encodePiDecProof(PiDecProof proof) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("A", encodeBigIntegerList(proof.A()));
+        map.put("B", encodeECPointList(proof.B()));
+        map.put("C", encodeECPointList(proof.C()));
+        map.put("z", encodeBigIntegerList(proof.z()));
+        map.put("w", encodeBigIntegerList(proof.w()));
+        map.put("nu", encodeBigIntegerList(proof.nu()));
+        return map;
+    }
+
+    public static PiDecProof decodePiDecProof(Map<?, ?> map) {
+        List<BigInteger> A = decodeBigIntegerList((List<?>) map.get("A"));
+        List<ECPoint> B = decodeECPointList((List<?>) map.get("B"));
+        List<ECPoint> C = decodeECPointList((List<?>) map.get("C"));
+        List<BigInteger> z = decodeBigIntegerList((List<?>) map.get("z"));
+        List<BigInteger> w = decodeBigIntegerList((List<?>) map.get("w"));
+        List<BigInteger> nu = decodeBigIntegerList((List<?>) map.get("nu"));
+        return new PiDecProof(A, B, C, z, w, nu);
+    }
+
     private static List<String> encodeBigIntegerList(List<BigInteger> list) {
         List<String> out = new ArrayList<>(list.size());
         for (BigInteger v : list) {
@@ -223,5 +377,29 @@ public final class CggmpDkgCodec {
             out.add(new BigInteger((String) v, 16));
         }
         return out;
+    }
+
+    private static List<String> encodeECPointList(List<ECPoint> list) {
+        List<String> out = new ArrayList<>(list.size());
+        for (ECPoint p : list) {
+            out.add(bytesToHex(p.getEncoded(false)));
+        }
+        return out;
+    }
+
+    private static List<ECPoint> decodeECPointList(List<?> list) {
+        List<ECPoint> out = new ArrayList<>(list.size());
+        for (Object v : list) {
+            out.add(fromHexPoint((String) v));
+        }
+        return out;
+    }
+
+    private static String toHexPoint(ECPoint p) {
+        return bytesToHex(p.getEncoded(false));
+    }
+
+    private static ECPoint fromHexPoint(String hex) {
+        return Secp256k1Curve.decodePoint(hexToBytes(hex));
     }
 }

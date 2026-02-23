@@ -3,6 +3,8 @@ package com.example.mpc.controller;
 import com.example.mpc.common.response.ApiResponse;
 import com.example.mpc.common.response.DkgTaskStartResponse;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
+import com.example.mpc.common.response.RefreshTaskStartResponse;
+import com.example.mpc.common.response.RefreshTaskStatusResponse;
 import com.example.mpc.common.response.SignatureTaskStartResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.response.SignatureResultResponse;
@@ -12,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
@@ -174,6 +177,70 @@ public class CggmpController {
             } catch (Exception e) {
                 logger.error("Failed to get signature result", e);
                 return ApiResponse.error("Failed to get signature result: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * ZK 证明自检（PiDec / PiAffG），用于验证参数配置与证明链
+     */
+    @GetMapping("/proof/self-check")
+    public ApiResponse<Map<String, Object>> proofSelfCheck() {
+        try {
+            Map<String, Object> result = cggmpSignatureService.runProofSelfCheck();
+            return ApiResponse.success(result);
+        } catch (Exception e) {
+            logger.error("Failed to run proof self-check", e);
+            return ApiResponse.error("Failed to run proof self-check: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 启动CGGMP密钥刷新（refresh/proactive）
+     *
+     * @param groupPublicKey 群公钥
+     * @return 包含刷新任务ID的响应
+     */
+    @PostMapping("/refresh/start")
+    public CompletableFuture<ApiResponse<RefreshTaskStartResponse>> startRefresh(@RequestParam(required = true) String groupPublicKey) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                if (groupPublicKey == null || groupPublicKey.isEmpty()) {
+                    return ApiResponse.badRequest("groupPublicKey cannot be null or empty");
+                }
+                String taskId = cggmpSignatureService.createRefreshTask(groupPublicKey);
+                cggmpSignatureService.startRefreshTask(taskId)
+                        .exceptionally(ex -> {
+                            logger.error("Async CGGMP refresh failed for task {}: {}", taskId, ex.getMessage(), ex);
+                            return null;
+                        });
+                RefreshTaskStartResponse data = new RefreshTaskStartResponse(taskId, groupPublicKey, "CGGMP refresh started");
+                return ApiResponse.success(data);
+            } catch (Exception e) {
+                logger.error("Failed to start CGGMP refresh", e);
+                return ApiResponse.error("Failed to start CGGMP refresh: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * 查询CGGMP刷新任务状态
+     *
+     * @param taskId 任务ID
+     * @return 刷新任务状态
+     */
+    @GetMapping("/refresh/status")
+    public CompletableFuture<ApiResponse<RefreshTaskStatusResponse>> getRefreshStatus(@RequestParam(required = true) String taskId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                if (taskId == null || taskId.isEmpty()) {
+                    return ApiResponse.badRequest("taskId cannot be null or empty");
+                }
+                RefreshTaskStatusResponse status = cggmpSignatureService.getRefreshTaskStatus(taskId);
+                return ApiResponse.success(status);
+            } catch (Exception e) {
+                logger.error("Failed to get refresh task status", e);
+                return ApiResponse.error("Failed to get refresh task status: " + e.getMessage());
             }
         });
     }

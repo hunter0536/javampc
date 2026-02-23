@@ -1,0 +1,82 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "org.springframework",
+    "module": "spring-core",
+    "version": "6.0.2",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "7.5.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.springframework",
+          "module": "spring-jcl",
+          "version": {
+            "requires": "6.0.2"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "spring-core-6.0.2.jar",
+          "url": "spring-core-6.0.2.jar",
+          "size": 1804099,
+          "sha512": "3f82add6a9b251dbce90b445edff91dffd3f13c9552438f5fb94bb00c1e43d3d88c646823597b884ebb461200a2546145a20f8783beaf08ef81d444206a2cc73",
+          "sha256": "24794f1de7a33fb47b034cfc447a4abd161b3a9128886dcbdacc71c36bd30d93",
+          "sha1": "43f8a6c8b522181d507705aac0e1f1b1e81e7701",
+          "md5": "8451f4ae93a238fa641715e0352ef0c9"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.springframework",
+          "module": "spring-jcl",
+          "version": {
+            "requires": "6.0.2"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "spring-core-6.0.2.jar",
+          "url": "spring-core-6.0.2.jar",
+          "size": 1804099,
+          "sha512": "3f82add6a9b251dbce90b445edff91dffd3f13c9552438f5fb94bb00c1e43d3d88c646823597b884ebb461200a2546145a20f8783beaf08ef81d444206a2cc73",
+          "sha256": "24794f1de7a33fb47b034cfc447a4abd161b3a9128886dcbdacc71c36bd30d93",
+          "sha1": "43f8a6c8b522181d507705aac0e1f1b1e81e7701",
+          "md5": "8451f4ae93a238fa641715e0352ef0c9"
+        }
+      ]
+    }
+  ]
+}
