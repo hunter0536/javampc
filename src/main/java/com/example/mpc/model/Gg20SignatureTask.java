@@ -21,11 +21,13 @@ public class Gg20SignatureTask {
     public final int threshold;
     public final int initiatorId;
     public final Set<Integer> participants;
+    public BigInteger hdShift;
 
     public byte[] messageHash;
     public ECPoint groupPublicKeyPoint;
     public java.util.Map<Integer, ECPoint> publicShares;
     public java.util.Map<Integer, java.math.BigInteger> indexMap;
+    public byte[] chainCode;
     public PaillierEncryption paillier;
     public ZKSetup zkSetup;
     public final ConcurrentHashMap<Integer, PaillierEncryption.PublicKey> peerPaillierKeys = new ConcurrentHashMap<>();

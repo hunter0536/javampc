@@ -104,6 +104,12 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     @Value("${app.cggmp.presign.retentionDays:30}")
     private long presignRetentionDays;
+    @Value("${app.cggmp.presign.echoEnabled:true}")
+    private boolean presignEchoEnabled;
+    @Value("${app.cggmp.presign.useRbc:false}")
+    private boolean presignUseRbc;
+    @Value("${app.cggmp.hdEnabled:false}")
+    private boolean hdEnabled;
 
     @Value("${app.cggmp.refresh.paillierBits:3072}")
     private int refreshPaillierBits;
@@ -117,8 +123,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     @Value("${app.cggmp.aux.autoLeaderId:1}")
     private int auxAutoLeaderId;
 
-    @Value("${app.cggmp.dkg.hdEnabled:false}")
-    private boolean dkgHdEnabled;
     @Value("${mpc.dkg.echoEnabled:true}")
     private boolean dkgEchoEnabled;
     @Value("${mpc.dkg.useRbc:true}")
@@ -387,7 +391,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         byte[] ridPart = new byte[32];
         secureRandom.nextBytes(ridPart);
         task.ridParts.put(nodeId, ridPart);
-        byte[] chainCodePart = dkgHdEnabled ? randomBytes(32) : null;
+        byte[] chainCodePart = hdEnabled ? randomBytes(32) : null;
         if (chainCodePart != null) {
             task.chainCodeParts.put(nodeId, chainCodePart);
         }
@@ -454,7 +458,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             task.timeout();
             throw new Exception("Timeout waiting for DKG Round 2 open messages");
         }
-        if (dkgHdEnabled) {
+        if (hdEnabled) {
             task.chainCode = xorChainCodeParts(task);
         }
         task.rid = xorRidParts(task);
@@ -531,7 +535,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         byte[] ridPart = new byte[32];
         secureRandom.nextBytes(ridPart);
         task.ridParts.put(nodeId, ridPart);
-        byte[] chainCodePart = dkgHdEnabled ? randomBytes(32) : null;
+        byte[] chainCodePart = hdEnabled ? randomBytes(32) : null;
         if (chainCodePart != null) {
             task.chainCodeParts.put(nodeId, chainCodePart);
         }
@@ -585,7 +589,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             task.timeout();
             throw new Exception("Timeout waiting for DKG Round 2 open messages");
         }
-        if (dkgHdEnabled) {
+        if (hdEnabled) {
             task.chainCode = xorChainCodeParts(task);
         }
         task.rid = xorRidParts(task);
@@ -759,7 +763,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("t", task.tValues.get(nodeId).toString(16));
         data.put("prmProof", CggmpDkgCodec.encodePiPrmProof(prmProof));
         data.put("ridPart", HexUtils.bytesToHex(ridPart));
-        if (dkgHdEnabled) {
+        if (hdEnabled) {
             byte[] cPart = task.chainCodeParts.get(nodeId);
             if (cPart != null) {
                 data.put("c", HexUtils.bytesToHex(cPart));
@@ -1369,7 +1373,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             task.lastComplaintEvidence = evidence;
             return;
         }
-        if (dkgHdEnabled && (cHex == null || cHex.length() != 64)) {
+        if (hdEnabled && (cHex == null || cHex.length() != 64)) {
             Map<String, Object> evidence = new HashMap<>();
             evidence.put("senderId", senderNodeId);
             evidence.put("c", cHex);
@@ -2088,6 +2092,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public String createSignatureTaskWithGroupKey(String groupPublicKey, String message) {
+        return createSignatureTaskWithGroupKey(groupPublicKey, message, null);
+    }
+
+    public String createSignatureTaskWithGroupKey(String groupPublicKey, String message, BigInteger hdShift) {
         String fixedGroupPublicKey = null;
         try {
             fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
@@ -2097,11 +2105,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         String taskId = UUID.randomUUID().toString();
         Gg20SignatureTask task = new Gg20SignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId);
+        task.hdShift = hdShift;
         signatureTasks.put(taskId, task);
         return taskId;
     }
 
     public String createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants) {
+        return createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, message, initiatorId, participants, null);
+    }
+
+    public String createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants, BigInteger hdShift) {
         String fixedGroupPublicKey = null;
         try {
             fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
@@ -2110,6 +2123,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         Gg20SignatureTask task = new Gg20SignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount, threshold, initiatorId, participants);
+        task.hdShift = hdShift;
         signatureTasks.put(signatureTaskId, task);
         return signatureTaskId;
     }
@@ -2234,6 +2248,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (task.indexMap == null) {
             task.indexMap = parseIndexMap(keyShare.getIndexMap());
         }
+        if (task.chainCode == null && keyShare.getChainCode() != null) {
+            try {
+                task.chainCode = HexUtils.hexToBytes(keyShare.getChainCode());
+            } catch (Exception e) {
+                logger.warn("Failed to decode chain code for task {}: {}", task.taskId, e.getMessage());
+            }
+        }
     }
 
     private CompletableFuture<Void> runOfflinePhase(Gg20SignatureTask task) {
@@ -2318,9 +2339,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 if (!task.gammaCommitLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                     throw new RuntimeException("Timeout waiting for presign R1");
                 }
-                broadcastPresignR1Echo(task).join();
-                if (!task.presignR1EchoLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    throw new RuntimeException("Timeout waiting for presign R1 echo");
+                if (presignEchoEnabled) {
+                    broadcastPresignR1Echo(task).join();
+                    if (!task.presignR1EchoLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                        throw new RuntimeException("Timeout waiting for presign R1 echo");
+                    }
                 }
                 logger.info("Presign R1 completed for task {}, proceeding to R2", task.taskId);
 
@@ -2601,7 +2624,12 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 }
 
                 BigInteger e = new BigInteger(1, task.messageHash).mod(curveOrder);
-                BigInteger sigma_i = task.presignature.kTilde().multiply(e).add(task.r.multiply(task.presignature.chiTilde())).mod(curveOrder);
+                BigInteger chiTilde = task.presignature.chiTilde();
+                BigInteger shift = resolveSignShift(task, curveOrder);
+                if (shift.signum() != 0) {
+                    chiTilde = chiTilde.add(task.presignature.kTilde().multiply(shift)).mod(curveOrder);
+                }
+                BigInteger sigma_i = task.presignature.kTilde().multiply(e).add(task.r.multiply(chiTilde)).mod(curveOrder);
                 if (nodeId == task.initiatorId) {
                     if (!verifySigmaShare(task, nodeId, sigma_i)) {
                         throw new RuntimeException("Local signature share verification failed");
@@ -2660,6 +2688,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         initData.put("message", task.message);
         initData.put("initiatorId", task.initiatorId);
         initData.put("participants", new ArrayList<>(task.participants));
+        if (task.hdShift != null) {
+            initData.put("hdShift", task.hdShift.toString(16));
+        }
         try {
             for (int attempt = 1; attempt <= Constants.SIGNATURE_BROADCAST_RETRY_COUNT; attempt++) {
                 nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_OFFLINE_INIT, initData)).join();
@@ -2741,7 +2772,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", nodeId);
         data.put("hash", hash);
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R1_ECHO, data));
+        NodeService.Message msg = new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R1_ECHO, data);
+        if (presignUseRbc) {
+            return nodeService.broadcastRbc(msg);
+        }
+        return nodeService.broadcastMessage(msg);
     }
 
     private CompletableFuture<Void> broadcastPresignR2(Gg20SignatureTask task, ECPoint Gamma,
@@ -2888,8 +2923,47 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private static byte[] buildPresignContext(String taskId, int senderId, String round) {
-        String ctx = "PRESIGN:" + round + ":" + taskId + ":" + senderId;
+        String sid = buildSignSid(taskId);
+        String ctx = "PRESIGN:" + round + ":" + sid + ":" + senderId;
         return ctx.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private BigInteger resolveSignShift(Gg20SignatureTask task, BigInteger q) {
+        if (!hdEnabled) {
+            return BigInteger.ZERO;
+        }
+        if (task == null || task.hdShift == null) {
+            return deriveShiftFromChainCode(task, q);
+        }
+        return task.hdShift.mod(q);
+    }
+
+    private BigInteger deriveShiftFromChainCode(Gg20SignatureTask task, BigInteger q) {
+        if (task == null || task.chainCode == null || task.messageHash == null) {
+            return BigInteger.ZERO;
+        }
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            javax.crypto.spec.SecretKeySpec key = new javax.crypto.spec.SecretKeySpec(task.chainCode, "HmacSHA256");
+            mac.init(key);
+            byte[] out = mac.doFinal(task.messageHash);
+            return new BigInteger(1, out).mod(q);
+        } catch (Exception e) {
+            logger.warn("Failed to derive HD shift for task {}: {}", task.taskId, e.getMessage());
+            return BigInteger.ZERO;
+        }
+    }
+
+    private static BigInteger parseHexBigIntegerOrNull(String hex) {
+        if (hex == null || hex.isBlank()) {
+            return null;
+        }
+        try {
+            String cleaned = hex.startsWith("0x") || hex.startsWith("0X") ? hex.substring(2) : hex;
+            return new BigInteger(cleaned, 16);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static byte[] buildRefreshContext(String taskId, byte[] rid, int senderId, String label) {
@@ -3058,7 +3132,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             String sid = buildSignSid(task.taskId);
             java.util.List<Integer> ids = new java.util.ArrayList<>(task.participants);
             java.util.Collections.sort(ids);
-            List<Map<String, Object>> payloads = new ArrayList<>();
+            List<java.util.List<Object>> payloads = new ArrayList<>();
             for (int id : ids) {
                 BigInteger K = task.presignK.get(id);
                 BigInteger G = task.presignG.get(id);
@@ -3070,15 +3144,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 if (K == null || G == null || Y == null || A1 == null || A2 == null || B1 == null || B2 == null) {
                     return null;
                 }
-                Map<String, Object> entry = new LinkedHashMap<>();
-                entry.put("id", id);
-                entry.put("K", K.toString(16));
-                entry.put("G", G.toString(16));
-                entry.put("Y", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Y)));
-                entry.put("A1", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A1)));
-                entry.put("A2", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A2)));
-                entry.put("B1", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B1)));
-                entry.put("B2", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B2)));
+                java.util.List<Object> entry = new java.util.ArrayList<>(8);
+                entry.add(id);
+                entry.add(K.toString(16));
+                entry.add(G.toString(16));
+                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Y)));
+                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A1)));
+                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A2)));
+                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B1)));
+                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B2)));
                 payloads.add(entry);
             }
             return computeTaggedHashHex("PRESIGN_R1_ECHO", sid, payloads);
@@ -5150,6 +5224,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             String signatureTaskId = (String) dataMap.get("signatureTaskId");
             String groupPublicKey = (String) dataMap.get("groupPublicKey");
             String msg = (String) dataMap.get("message");
+            String shiftHex = dataMap.get("hdShift") instanceof String s ? s : null;
             Integer initiatorId = null;
             Object initiatorValue = dataMap.get("initiatorId");
             if (initiatorValue instanceof Number) {
@@ -5169,7 +5244,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 if (!signatureTasks.containsKey(signatureTaskId)) {
                     int resolvedInitiatorId = initiatorId != null ? initiatorId : senderId;
                     Set<Integer> participantsSet = participants == null ? null : new LinkedHashSet<>(participants);
-                    createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg, resolvedInitiatorId, participantsSet);
+                    BigInteger hdShift = parseHexBigIntegerOrNull(shiftHex);
+                    createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg, resolvedInitiatorId, participantsSet, hdShift);
                     logger.info("Created CGGMP signature task from OFFLINE_INIT: {}", signatureTaskId);
                     CompletableFuture.runAsync(() -> {
                         Gg20SignatureTask task = signatureTasks.get(signatureTaskId);
@@ -5304,6 +5380,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private void handlePresignR1Echo(int senderId, Object data) {
+        if (!presignEchoEnabled) {
+            return;
+        }
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
         }
@@ -6798,6 +6877,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         ECPoint sTilde = task.presignSTilde.get(senderId);
         if (deltaTilde == null || sTilde == null) {
             return false;
+        }
+        BigInteger shift = resolveSignShift(task, curveOrder);
+        if (shift.signum() != 0) {
+            sTilde = sTilde.add(deltaTilde.multiply(shift)).normalize();
         }
         ECPoint left = Gamma.multiply(sigma).normalize();
         ECPoint right = deltaTilde.multiply(m).add(sTilde.multiply(r)).normalize();

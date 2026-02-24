@@ -1,60 +1,68 @@
 # 基础配置
 
-## 服务器配置
-#server:
-#  port: 8080
-#
-## 节点配置
-#node:
-#  id: 1
-#  port: 9000
+# 服务器配置
+server:
+  port: 8080 # HTTP 端口（默认注释，由 application-nodeX.yml 覆盖）
+
+# 节点配置
+node:
+  id: 1       # 节点 ID（默认注释，由 application-nodeX.yml 覆盖）
+  port: 9000  # 节点 P2P 端口（默认注释，由 application-nodeX.yml 覆盖）
 
 # 发现服务配置
 discovery:
-#  port: 8888
-  # 广播目标端口（5个节点的发现端口）
+  # 广播目标端口（5 个节点的发现端口）
   broadcast:
-    ports: 8888,8889,8890,8891,8892
+    ports: 8888,8889,8890,8891,8892 # 发现广播目标端口列表
 
 # 节点通信共享密钥（HMAC）
 nodes:
-  sharedSecret: "dev-shared-secret"
+  sharedSecret: "dev-shared-secret" # 节点间共享密钥（用于 HMAC 认证）
   ssl:
-    enabled: false
-    cert: "scripts/config/node.crt"
-    key: "scripts/config/node.key"
-    trustCert: "scripts/config/ca.crt"
+    enabled: true # 是否启用 TLS（私密信道）
+    cert: "scripts/config/node.crt" # 本节点证书
+    key: "scripts/config/node.key" # 本节点私钥
+    trustCert: "scripts/config/ca.crt" # 信任根证书
   reliableBroadcast:
-    enabled: true
-    retryCount: 3
-    retryIntervalMs: 200
-    quorum: 0
+    enabled: true # 是否启用可靠广播 (RBC)
+    retryCount: 3 # RBC 重试次数
+    retryIntervalMs: 200 # RBC 重试间隔（毫秒）
+    quorum: 0 # RBC 法定人数（0 表示使用默认规则）
 
 # 日志配置
 logging:
   level:
-    com.example.mpc: debug
-    com.example.mpc.service.NodeService: warn
-    com.example.mpc.service.netty: warn
+    com.example.mpc: debug # 应用日志级别
+    com.example.mpc.service.NodeService: warn # NodeService 日志级别
+    com.example.mpc.service.netty: warn # Netty 日志级别
 
 # 应用初始化配置
 app:
   init:
     cggmp:
-      enabled: true  # 是否启用CGGMP服务
+      enabled: true  # 是否启用 CGGMP 服务
     legacy:
-      enabled: true  # 是否启用旧的DKG服务
+      enabled: true  # 是否启用旧的 DKG 服务
   cggmp:
-    dkg:
-      hdEnabled: false
+    hdEnabled: false # HD 开关：同时控制 DKG 生成 chain code 与签名使用 shift
     proof:
       kappa: 64   # Πdec/Πaff-g* 的挑战位长度（临时降低以排查卡顿）
       epsBits: 16 # Πdec/Πaff-g* 取值范围扩展位数
     presign:
       retentionDays: 30 # 预签名使用记录保留天数
+      echoEnabled: false # 是否启用 presign R1 echo
+      useRbc: false # 是否对 presign R1 echo 使用 RBC
     refresh:
       paillierBits: 1024 # 演练用：降低 Paillier 密钥位数加速 refresh
     aux:
       paillierBits: 2048 # 测试用：恢复到 >=2048
       minPaillierBitsForProof: 2047 # 允许 2048 目标位长产生的 2047 位 n
       autoLeaderId: 1 # 仅该节点执行自动 AUX 触发，<=0 则禁用
+
+# MPC 全局参数
+mpc:
+  dkg:
+    echoEnabled: false # DKG 是否启用 echo 可靠性检查
+    useRbc: false # DKG 是否对广播通道使用 RBC
+  aux:
+    statusWaitMs: 5000 # 等待 AUX 状态收集的时间（毫秒）

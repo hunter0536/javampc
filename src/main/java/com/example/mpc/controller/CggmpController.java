@@ -227,6 +227,18 @@ public class CggmpController {
         return out.toString();
     }
 
+    private static java.math.BigInteger parseHexBigIntegerOrNull(String hex) {
+        if (hex == null || hex.isBlank()) {
+            return null;
+        }
+        try {
+            String cleaned = hex.startsWith("0x") || hex.startsWith("0X") ? hex.substring(2) : hex;
+            return new java.math.BigInteger(cleaned, 16);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     /**
      * 根据UUID查询对应的CGGMP协议DKG任务是否执行完成
      *
@@ -281,7 +293,9 @@ public class CggmpController {
      * @return 包含签名任务ID的响应
      */
     @PostMapping("/sign/start")
-    public CompletableFuture<ApiResponse<SignatureTaskStartResponse>> sign(@RequestParam(required = true) String groupPublicKey, @RequestParam(required = true) String message) {
+    public CompletableFuture<ApiResponse<SignatureTaskStartResponse>> sign(@RequestParam(required = true) String groupPublicKey,
+                                                                           @RequestParam(required = true) String message,
+                                                                           @RequestParam(required = false) String hdShift) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 if (groupPublicKey == null || groupPublicKey.isEmpty()) {
@@ -291,7 +305,8 @@ public class CggmpController {
                     return ApiResponse.badRequest("message cannot be null or empty");
                 }
 
-                String signatureTaskId = cggmpSignatureService.createSignatureTaskWithGroupKey(groupPublicKey, message);
+                java.math.BigInteger shift = parseHexBigIntegerOrNull(hdShift);
+                String signatureTaskId = cggmpSignatureService.createSignatureTaskWithGroupKey(groupPublicKey, message, shift);
 
                 cggmpSignatureService.startSignatureTask(signatureTaskId)
                         .exceptionally(ex -> {
