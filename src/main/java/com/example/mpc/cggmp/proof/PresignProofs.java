@@ -186,14 +186,14 @@ public final class PresignProofs {
             R.add(Rj);
             if ((i + 1) % 8 == 0 || i + 1 == effectiveKappa) {
                 long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - loop1Start);
-                logger.info("PiAffG progress: built {}/{} tuples in {} ms", i + 1, effectiveKappa, elapsedMs);
+                logger.debug("PiAffG progress: built {}/{} tuples in {} ms", i + 1, effectiveKappa, elapsedMs);
             }
         }
 
         long challengeStart = System.nanoTime();
         boolean[] e = challengeBits("PI_AFFG", context, effectiveKappa, A, B, R);
         long challengeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - challengeStart);
-        logger.info("PiAffG challenge computed in {} ms", challengeMs);
+        logger.debug("PiAffG challenge computed in {} ms", challengeMs);
         long loop2Start = System.nanoTime();
         for (int i = 0; i < effectiveKappa; i++) {
             BigInteger ei = e[i] ? BigInteger.ONE : BigInteger.ZERO;
@@ -207,12 +207,12 @@ public final class PresignProofs {
             lambda.add(li);
             if ((i + 1) % 8 == 0 || i + 1 == effectiveKappa) {
                 long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - loop2Start);
-                logger.info("PiAffG progress: built {}/{} responses in {} ms", i + 1, effectiveKappa, elapsedMs);
+                logger.debug("PiAffG progress: built {}/{} responses in {} ms", i + 1, effectiveKappa, elapsedMs);
             }
         }
 
         long totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
-        logger.info("PiAffG done in {} ms", totalMs);
+        logger.debug("PiAffG done in {} ms", totalMs);
         return new PiAffGProof(A, B, R, z, zPrime, w, lambda);
     }
 

@@ -13,29 +13,45 @@ public final class NoSmallFactorProofValidator {
     private final ZKSetup zk;
     private final int ellBits;
     private final int epsBits;
+    private final int minNiBits;
 
     public NoSmallFactorProofValidator(ZKSetup zk) {
-        this(zk, 256, 16);
+        this(zk, 256, 16, 2048);
     }
 
     public NoSmallFactorProofValidator(ZKSetup zk, int ellBits, int epsBits) {
+        this(zk, ellBits, epsBits, 2048);
+    }
+
+    public NoSmallFactorProofValidator(ZKSetup zk, int minNiBits) {
+        this(zk, 256, 16, minNiBits);
+    }
+
+    public NoSmallFactorProofValidator(ZKSetup zk, int ellBits, int epsBits, int minNiBits) {
         this.zk = Objects.requireNonNull(zk, "zk");
         this.ellBits = ellBits;
         this.epsBits = epsBits;
+        this.minNiBits = minNiBits;
     }
 
     public boolean verifyProof(NoSmallFactorProof pr, PaillierEncryption.PublicKey pk, byte[] context) {
         if (pr == null || pk == null) return false;
 
         BigInteger Ni = pk.n;
-        if (Ni.bitLength() < 2048) return false;
+        if (Ni.bitLength() < minNiBits) {
+            return false;
+        }
 
         BigInteger Nj = zk.hatN();
         BigInteger s = zk.h1();
         BigInteger t = zk.h2();
 
-        if (!Nj.gcd(s).equals(BigInteger.ONE)) return false;
-        if (!Nj.gcd(t).equals(BigInteger.ONE)) return false;
+        if (!Nj.gcd(s).equals(BigInteger.ONE)) {
+            return false;
+        }
+        if (!Nj.gcd(t).equals(BigInteger.ONE)) {
+            return false;
+        }
 
         BigInteger P = new BigInteger(pr.P());
         BigInteger Q = new BigInteger(pr.Q());
@@ -49,11 +65,19 @@ public final class NoSmallFactorProofValidator {
         BigInteger w2 = pr.w2();
         BigInteger v = pr.v();
 
-        if (!inRange(z1, Ni, ellBits, epsBits)) return false;
-        if (!inRange(z2, Ni, ellBits, epsBits)) return false;
+        if (!inRange(z1, Ni, ellBits, epsBits)) {
+            return false;
+        }
+        if (!inRange(z2, Ni, ellBits, epsBits)) {
+            return false;
+        }
 
-        if (!Nj.gcd(P).equals(BigInteger.ONE)) return false;
-        if (!Nj.gcd(Q).equals(BigInteger.ONE)) return false;
+        if (!Nj.gcd(P).equals(BigInteger.ONE)) {
+            return false;
+        }
+        if (!Nj.gcd(Q).equals(BigInteger.ONE)) {
+            return false;
+        }
 
         BigInteger twoEll = BigInteger.ONE.shiftLeft(ellBits);
 
@@ -76,16 +100,117 @@ public final class NoSmallFactorProofValidator {
 
         BigInteger lhs1 = multiexpSigned(Nj, s, z1, t, w1);
         BigInteger rhs1 = A.multiply(BigIntegerUtils.powSigned(P, e, Nj)).mod(Nj);
-        if (!lhs1.equals(rhs1)) return false;
+        if (!lhs1.equals(rhs1)) {
+            return false;
+        }
 
         BigInteger lhs2 = multiexpSigned(Nj, s, z2, t, w2);
         BigInteger rhs2 = B.multiply(BigIntegerUtils.powSigned(Q, e, Nj)).mod(Nj);
-        if (!lhs2.equals(rhs2)) return false;
+        if (!lhs2.equals(rhs2)) {
+            return false;
+        }
 
         BigInteger lhs3 = BigIntegerUtils.powSigned(Q, z1, Nj).multiply(BigIntegerUtils.powSigned(t, v, Nj)).mod(Nj);
         BigInteger rhs3 = T.multiply(BigIntegerUtils.powSigned(s, Ni.multiply(e), Nj)).mod(Nj);
 
         return lhs3.equals(rhs3);
+    }
+
+    public ProofCheckResult verifyProofDetailed(NoSmallFactorProof pr, PaillierEncryption.PublicKey pk, byte[] context) {
+        if (pr == null || pk == null) {
+            return ProofCheckResult.failure("null_input");
+        }
+
+        BigInteger Ni = pk.n;
+        if (Ni.bitLength() < minNiBits) {
+            return ProofCheckResult.failure("ni_too_small");
+        }
+
+        BigInteger Nj = zk.hatN();
+        BigInteger s = zk.h1();
+        BigInteger t = zk.h2();
+
+        if (!Nj.gcd(s).equals(BigInteger.ONE)) {
+            return ProofCheckResult.failure("gcd_hatn_s");
+        }
+        if (!Nj.gcd(t).equals(BigInteger.ONE)) {
+            return ProofCheckResult.failure("gcd_hatn_t");
+        }
+
+        BigInteger P = new BigInteger(pr.P());
+        BigInteger Q = new BigInteger(pr.Q());
+        BigInteger A = new BigInteger(pr.A());
+        BigInteger B = new BigInteger(pr.B());
+        BigInteger T = new BigInteger(pr.T());
+
+        BigInteger z1 = pr.z1();
+        BigInteger z2 = pr.z2();
+        BigInteger w1 = pr.w1();
+        BigInteger w2 = pr.w2();
+        BigInteger v = pr.v();
+
+        if (!inRange(z1, Ni, ellBits, epsBits)) {
+            return ProofCheckResult.failure("z1_out_of_range");
+        }
+        if (!inRange(z2, Ni, ellBits, epsBits)) {
+            return ProofCheckResult.failure("z2_out_of_range");
+        }
+
+        if (!Nj.gcd(P).equals(BigInteger.ONE)) {
+            return ProofCheckResult.failure("gcd_hatn_p");
+        }
+        if (!Nj.gcd(Q).equals(BigInteger.ONE)) {
+            return ProofCheckResult.failure("gcd_hatn_q");
+        }
+
+        BigInteger twoEll = BigInteger.ONE.shiftLeft(ellBits);
+
+        byte[] ctx = (context == null) ? new byte[0] : context;
+        byte[] hashInput = ZkBytes.encode(
+                Ni.toByteArray(),
+                Nj.toByteArray(),
+                s.toByteArray(),
+                t.toByteArray(),
+                P.toByteArray(),
+                Q.toByteArray(),
+                A.toByteArray(),
+                B.toByteArray(),
+                T.toByteArray(),
+                ctx
+        );
+
+        BigInteger eRaw = new BigInteger(1, ZkHash.sha256(hashInput)).mod(twoEll);
+        BigInteger e = toSigned(eRaw, twoEll);
+
+        BigInteger lhs1 = multiexpSigned(Nj, s, z1, t, w1);
+        BigInteger rhs1 = A.multiply(BigIntegerUtils.powSigned(P, e, Nj)).mod(Nj);
+        if (!lhs1.equals(rhs1)) {
+            return ProofCheckResult.failure("lhs1_rhs1_mismatch");
+        }
+
+        BigInteger lhs2 = multiexpSigned(Nj, s, z2, t, w2);
+        BigInteger rhs2 = B.multiply(BigIntegerUtils.powSigned(Q, e, Nj)).mod(Nj);
+        if (!lhs2.equals(rhs2)) {
+            return ProofCheckResult.failure("lhs2_rhs2_mismatch");
+        }
+
+        BigInteger lhs3 = BigIntegerUtils.powSigned(Q, z1, Nj).multiply(BigIntegerUtils.powSigned(t, v, Nj)).mod(Nj);
+        BigInteger rhs3 = T.multiply(BigIntegerUtils.powSigned(s, Ni.multiply(e), Nj)).mod(Nj);
+        if (!lhs3.equals(rhs3)) {
+            return ProofCheckResult.failure("lhs3_rhs3_mismatch");
+        }
+
+        return ProofCheckResult.success();
+    }
+
+    public record ProofCheckResult(boolean ok, String reason) {
+        public static ProofCheckResult success() {
+            return new ProofCheckResult(true, "ok");
+        }
+
+        public static ProofCheckResult failure(String reason) {
+            return new ProofCheckResult(false, reason);
+        }
     }
 
     private static boolean inRange(BigInteger z, BigInteger Ni, int ellBits, int epsBits) {

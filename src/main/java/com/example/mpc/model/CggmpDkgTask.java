@@ -22,14 +22,20 @@ public class CggmpDkgTask {
     public static final long DEFAULT_TIMEOUT_MS = Constants.DKG_TASK_TIMEOUT_MS;
 
     public final String taskId;
+    public final String executionId;
     public final int nodesCount;
     public final int threshold;
     public final Set<Integer> participants;
     public final int initiatorId;
+    public final boolean nonThreshold;
+    public final java.util.Map<Integer, BigInteger> indexMap;
 
     public final AtomicReference<TaskStatus> status = new AtomicReference<>(TaskStatus.PENDING);
     public volatile String errorMessage;
     public volatile long startedAtMs = 0L;
+    public volatile String lastComplaintReason;
+    public volatile Integer lastComplaintOffenderId;
+    public volatile java.util.Map<String, Object> lastComplaintEvidence;
 
     public final ConcurrentHashMap<Integer, CGGMP.DkgRound1Output> round1Outputs = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, CGGMP.DkgRound2Output> round2Outputs = new ConcurrentHashMap<>();
@@ -41,6 +47,8 @@ public class CggmpDkgTask {
     // Figure 7 (Aux Info / Key Refresh) state
     public final ConcurrentHashMap<Integer, byte[]> ridParts = new ConcurrentHashMap<>();
     public volatile byte[] rid;
+    public final ConcurrentHashMap<Integer, byte[]> chainCodeParts = new ConcurrentHashMap<>();
+    public volatile byte[] chainCode;
     public final ConcurrentHashMap<Integer, BigInteger> hatN = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, BigInteger> sValues = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, BigInteger> tValues = new ConcurrentHashMap<>();
@@ -79,13 +87,17 @@ public class CggmpDkgTask {
     public final ConcurrentHashMap<Integer, Boolean> round1Processing = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, String> pendingRound1Echo = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> round2Received = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, Boolean> round2OpenReceived = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> round3Received = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, com.example.mpc.cggmp.proof.PiSchProof> round3SchProofs = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, com.example.mpc.cggmp.proof.PiSchProof> pendingRound3Proofs = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> round2Processing = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> modFacVerified = new ConcurrentHashMap<>();
 
     public final CountDownLatch round1ReceivedLatch;
     public final CountDownLatch round1EchoReceivedLatch;
     public final CountDownLatch round2ReceivedLatch;
+    public final CountDownLatch round2OpenReceivedLatch;
     public final CountDownLatch round3ReceivedLatch;
 
     public CGGMP cggmpInstance;
@@ -96,22 +108,26 @@ public class CggmpDkgTask {
     public volatile BigInteger[] evalPowers;
     public final ConcurrentHashMap<Integer, String> round1PayloadHashes = new ConcurrentHashMap<>();
 
-    public CggmpDkgTask(String taskId, int nodesCount, int threshold) {
-        this(taskId, nodesCount, threshold, null, 0);
+    public CggmpDkgTask(String taskId, String executionId, int nodesCount, int threshold) {
+        this(taskId, executionId, nodesCount, threshold, null, 0);
     }
 
-    public CggmpDkgTask(String taskId, int nodesCount, int threshold, Set<Integer> participantsOverride, int initiatorId) {
+    public CggmpDkgTask(String taskId, String executionId, int nodesCount, int threshold, Set<Integer> participantsOverride, int initiatorId) {
         this.taskId = taskId;
+        this.executionId = executionId;
         this.nodesCount = nodesCount;
         this.threshold = threshold;
         this.initiatorId = initiatorId;
         this.participants = participantsOverride != null && !participantsOverride.isEmpty()
                 ? java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(participantsOverride))
                 : defaultParticipants(nodesCount);
+        this.nonThreshold = this.threshold == this.participants.size();
+        this.indexMap = buildIndexMap(this.participants);
         int waitCount = Math.max(0, this.participants.size() - 1);
         this.round1ReceivedLatch = new CountDownLatch(waitCount);
         this.round1EchoReceivedLatch = new CountDownLatch(waitCount);
         this.round2ReceivedLatch = new CountDownLatch(waitCount);
+        this.round2OpenReceivedLatch = new CountDownLatch(waitCount);
         this.round3ReceivedLatch = new CountDownLatch(waitCount);
     }
 
@@ -121,6 +137,18 @@ public class CggmpDkgTask {
             result.add(i);
         }
         return java.util.Collections.unmodifiableSet(result);
+    }
+
+    private static java.util.Map<Integer, BigInteger> buildIndexMap(Set<Integer> participants) {
+        java.util.List<Integer> ids = new java.util.ArrayList<>(participants);
+        java.util.Collections.sort(ids);
+        java.util.LinkedHashMap<Integer, BigInteger> map = new java.util.LinkedHashMap<>();
+        int idx = 1;
+        for (int id : ids) {
+            map.put(id, BigInteger.valueOf(idx));
+            idx++;
+        }
+        return java.util.Collections.unmodifiableMap(map);
     }
 
     public boolean start() {

@@ -3,6 +3,8 @@ package com.example.mpc.controller;
 import com.example.mpc.common.response.ApiResponse;
 import com.example.mpc.common.response.DkgTaskStartResponse;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
+import com.example.mpc.common.response.AuxTaskStartResponse;
+import com.example.mpc.common.response.AuxTaskStatusResponse;
 import com.example.mpc.common.response.RefreshTaskStartResponse;
 import com.example.mpc.common.response.RefreshTaskStatusResponse;
 import com.example.mpc.common.response.SignatureTaskStartResponse;
@@ -52,6 +54,177 @@ public class CggmpController {
                 return ApiResponse.error("Failed to start CGGMP DKG process: " + e.getMessage());
             }
         });
+    }
+
+    /**
+     * CGGMP24 AUX provisioning start
+     */
+    @PostMapping("/aux/start")
+    public CompletableFuture<ApiResponse<AuxTaskStartResponse>> startAux() {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                String taskId = cggmpSignatureService.createAuxTask();
+                cggmpSignatureService.startAuxProcess(taskId)
+                        .exceptionally(ex -> {
+                            logger.error("Async CGGMP AUX process failed for task {}: {}", taskId, ex.getMessage(), ex);
+                            return null;
+                        });
+                AuxTaskStartResponse data = new AuxTaskStartResponse(taskId, "CGGMP AUX process started");
+                return ApiResponse.success(data);
+            } catch (Exception e) {
+                logger.error("Failed to start CGGMP AUX process", e);
+                return ApiResponse.error("Failed to start CGGMP AUX process: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * CGGMP24 AUX status
+     */
+    @GetMapping("/aux/status")
+    public CompletableFuture<ApiResponse<AuxTaskStatusResponse>> getAuxStatus(@RequestParam(required = true) String taskId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                if (taskId == null || taskId.isEmpty()) {
+                    return ApiResponse.badRequest("taskId cannot be null or empty");
+                }
+                AuxTaskStatusResponse status = cggmpSignatureService.getAuxTaskStatus(taskId);
+                return ApiResponse.success(status);
+            } catch (Exception e) {
+                logger.error("Failed to get aux task status", e);
+                return ApiResponse.error("Failed to get aux task status: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * 查询最近的 complaint 记录（可选按 taskId 过滤）
+     */
+    @GetMapping("/complaints")
+    public CompletableFuture<ApiResponse<java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord>>> getComplaints(
+            @RequestParam(required = false) String taskId,
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) String reasonLike,
+            @RequestParam(required = false) Integer senderId,
+            @RequestParam(required = false) Integer offenderId,
+            @RequestParam(required = false) Long fromTs,
+            @RequestParam(required = false) Long toTs,
+            @RequestParam(required = false, defaultValue = "50") int limit,
+            @RequestParam(required = false, defaultValue = "0") int offset) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> records =
+                        cggmpSignatureService.getComplaints(taskId, reason, reasonLike, senderId, offenderId, fromTs, toTs, limit, offset);
+                return ApiResponse.success(records);
+            } catch (Exception e) {
+                logger.error("Failed to get complaints", e);
+                return ApiResponse.error("Failed to get complaints: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * 导出 complaints 为 JSONL
+     */
+    @GetMapping(value = "/complaints/export", produces = "application/x-ndjson")
+    public CompletableFuture<String> exportComplaintsJsonl(
+            @RequestParam(required = false) String taskId,
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) String reasonLike,
+            @RequestParam(required = false) Integer senderId,
+            @RequestParam(required = false) Integer offenderId,
+            @RequestParam(required = false) Long fromTs,
+            @RequestParam(required = false) Long toTs,
+            @RequestParam(required = false, defaultValue = "500") int limit,
+            @RequestParam(required = false, defaultValue = "0") int offset) {
+        return CompletableFuture.supplyAsync(() -> {
+            java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> records =
+                    cggmpSignatureService.getComplaints(taskId, reason, reasonLike, senderId, offenderId, fromTs, toTs, limit, offset);
+            StringBuilder sb = new StringBuilder();
+            for (com.example.mpc.dao.ComplaintDao.ComplaintRecord r : records) {
+                sb.append("{\"ts\":").append(r.ts())
+                  .append(",\"taskId\":\"").append(escapeJson(r.taskId())).append("\"")
+                  .append(",\"senderId\":").append(r.senderId())
+                  .append(",\"offenderId\":").append(r.offenderId() == null ? "null" : r.offenderId())
+                  .append(",\"reason\":\"").append(escapeJson(r.reason())).append("\"")
+                  .append(",\"evidence\":").append(r.evidence() == null ? "null" : r.evidence())
+                  .append("}\n");
+            }
+            return sb.toString();
+        });
+    }
+
+    /**
+     * 导出 complaints 为 CSV
+     */
+    @GetMapping(value = "/complaints/export.csv", produces = "text/csv")
+    public CompletableFuture<String> exportComplaintsCsv(
+            @RequestParam(required = false) String taskId,
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) String reasonLike,
+            @RequestParam(required = false) Integer senderId,
+            @RequestParam(required = false) Integer offenderId,
+            @RequestParam(required = false) Long fromTs,
+            @RequestParam(required = false) Long toTs,
+            @RequestParam(required = false, defaultValue = "500") int limit,
+            @RequestParam(required = false, defaultValue = "0") int offset) {
+        return CompletableFuture.supplyAsync(() -> {
+            java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> records =
+                    cggmpSignatureService.getComplaints(taskId, reason, reasonLike, senderId, offenderId, fromTs, toTs, limit, offset);
+            StringBuilder sb = new StringBuilder();
+            sb.append("ts,taskId,senderId,offenderId,reason,evidence\n");
+            for (com.example.mpc.dao.ComplaintDao.ComplaintRecord r : records) {
+                sb.append(r.ts()).append(",");
+                sb.append(csvEscape(r.taskId())).append(",");
+                sb.append(r.senderId()).append(",");
+                sb.append(r.offenderId() == null ? "" : r.offenderId()).append(",");
+                sb.append(csvEscape(r.reason())).append(",");
+                sb.append(csvEscape(r.evidence())).append("\n");
+            }
+            return sb.toString();
+        });
+    }
+
+    private static String csvEscape(String value) {
+        if (value == null) {
+            return "";
+        }
+        String v = value.replace("\"", "\"\"");
+        if (v.contains(",") || v.contains("\n") || v.contains("\r")) {
+            return "\"" + v + "\"";
+        }
+        return v;
+    }
+
+    private static String escapeJson(String value) {
+        if (value == null) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder(value.length() + 16);
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '\\':
+                    out.append("\\\\");
+                    break;
+                case '"':
+                    out.append("\\\"");
+                    break;
+                case '\n':
+                    out.append("\\n");
+                    break;
+                case '\r':
+                    out.append("\\r");
+                    break;
+                case '\t':
+                    out.append("\\t");
+                    break;
+                default:
+                    out.append(c);
+                    break;
+            }
+        }
+        return out.toString();
     }
 
     /**

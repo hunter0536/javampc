@@ -35,11 +35,38 @@ public class NodeService {
     @Value("${discovery.port}")
     private int discoveryPort;
 
+    @Value("${nodes.sharedSecret:}")
+    private String sharedSecret;
+
+    @Value("${nodes.ssl.enabled:false}")
+    private boolean sslEnabled;
+
+    @Value("${nodes.ssl.cert:}")
+    private String sslCertPath;
+
+    @Value("${nodes.ssl.key:}")
+    private String sslKeyPath;
+
+    @Value("${nodes.ssl.trustCert:}")
+    private String sslTrustCertPath;
+
     @Value("#{'${discovery.broadcast.ports}'.split(',')}")
     private List<String> discoveryBroadcastPorts;
 
     @Value("#{'${nodes.peers:}'.isEmpty() ? null : '${nodes.peers:}'.split(',')}")
     private List<String> peerNodes;
+
+    @Value("${nodes.reliableBroadcast.enabled:true}")
+    private boolean reliableBroadcastEnabled;
+
+    @Value("${nodes.reliableBroadcast.retryCount:3}")
+    private int reliableBroadcastRetryCount;
+
+    @Value("${nodes.reliableBroadcast.retryIntervalMs:200}")
+    private long reliableBroadcastRetryIntervalMs;
+
+    @Value("${nodes.reliableBroadcast.quorum:0}")
+    private int reliableBroadcastQuorum;
 
     // 使用Constants中的常量
     private final int nodesCount = Constants.NODES_COUNT;
@@ -56,6 +83,21 @@ public class NodeService {
     private final AtomicBoolean discoveryRunning = new AtomicBoolean(false);
     private final ConcurrentHashMap<Integer, java.util.concurrent.CopyOnWriteArrayList<MessageHandler>> messageHandlers = new ConcurrentHashMap<>();
     private ScheduledExecutorService discoveryScheduler;
+    private final ConcurrentHashMap<String, java.util.Set<Integer>> reliablePending = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<Void>> reliableFutures = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RbcState> rbcStates = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, java.util.Set<Integer>> pendingRbcEchoes = new ConcurrentHashMap<>();
+
+    private static final class RbcState {
+        final Message message;
+        final java.util.Set<Integer> echoes = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        final CompletableFuture<Void> delivered = new CompletableFuture<>();
+        volatile boolean deliveredOnce = false;
+
+        RbcState(Message message) {
+            this.message = message;
+        }
+    }
 
     // 节点信息类
     public static class NodeInfo {
@@ -82,11 +124,40 @@ public class NodeService {
         public final int senderId;
         public final MessageType type;
         public final Object data;
+        public final String messageId;
+        public final boolean requireAck;
+        public final String ackForId;
+        public final boolean rbc;
+        public final String rbcHash;
 
         public Message(int senderId, MessageType type, Object data) {
+            this(senderId, type, data, null, false, null, false, null);
+        }
+
+        public Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck, String ackForId) {
+            this(senderId, type, data, messageId, requireAck, ackForId, false, null);
+        }
+
+        public Message(int senderId,
+                       MessageType type,
+                       Object data,
+                       String messageId,
+                       boolean requireAck,
+                       String ackForId,
+                       boolean rbc,
+                       String rbcHash) {
             this.senderId = senderId;
             this.type = type;
             this.data = data;
+            this.messageId = messageId;
+            this.requireAck = requireAck;
+            this.ackForId = ackForId;
+            this.rbc = rbc;
+            this.rbcHash = rbcHash;
+        }
+
+        public static Message ack(int senderId, String ackForId) {
+            return new Message(senderId, MessageType.NET_ACK, null, null, false, ackForId, false, null);
         }
     }
 
@@ -103,7 +174,17 @@ public class NodeService {
 
             try {
                 // 启动Netty服务器
-                nettyService = new NettyService(nodePort, messageHandlers);
+                nettyService = new NettyService(nodeId, nodePort, messageHandlers, sharedSecret,
+                        sslEnabled, sslCertPath, sslKeyPath, sslTrustCertPath, this::handleAck,
+                        (sender, msg) -> {
+                            try {
+                                return handleInboundMessage(sender, msg);
+                            } catch (Exception e) {
+                                CompletableFuture<Void> f = new CompletableFuture<>();
+                                f.completeExceptionally(e);
+                                return f;
+                            }
+                        });
                 nettyService.startServer();
 
                 // 启动节点发现
@@ -118,6 +199,10 @@ public class NodeService {
                 running.set(false);
             }
         });
+    }
+
+    public boolean isTlsEnabled() {
+        return sslEnabled;
     }
 
     /**
@@ -329,7 +414,7 @@ public class NodeService {
      * 广播消息到所有其他节点
      */
     public CompletableFuture<Void> broadcastMessage(Message message) {
-        logger.info("=== broadcastMessage START: type={}, fromNode={}, knownNodes={} ===",
+        logger.debug("=== broadcastMessage START: type={}, fromNode={}, knownNodes={} ===",
                 message.type, nodeId, nodes.keySet());
         // 回退到传统方式，使用并行发送
         List<CompletableFuture<Void>> futures = new ArrayList<>();
@@ -337,16 +422,202 @@ public class NodeService {
         // 并行发送消息到所有节点
         for (NodeInfo nodeInfo : nodes.values()) {
             if (nodeInfo.id != nodeId) {
-                logger.info("=== broadcastMessage: sending {} to node {} ===", message.type, nodeInfo.id);
+                logger.debug("=== broadcastMessage: sending {} to node {} ===", message.type, nodeInfo.id);
                 CompletableFuture<Void> future = sendMessage(nodeInfo.id, message)
                         .exceptionally(ex -> {
-                            logger.error("=== FAILED to broadcast message to node {}: {} ===", nodeInfo.id, ex.getMessage());
+                            logger.warn("=== FAILED to broadcast message to node {}: {} ===", nodeInfo.id, ex.getMessage());
                             return null;
                         });
                 futures.add(future);
             }
         }
 
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+    }
+
+    /**
+     * Reliable broadcast with retries for each peer.
+     * Intended for CGGMP24 round-1 commits where reliability is required.
+     */
+    public CompletableFuture<Void> broadcastReliable(Message message) {
+        if (!reliableBroadcastEnabled) {
+            return broadcastMessage(message);
+        }
+        return ThreadPoolUtil.submitToIoThreadPool(() -> {
+            String msgId = message.messageId != null ? message.messageId : java.util.UUID.randomUUID().toString();
+            Message reliable = message.requireAck ? message
+                    : new Message(message.senderId, message.type, message.data, msgId, true, null);
+            java.util.Set<Integer> pending = java.util.concurrent.ConcurrentHashMap.newKeySet();
+            pending.addAll(nodes.keySet());
+            pending.remove(nodeId);
+            if (pending.isEmpty()) {
+                return;
+            }
+            CompletableFuture<Void> ackFuture = new CompletableFuture<>();
+            reliablePending.put(msgId, pending);
+            reliableFutures.put(msgId, ackFuture);
+            int attempts = Math.max(1, reliableBroadcastRetryCount);
+            for (int attempt = 1; attempt <= attempts; attempt++) {
+                if (pending.isEmpty()) {
+                    break;
+                }
+                List<CompletableFuture<Integer>> futures = new ArrayList<>();
+                for (int peerId : pending) {
+                    futures.add(sendMessage(peerId, reliable)
+                            .thenApply(v -> peerId)
+                            .exceptionally(ex -> null));
+                }
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                if (!pending.isEmpty() && attempt < attempts) {
+                    try {
+                        Thread.sleep(reliableBroadcastRetryIntervalMs);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+            if (!pending.isEmpty()) {
+                logger.warn("Reliable broadcast failed for {} peers: {}", message.type, pending);
+                ackFuture.completeExceptionally(new RuntimeException("Reliable broadcast failed for peers " + pending));
+            } else {
+                ackFuture.complete(null);
+            }
+            reliablePending.remove(msgId);
+            reliableFutures.remove(msgId);
+            ackFuture.join();
+        });
+    }
+
+    public CompletableFuture<Void> broadcastRbc(Message message) {
+        if (!reliableBroadcastEnabled) {
+            return broadcastMessage(message);
+        }
+        String msgId = message.messageId != null ? message.messageId : java.util.UUID.randomUUID().toString();
+        String hash = message.rbcHash != null ? message.rbcHash : computeRbcHash(message);
+        Message rbc = new Message(message.senderId, message.type, message.data, msgId, true, null, true, hash);
+        RbcState state = new RbcState(rbc);
+        rbcStates.putIfAbsent(msgId, state);
+        state.echoes.add(nodeId);
+        broadcastRbcEcho(rbc).join();
+        return broadcastReliable(rbc).thenCompose(v -> state.delivered);
+    }
+
+    private CompletableFuture<Void> broadcastRbcEcho(Message original) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("messageId", original.messageId);
+        data.put("hash", original.rbcHash);
+        data.put("origSenderId", original.senderId);
+        data.put("type", original.type.name());
+        Message echo = new Message(nodeId, MessageType.NET_RBC_ECHO, data, null, false, null, false, null);
+        return broadcastMessage(echo);
+    }
+
+    private String computeRbcHash(Message message) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            md.update(com.example.mpc.service.netty.MessageSigner.canonicalPayload(message).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return com.example.mpc.common.util.HexUtils.bytesToHex(md.digest());
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to compute RBC hash", e);
+        }
+    }
+
+    void handleAck(int senderId, String ackForId) {
+        if (ackForId == null) {
+            return;
+        }
+        java.util.Set<Integer> pending = reliablePending.get(ackForId);
+        if (pending == null) {
+            return;
+        }
+        pending.remove(senderId);
+        if (pending.isEmpty()) {
+            CompletableFuture<Void> future = reliableFutures.get(ackForId);
+            if (future != null && !future.isDone()) {
+                future.complete(null);
+            }
+        }
+    }
+
+    void handleRbcEcho(int senderId, Map<?, ?> dataMap) {
+        Object msgIdObj = dataMap.get("messageId");
+        Object hashObj = dataMap.get("hash");
+        Object origSenderObj = dataMap.get("origSenderId");
+        Object typeObj = dataMap.get("type");
+        if (msgIdObj == null || hashObj == null || origSenderObj == null || typeObj == null) {
+            return;
+        }
+        String messageId = String.valueOf(msgIdObj);
+        RbcState state = rbcStates.get(messageId);
+        if (state == null) {
+            pendingRbcEchoes.computeIfAbsent(messageId, k -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(senderId);
+            return;
+        }
+        state.echoes.add(senderId);
+        int f = Math.max(0, (nodesCount - 1) / 3);
+        int quorum = reliableBroadcastQuorum > 0 ? reliableBroadcastQuorum : (2 * f + 1);
+        if (!state.deliveredOnce && state.echoes.size() >= quorum) {
+            state.deliveredOnce = true;
+            state.delivered.complete(null);
+        }
+    }
+
+    CompletableFuture<Void> handleInboundMessage(int senderId, Message message) throws Exception {
+        if (message.type == MessageType.NET_ACK) {
+            handleAck(senderId, message.ackForId);
+            return CompletableFuture.completedFuture(null);
+        }
+        if (message.type == MessageType.NET_RBC_ECHO) {
+            if (message.data instanceof Map<?, ?> map) {
+                handleRbcEcho(senderId, map);
+            }
+            return CompletableFuture.completedFuture(null);
+        }
+        if (message.requireAck && message.messageId != null && nettyService != null) {
+            nettyService.sendAck(senderId, message.messageId);
+        }
+        if (message.rbc) {
+            String expected = message.rbcHash != null ? message.rbcHash : computeRbcHash(message);
+            if (message.rbcHash != null && !message.rbcHash.equals(expected)) {
+                return CompletableFuture.completedFuture(null);
+            }
+            RbcState state = rbcStates.computeIfAbsent(message.messageId, id -> new RbcState(message));
+            if (state != null) {
+                state.echoes.add(nodeId);
+            }
+            java.util.Set<Integer> pending = pendingRbcEchoes.remove(message.messageId);
+            if (pending != null && state != null) {
+                state.echoes.addAll(pending);
+            }
+            broadcastRbcEcho(message);
+            return state == null ? CompletableFuture.completedFuture(null) : state.delivered.thenCompose(v -> dispatchToHandlers(senderId, message));
+        }
+        return dispatchToHandlers(senderId, message);
+    }
+
+    private CompletableFuture<Void> dispatchToHandlers(int senderId, Message message) {
+        var combinedHandlers = new java.util.LinkedHashSet<MessageHandler>();
+        var senderHandlers = messageHandlers.get(message.senderId);
+        if (senderHandlers != null) {
+            combinedHandlers.addAll(senderHandlers);
+        }
+        var globalHandlers = messageHandlers.get(-1);
+        if (globalHandlers != null) {
+            combinedHandlers.addAll(globalHandlers);
+        }
+        if (combinedHandlers.isEmpty()) {
+            logger.warn("No handlers registered for message from node {} (keys={})", message.senderId, messageHandlers.keySet());
+            return CompletableFuture.completedFuture(null);
+        }
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (MessageHandler handler : combinedHandlers) {
+            try {
+                futures.add(handler.handleMessage(senderId, message));
+            } catch (Exception e) {
+                logger.error("Error handling message: {}", e.getMessage());
+            }
+        }
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
     }
 
@@ -407,11 +678,40 @@ public class NodeService {
     public CompletableFuture<Void> waitForNetworkReady() {
         return ThreadPoolUtil.submitIoTask(() -> {
             try {
-                while (nodes.size() < nodesCount - 1) {
-                    logger.info("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
-                    Thread.sleep(1000);
+                while (true) {
+                    if (nodes.size() < nodesCount - 1) {
+                        logger.info("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
+                        Thread.sleep(1000);
+                        continue;
+                    }
+
+                    boolean allConnected = true;
+                    if (nettyService != null) {
+                        for (NodeInfo nodeInfo : nodes.values()) {
+                            if (nodeInfo.id == nodeId) {
+                                continue;
+                            }
+                            var channel = nettyService.getNodeChannel(nodeInfo.id);
+                            if (channel == null || !channel.isActive()) {
+                                allConnected = false;
+                                try {
+                                    nettyService.connectToNode(nodeInfo.id, nodeInfo.host, nodeInfo.port).join();
+                                } catch (Exception e) {
+                                    logger.debug("Waiting for peer connection to node {}: {}", nodeInfo.id, e.getMessage());
+                                }
+                            }
+                        }
+                    }
+
+                    if (!allConnected) {
+                        logger.info("Waiting for all peer connections to be active...");
+                        Thread.sleep(1000);
+                        continue;
+                    }
+
+                    logger.info("Network ready with {} nodes", nodes.size() + 1);
+                    break;
                 }
-                logger.info("Network ready with {} nodes", nodes.size() + 1);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new RuntimeException(e);

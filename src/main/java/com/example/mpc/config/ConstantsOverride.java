@@ -30,6 +30,8 @@ public class ConstantsOverride {
 
     @Value("${mpc.dkg.initWaitMs:2000}")
     private long dkgInitWaitMs;
+    @Value("${mpc.aux.statusWaitMs:5000}")
+    private long auxStatusWaitMs;
 
     @PostConstruct
     public void apply() {
@@ -41,5 +43,6 @@ public class ConstantsOverride {
         Constants.DKG_BROADCAST_RETRY_COUNT = dkgBroadcastRetryCount;
         Constants.DKG_BROADCAST_RETRY_INTERVAL_MS = dkgBroadcastRetryIntervalMs;
         Constants.DKG_INIT_WAIT_MS = dkgInitWaitMs;
+        Constants.AUX_STATUS_WAIT_MS = auxStatusWaitMs;
     }
 }

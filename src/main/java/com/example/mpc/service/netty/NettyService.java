@@ -11,9 +11,14 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.serialization.ClassResolvers;
 import io.netty.handler.codec.serialization.ObjectDecoder;
 import io.netty.handler.codec.serialization.ObjectEncoder;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.buffer.PooledByteBufAllocator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.net.ssl.SSLException;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,27 +28,56 @@ import java.util.concurrent.ConcurrentHashMap;
 public class NettyService {
     private static final Logger logger = LoggerFactory.getLogger(NettyService.class);
 
+    private final int nodeId;
     private final int port;
     private final Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers;
+    private final java.util.function.BiConsumer<Integer, String> ackHandler;
+    private final java.util.function.BiFunction<Integer, NodeService.Message, CompletableFuture<Void>> inboundHandler;
+    private final String sharedSecret;
     private final Map<Integer, Channel> nodeChannels = new ConcurrentHashMap<>();
+    private final boolean sslEnabled;
+    private final String certPath;
+    private final String keyPath;
+    private final String trustCertPath;
 
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private EventLoopGroup clientGroup; // 共享的客户端连接线程池
     private Channel serverChannel;
+    private volatile SslContext serverSslContext;
+    private volatile SslContext clientSslContext;
 
-    public NettyService(int port, Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers) {
+    public NettyService(int nodeId,
+                        int port,
+                        Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers,
+                        String sharedSecret,
+                        boolean sslEnabled,
+                        String certPath,
+                        String keyPath,
+                        String trustCertPath,
+                        java.util.function.BiConsumer<Integer, String> ackHandler,
+                        java.util.function.BiFunction<Integer, NodeService.Message, CompletableFuture<Void>> inboundHandler) {
+        this.nodeId = nodeId;
         this.port = port;
         this.messageHandlers = messageHandlers;
-        this.clientGroup = new NioEventLoopGroup();
+        this.sharedSecret = sharedSecret;
+        this.sslEnabled = sslEnabled;
+        this.certPath = certPath;
+        this.keyPath = keyPath;
+        this.trustCertPath = trustCertPath;
+        this.ackHandler = ackHandler;
+        this.inboundHandler = inboundHandler;
+        int cpuCores = Runtime.getRuntime().availableProcessors();
+        this.clientGroup = new NioEventLoopGroup(cpuCores * 2);
     }
 
     /**
      * 启动Netty服务器
      */
     public void startServer() throws InterruptedException {
+        int cpuCores = Runtime.getRuntime().availableProcessors();
         bossGroup = new NioEventLoopGroup(1);
-        workerGroup = new NioEventLoopGroup();
+        workerGroup = new NioEventLoopGroup(cpuCores * 2);
 
         try {
             ServerBootstrap b = new ServerBootstrap();
@@ -53,13 +87,21 @@ public class NettyService {
                         @Override
                         public void initChannel(SocketChannel ch) throws Exception {
                             ChannelPipeline pipeline = ch.pipeline();
+                            if (sslEnabled) {
+                                pipeline.addLast(serverSslContext().newHandler(ch.alloc()));
+                            }
                             pipeline.addLast(new ObjectEncoder());
                             pipeline.addLast(new ObjectDecoder(Integer.MAX_VALUE, ClassResolvers.cacheDisabled(null)));
-                            pipeline.addLast(new ServerHandler(NettyService.this, messageHandlers));
+                            pipeline.addLast(new ServerHandler(NettyService.this, messageHandlers, sharedSecret, sslEnabled));
                         }
                     })
                     .option(ChannelOption.SO_BACKLOG, 128)
-                    .childOption(ChannelOption.SO_KEEPALIVE, true);
+                    .childOption(ChannelOption.TCP_NODELAY, true)
+                    .childOption(ChannelOption.SO_KEEPALIVE, true)
+                    .childOption(ChannelOption.SO_RCVBUF, 1048576)
+                    .childOption(ChannelOption.SO_SNDBUF, 1048576)
+                    .childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT)
+                    .childOption(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(256 * 1024, 1024 * 1024));
 
             // 绑定端口并启动服务器
             ChannelFuture f = b.bind(port).sync();
@@ -84,11 +126,18 @@ public class NettyService {
             Bootstrap b = new Bootstrap();
             b.group(clientGroup)
                     .channel(NioSocketChannel.class)
+                    .option(ChannelOption.TCP_NODELAY, true)
                     .option(ChannelOption.SO_KEEPALIVE, true)
+                    .option(ChannelOption.SO_RCVBUF, 1048576)
+                    .option(ChannelOption.SO_SNDBUF, 1048576)
+                    .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10000)
                     .handler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         public void initChannel(SocketChannel ch) throws Exception {
                             ChannelPipeline pipeline = ch.pipeline();
+                            if (sslEnabled) {
+                                pipeline.addLast(clientSslContext().newHandler(ch.alloc(), host, port));
+                            }
                             pipeline.addLast(new ObjectEncoder());
                             pipeline.addLast(new ObjectDecoder(Integer.MAX_VALUE, ClassResolvers.cacheDisabled(null)));
                             pipeline.addLast(new ClientHandler(nodeId, NettyService.this));
@@ -126,7 +175,8 @@ public class NettyService {
         Channel channel = nodeChannels.get(nodeId);
         logger.info("sendMessage: to node {} type {} channelActive={}", nodeId, message.type, channel != null && channel.isActive());
         if (channel != null && channel.isActive()) {
-            channel.writeAndFlush(message).addListener((ChannelFutureListener) future1 -> {
+            Object payload = wrapSigned(message);
+            channel.writeAndFlush(payload).addListener((ChannelFutureListener) future1 -> {
                 if (future1.isSuccess()) {
                     future.complete(null);
                 } else {
@@ -139,6 +189,36 @@ public class NettyService {
         }
 
         return future;
+    }
+
+    public void sendAck(int receiverId, String ackForId) {
+        if (ackForId == null) {
+            return;
+        }
+        sendMessage(receiverId, NodeService.Message.ack(nodeId, ackForId))
+                .exceptionally(ex -> {
+                    logger.warn("Failed to send ACK to node {}: {}", receiverId, ex.getMessage());
+                    return null;
+                });
+    }
+
+    public void handleAck(int senderId, String ackForId) {
+        if (ackHandler != null) {
+            ackHandler.accept(senderId, ackForId);
+        }
+    }
+
+    public CompletableFuture<Void> handleInbound(int senderId, NodeService.Message message) {
+        if (inboundHandler == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        try {
+            return inboundHandler.apply(senderId, message);
+        } catch (Exception e) {
+            CompletableFuture<Void> f = new CompletableFuture<>();
+            f.completeExceptionally(e);
+            return f;
+        }
     }
 
     /**
@@ -158,7 +238,8 @@ public class NettyService {
 
                 if (channel != null && channel.isActive()) {
                     CompletableFuture<Void> nodeFuture = new CompletableFuture<>();
-                    channel.writeAndFlush(message).addListener((ChannelFutureListener) future1 -> {
+                    Object payload = wrapSigned(message);
+                    channel.writeAndFlush(payload).addListener((ChannelFutureListener) future1 -> {
                         if (future1.isSuccess()) {
                             nodeFuture.complete(null);
                         } else {
@@ -215,5 +296,44 @@ public class NettyService {
      */
     public void removeNodeChannel(int nodeId) {
         nodeChannels.remove(nodeId);
+    }
+
+    private Object wrapSigned(NodeService.Message message) {
+        if (sslEnabled || sharedSecret == null || sharedSecret.isBlank()) {
+            return message;
+        }
+        String payload = MessageSigner.canonicalPayload(message);
+        String sig = MessageSigner.sign(payload, sharedSecret);
+        return new SignedMessage(message, sig, System.currentTimeMillis());
+    }
+
+    private SslContext serverSslContext() throws SSLException {
+        if (serverSslContext != null) {
+            return serverSslContext;
+        }
+        synchronized (this) {
+            if (serverSslContext != null) {
+                return serverSslContext;
+            }
+            serverSslContext = SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
+            return serverSslContext;
+        }
+    }
+
+    private SslContext clientSslContext() throws SSLException {
+        if (clientSslContext != null) {
+            return clientSslContext;
+        }
+        synchronized (this) {
+            if (clientSslContext != null) {
+                return clientSslContext;
+            }
+            SslContextBuilder builder = SslContextBuilder.forClient();
+            if (trustCertPath != null && !trustCertPath.isBlank()) {
+                builder.trustManager(new File(trustCertPath));
+            }
+            clientSslContext = builder.build();
+            return clientSslContext;
+        }
     }
 }

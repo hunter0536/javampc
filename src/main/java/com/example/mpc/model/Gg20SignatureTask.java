@@ -24,6 +24,8 @@ public class Gg20SignatureTask {
 
     public byte[] messageHash;
     public ECPoint groupPublicKeyPoint;
+    public java.util.Map<Integer, ECPoint> publicShares;
+    public java.util.Map<Integer, java.math.BigInteger> indexMap;
     public PaillierEncryption paillier;
     public ZKSetup zkSetup;
     public final ConcurrentHashMap<Integer, PaillierEncryption.PublicKey> peerPaillierKeys = new ConcurrentHashMap<>();
@@ -43,6 +45,7 @@ public class Gg20SignatureTask {
     public final ConcurrentHashMap<Integer, ECPoint> presignB1 = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> presignB2 = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> presignR1Received = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, Boolean> presignR1EchoReceived = new ConcurrentHashMap<>();
     public BigInteger presignYScalar;
     public BigInteger presignAScalar;
     public BigInteger presignBScalar;
@@ -87,6 +90,7 @@ public class Gg20SignatureTask {
 
     public final CountDownLatch gammaCommitLatch;
     public final CountDownLatch gammaLatch;
+    public final CountDownLatch presignR1EchoLatch;
     public final CountDownLatch presignR2Latch;
     public final CountDownLatch kaInitLatch;
     public final CountDownLatch kaResponseLatch;
@@ -125,6 +129,7 @@ public class Gg20SignatureTask {
         int waitCount = Math.max(0, this.participants.size() - 1);
         this.gammaCommitLatch = new CountDownLatch(waitCount);
         this.gammaLatch = new CountDownLatch(waitCount);
+        this.presignR1EchoLatch = new CountDownLatch(waitCount);
         this.presignR2Latch = new CountDownLatch(waitCount);
         this.kaInitLatch = new CountDownLatch(waitCount);
         this.kaResponseLatch = new CountDownLatch(waitCount);

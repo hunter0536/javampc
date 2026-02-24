@@ -494,16 +494,51 @@ public class DatabaseService {
                         share_index INTEGER NOT NULL,
                         key_share TEXT NOT NULL,
                         group_public_key TEXT NOT NULL,
-                        dkg_task_id TEXT NOT NULL
+                        dkg_task_id TEXT NOT NULL,
+                        public_shares TEXT,
+                        index_map TEXT,
+                        chain_code TEXT
+                    )
+                    """;
+            String createAuxTableSql = """
+                    CREATE TABLE IF NOT EXISTS aux_info (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        node_id INTEGER NOT NULL,
+                        task_id TEXT NOT NULL,
+                        paillier_p TEXT NOT NULL,
+                        paillier_q TEXT NOT NULL,
+                        paillier_n TEXT NOT NULL,
+                        paillier_g TEXT NOT NULL,
+                        paillier_bit_length INTEGER NOT NULL,
+                        pedersen_hat_n TEXT NOT NULL,
+                        pedersen_s TEXT NOT NULL,
+                        pedersen_t TEXT NOT NULL
+                    )
+                    """;
+            String createComplaintsSql = """
+                    CREATE TABLE IF NOT EXISTS complaints (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts INTEGER NOT NULL,
+                        task_id TEXT NOT NULL,
+                        sender_id INTEGER NOT NULL,
+                        offender_id INTEGER,
+                        reason TEXT NOT NULL,
+                        evidence TEXT
                     )
                     """;
 
             try (Statement stmt = conn.createStatement()) {
                 stmt.execute(createTableSql);
+                stmt.execute(createAuxTableSql);
+                stmt.execute(createComplaintsSql);
                 statementCount.incrementAndGet();
                 ensureKeyShareColumn(stmt, "group_public_key", "TEXT");
                 ensureKeyShareColumn(stmt, "dkg_task_id", "TEXT");
+                ensureKeyShareColumn(stmt, "public_shares", "TEXT");
+                ensureKeyShareColumn(stmt, "index_map", "TEXT");
+                ensureKeyShareColumn(stmt, "chain_code", "TEXT");
                 ensureKeyShareIndex(stmt);
+                ensureComplaintIndexes(stmt);
             }
             initFlag.set(true);
         } catch (InterruptedException e) {
@@ -520,6 +555,19 @@ public class DatabaseService {
     private void ensureKeyShareIndex(Statement stmt) {
         try {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_key_shares_group_public_key ON key_shares(group_public_key, id DESC)");
+            statementCount.incrementAndGet();
+        } catch (SQLException e) {
+            // Ignore index creation errors to avoid breaking startup on existing DBs.
+        }
+    }
+
+    private void ensureComplaintIndexes(Statement stmt) {
+        try {
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_task_id ON complaints(task_id, id DESC)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_ts ON complaints(ts DESC)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_sender_id ON complaints(sender_id, id DESC)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_offender_id ON complaints(offender_id, id DESC)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_reason ON complaints(reason, id DESC)");
             statementCount.incrementAndGet();
         } catch (SQLException e) {
             // Ignore index creation errors to avoid breaking startup on existing DBs.

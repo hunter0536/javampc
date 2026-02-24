@@ -42,11 +42,11 @@ public class PaillierEncryption {
         SecureRandom random = new SecureRandom();
         int half = keySize / 2;
 
-        p = generateBlumPrime(half, random);
-        q = generateBlumPrime(half, random);
+        p = generateSafePrime(half, random);
+        q = generateSafePrime(half, random);
 
         while (p.equals(q)) {
-            q = generateBlumPrime(half, random);
+            q = generateSafePrime(half, random);
         }
 
         initializeFromPQ();
@@ -215,11 +215,14 @@ public class PaillierEncryption {
         return a.multiply(b).divide(a.gcd(b));
     }
 
-    private static BigInteger generateBlumPrime(int bits, SecureRandom rnd) {
+    private static BigInteger generateSafePrime(int bits, SecureRandom rnd) {
         BigInteger p;
-        do {
-            p = BigInteger.probablePrime(bits, rnd);
-        } while (!p.testBit(0) || !p.mod(BigInteger.valueOf(4)).equals(BigInteger.valueOf(3)));
-        return p;
+        while (true) {
+            BigInteger q = BigInteger.probablePrime(bits - 1, rnd);
+            p = q.shiftLeft(1).add(BigInteger.ONE);
+            if (p.isProbablePrime(128)) {
+                return p;
+            }
+        }
     }
 }

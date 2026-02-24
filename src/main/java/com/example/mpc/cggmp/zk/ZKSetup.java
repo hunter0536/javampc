@@ -8,10 +8,10 @@ import java.security.SecureRandom;
 public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
     public static ZKSetup generate(int bitLength) {
         SecureRandom rnd = new SecureRandom();
-        BigInteger p = generateBlumPrime(bitLength / 2, rnd);
-        BigInteger q = generateBlumPrime(bitLength / 2, rnd);
+        BigInteger p = generateSafePrime(bitLength / 2, rnd);
+        BigInteger q = generateSafePrime(bitLength / 2, rnd);
         while (p.equals(q)) {
-            q = generateBlumPrime(bitLength / 2, rnd);
+            q = generateSafePrime(bitLength / 2, rnd);
         }
         BigInteger hatN = p.multiply(q);
 
@@ -35,11 +35,14 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
         return u;
     }
 
-    private static BigInteger generateBlumPrime(int bits, SecureRandom rnd) {
+    private static BigInteger generateSafePrime(int bits, SecureRandom rnd) {
         BigInteger p;
-        do {
-            p = BigInteger.probablePrime(bits, rnd);
-        } while (!p.testBit(0) || !p.mod(BigInteger.valueOf(4)).equals(BigInteger.valueOf(3)));
-        return p;
+        while (true) {
+            BigInteger q = BigInteger.probablePrime(bits - 1, rnd);
+            p = q.shiftLeft(1).add(BigInteger.ONE);
+            if (p.isProbablePrime(128)) {
+                return p;
+            }
+        }
     }
 }

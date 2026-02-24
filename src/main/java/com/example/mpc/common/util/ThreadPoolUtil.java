@@ -34,6 +34,11 @@ public class ThreadPoolUtil {
 
     private static final ExecutorService ioThreadPool = Executors.newCachedThreadPool();
 
+    private static final ExecutorService auxThreadPool = Executors.newFixedThreadPool(
+            Math.max(2, CORE_POOL_SIZE / 2),
+            THREAD_FACTORY
+    );
+
     private static final ExecutorService singleThreadPool = Executors.newSingleThreadExecutor();
 
     public static ExecutorService getComputationThreadPool() {
@@ -46,6 +51,10 @@ public class ThreadPoolUtil {
 
     public static ExecutorService getSingleThreadPool() {
         return singleThreadPool;
+    }
+
+    public static ExecutorService getAuxThreadPool() {
+        return auxThreadPool;
     }
 
     public static CompletableFuture<Void> submitToComputationThreadPool(Runnable task) {
@@ -63,6 +72,7 @@ public class ThreadPoolUtil {
     public static void shutdown() {
         computationThreadPool.shutdown();
         ioThreadPool.shutdown();
+        auxThreadPool.shutdown();
         singleThreadPool.shutdown();
     }
 }

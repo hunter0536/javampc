@@ -17,9 +17,9 @@ import java.util.concurrent.CompletableFuture;
 public class KeyShareDao {
     private static final Logger logger = LoggerFactory.getLogger(KeyShareDao.class);
 
-    private static final String INSERT_SQL = "INSERT INTO key_shares (share_index, key_share, group_public_key, dkg_task_id) VALUES (?, ?, ?, ?)";
+    private static final String INSERT_SQL = "INSERT INTO key_shares (share_index, key_share, group_public_key, dkg_task_id, public_shares, index_map, chain_code) VALUES (?, ?, ?, ?, ?, ?, ?)";
     private static final String SELECT_LAST_ID_SQL = "SELECT last_insert_rowid()";
-    private static final String SELECT_BY_GROUP_KEY_SQL = "SELECT id, share_index, key_share, group_public_key, dkg_task_id FROM key_shares WHERE group_public_key = ? ORDER BY id DESC LIMIT 1";
+    private static final String SELECT_BY_GROUP_KEY_SQL = "SELECT id, share_index, key_share, group_public_key, dkg_task_id, public_shares, index_map, chain_code FROM key_shares WHERE group_public_key = ? ORDER BY id DESC LIMIT 1";
 
     @Autowired
     private DatabaseService databaseService;
@@ -37,7 +37,10 @@ public class KeyShareDao {
             insertStmt.setInt(index++, keyShare.getShareIndex());
             insertStmt.setString(index++, keyShare.getKeyShare());
             insertStmt.setString(index++, keyShare.getGroupPublicKey());
-            insertStmt.setString(index, keyShare.getDkgTaskId());
+            insertStmt.setString(index++, keyShare.getDkgTaskId());
+            insertStmt.setString(index++, keyShare.getPublicShares());
+            insertStmt.setString(index++, keyShare.getIndexMap());
+            insertStmt.setString(index, keyShare.getChainCode());
             insertStmt.executeUpdate();
 
             var rs = selectStmt.executeQuery();
@@ -74,6 +77,9 @@ public class KeyShareDao {
                     keyShare.setKeyShare(rs.getString("key_share"));
                     keyShare.setGroupPublicKey(rs.getString("group_public_key"));
                     keyShare.setDkgTaskId(rs.getString("dkg_task_id"));
+                    keyShare.setPublicShares(rs.getString("public_shares"));
+                    keyShare.setIndexMap(rs.getString("index_map"));
+                    keyShare.setChainCode(rs.getString("chain_code"));
                     logger.info("Loaded key share: {}", keyShare);
                     return keyShare;
                 } else {

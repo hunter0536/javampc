@@ -40,25 +40,27 @@ public class Constants {
      * DKG 承诺接收超时时间（秒）
      * 等待其他节点发送承诺的最长时间
      */
-    public static long DKG_COMMITMENT_TIMEOUT_SECONDS = 180;
+    public static long DKG_COMMITMENT_TIMEOUT_SECONDS = 60;
 
     /**
      * DKG 秘密份额接收超时时间（秒）
      * 等待其他节点发送秘密份额的最长时间
      */
-    public static long DKG_SHARE_TIMEOUT_SECONDS = 180;
+    public static long DKG_SHARE_TIMEOUT_SECONDS = 60;
 
     /**
      * DKG 单轮超时时间（秒）
      * CGGMP 协议中单轮消息接收的最长等待时间
      */
-    public static long DKG_ROUND_TIMEOUT_SECONDS = 180;
+    public static long DKG_ROUND_TIMEOUT_SECONDS = 60;
+    public static long AUX_ROUND_TIMEOUT_SECONDS = 600;
+    public static long AUX_STATUS_WAIT_MS = 5000;
 
     /**
      * DKG 任务默认超时时间（毫秒）
      * 整个 DKG 任务的最长执行时间
      */
-    public static long DKG_TASK_TIMEOUT_MS = 300000;
+    public static long DKG_TASK_TIMEOUT_MS = 120000;
 
     // ==================== DKG 协议重试参数 ====================
 
@@ -86,13 +88,13 @@ public class Constants {
      * 签名承诺接收超时时间（秒）
      * 等待其他节点发送 Gamma 承诺和 MtA 响应的最长时间
      */
-    public static final long SIGNATURE_COMMITMENT_TIMEOUT_SECONDS = 180;
+    public static final long SIGNATURE_COMMITMENT_TIMEOUT_SECONDS = 60;
 
     /**
      * 签名份额接收超时时间（秒）
      * 等待其他节点发送签名份额的最长时间
      */
-    public static final long SIGNATURE_SHARE_TIMEOUT_SECONDS = 60;
+    public static final long SIGNATURE_SHARE_TIMEOUT_SECONDS = 30;
 
     // ==================== 签名协议重试参数 ====================
 

@@ -9,15 +9,22 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
-public class ServerHandler extends SimpleChannelInboundHandler<NodeService.Message> {
+public class ServerHandler extends SimpleChannelInboundHandler<Object> {
     private static final Logger logger = LoggerFactory.getLogger(ServerHandler.class);
 
     private final NettyService nettyService;
     private final Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers;
+    private final String sharedSecret;
+    private final boolean sslEnabled;
 
-    public ServerHandler(NettyService nettyService, Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers) {
+    public ServerHandler(NettyService nettyService,
+                         Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers,
+                         String sharedSecret,
+                         boolean sslEnabled) {
         this.nettyService = nettyService;
         this.messageHandlers = messageHandlers;
+        this.sharedSecret = sharedSecret;
+        this.sslEnabled = sslEnabled;
     }
 
     @Override
@@ -31,47 +38,40 @@ public class ServerHandler extends SimpleChannelInboundHandler<NodeService.Messa
     }
 
     @Override
-    protected void channelRead0(ChannelHandlerContext ctx, NodeService.Message message) {
-        logger.info("Received message from node {}: {}", message.senderId, message.type);
-        if (message.data instanceof java.util.Map) {
-            Object taskId = ((java.util.Map<?, ?>) message.data).get("taskId");
-            if (taskId != null) {
-                logger.info("Message taskId: {}", taskId);
-            }
-        }
-
-        // 处理消息：先分发给senderId注册的处理器，再分发给全局(-1)处理器
-        var combinedHandlers = new java.util.LinkedHashSet<NodeService.MessageHandler>();
-        var senderHandlers = messageHandlers.get(message.senderId);
-        if (senderHandlers != null) {
-            combinedHandlers.addAll(senderHandlers);
-        }
-        var globalHandlers = messageHandlers.get(-1);
-        if (globalHandlers != null) {
-            combinedHandlers.addAll(globalHandlers);
-        }
-        if (combinedHandlers.isEmpty()) {
-            logger.warn("No handlers registered for message from node {} (keys={})", message.senderId, messageHandlers.keySet());
+    protected void channelRead0(ChannelHandlerContext ctx, Object raw) {
+        NodeService.Message message = unwrapSigned(raw);
+        if (message == null) {
+            logger.warn("Rejected unsigned/invalid message");
             return;
         }
-
-        for (NodeService.MessageHandler handler : combinedHandlers) {
-            try {
-                CompletableFuture<Void> future = handler.handleMessage(message.senderId, message);
-                future.thenAccept(v -> logger.debug("Message handled successfully"))
-                        .exceptionally(ex -> {
-                            logger.error("Error handling message: {}", ex.getMessage());
-                            return null;
-                        });
-            } catch (Exception e) {
-                logger.error("Error handling message: {}", e.getMessage());
-            }
-        }
+        nettyService.handleInbound(message.senderId, message)
+                .thenAccept(v -> logger.debug("Message handled successfully"))
+                .exceptionally(ex -> {
+                    logger.error("Error handling message: {}", ex.getMessage());
+                    return null;
+                });
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         logger.error("Exception in server handler: {}", cause.getMessage());
         ctx.close();
+    }
+
+    private NodeService.Message unwrapSigned(Object raw) {
+        if (raw instanceof SignedMessage sm) {
+            if (sslEnabled || sharedSecret == null || sharedSecret.isBlank()) {
+                return sm.message;
+            }
+            String payload = MessageSigner.canonicalPayload(sm.message);
+            if (!MessageSigner.verify(payload, sharedSecret, sm.signature)) {
+                return null;
+            }
+            return sm.message;
+        }
+        if (raw instanceof NodeService.Message msg) {
+            return msg;
+        }
+        return null;
     }
 }

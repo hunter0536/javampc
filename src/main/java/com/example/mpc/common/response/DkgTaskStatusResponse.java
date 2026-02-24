@@ -7,6 +7,9 @@ public class DkgTaskStatusResponse {
     private boolean completed;
     private String groupPublicKey;
     private String errorMessage;
+    private String lastComplaintReason;
+    private Integer lastComplaintOffenderId;
+    private Object lastComplaintEvidence;
     private int receivedCommitments;
     private int receivedShares;
     private int receivedRound1;
@@ -61,6 +64,30 @@ public class DkgTaskStatusResponse {
 
     public void setErrorMessage(String errorMessage) {
         this.errorMessage = errorMessage;
+    }
+
+    public String getLastComplaintReason() {
+        return lastComplaintReason;
+    }
+
+    public void setLastComplaintReason(String lastComplaintReason) {
+        this.lastComplaintReason = lastComplaintReason;
+    }
+
+    public Integer getLastComplaintOffenderId() {
+        return lastComplaintOffenderId;
+    }
+
+    public void setLastComplaintOffenderId(Integer lastComplaintOffenderId) {
+        this.lastComplaintOffenderId = lastComplaintOffenderId;
+    }
+
+    public Object getLastComplaintEvidence() {
+        return lastComplaintEvidence;
+    }
+
+    public void setLastComplaintEvidence(Object lastComplaintEvidence) {
+        this.lastComplaintEvidence = lastComplaintEvidence;
     }
 
     public int getReceivedCommitments() {

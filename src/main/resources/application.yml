@@ -16,6 +16,20 @@ discovery:
   broadcast:
     ports: 8888,8889,8890,8891,8892
 
+# 节点通信共享密钥（HMAC）
+nodes:
+  sharedSecret: "dev-shared-secret"
+  ssl:
+    enabled: false
+    cert: "scripts/config/node.crt"
+    key: "scripts/config/node.key"
+    trustCert: "scripts/config/ca.crt"
+  reliableBroadcast:
+    enabled: true
+    retryCount: 3
+    retryIntervalMs: 200
+    quorum: 0
+
 # 日志配置
 logging:
   level:
@@ -31,6 +45,8 @@ app:
     legacy:
       enabled: true  # 是否启用旧的DKG服务
   cggmp:
+    dkg:
+      hdEnabled: false
     proof:
       kappa: 64   # Πdec/Πaff-g* 的挑战位长度（临时降低以排查卡顿）
       epsBits: 16 # Πdec/Πaff-g* 取值范围扩展位数
@@ -38,3 +54,7 @@ app:
       retentionDays: 30 # 预签名使用记录保留天数
     refresh:
       paillierBits: 1024 # 演练用：降低 Paillier 密钥位数加速 refresh
+    aux:
+      paillierBits: 2048 # 测试用：恢复到 >=2048
+      minPaillierBitsForProof: 2047 # 允许 2048 目标位长产生的 2047 位 n
+      autoLeaderId: 1 # 仅该节点执行自动 AUX 触发，<=0 则禁用
