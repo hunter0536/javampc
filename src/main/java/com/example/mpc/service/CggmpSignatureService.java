@@ -330,7 +330,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     }
                     logger.info("Network ready with {} nodes", networkSize);
                 })
-                .thenCompose(v -> ensureClusterAuxReady())
+                .thenCompose(v -> ensureLocalAuxReady())
                 .thenCompose(v -> {
                     if (!broadcastInit) {
                         return CompletableFuture.completedFuture(null);
@@ -5083,8 +5083,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     @Override
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
+        Object logTaskId = "N/A";
+        if (message.data instanceof Map<?, ?> map) {
+            if (map.containsKey("taskId")) {
+                logTaskId = map.get("taskId");
+            } else if (map.containsKey("signatureTaskId")) {
+                logTaskId = map.get("signatureTaskId");
+            }
+        }
         logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
-                senderId, message.type, message.data instanceof Map ? ((Map<?, ?>) message.data).get("taskId") : "N/A");
+                senderId, message.type, logTaskId);
         Executor executor = ThreadPoolUtil.getSingleThreadPool();
         if (message.type == MessageType.CGGMP_AUX_INIT
                 || message.type == MessageType.CGGMP_AUX_R1
@@ -5724,6 +5732,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             fireAndForget(broadcastComplaint(task, senderId, "Invalid PiLog proof (R3)", ev),
                     "CGGMP_PRESIGN_COMPLAINT");
             failSignatureTask(task, "Invalid presign R3 proof");
+            return;
+        }
+        if (task.presignR3Received.putIfAbsent(senderId, Boolean.TRUE) != null) {
+            logger.warn("Duplicate presign R3 from node {} for task {}, ignoring", senderId, task.taskId);
             return;
         }
         task.presignDelta.put(senderId, new BigInteger(deltaHex, 16));
@@ -7317,6 +7329,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         try {
             int leaderId = resolveAuxAutoLeaderId();
 
+            auxStatus.clear();
             boolean hasAux = loadLatestAuxInfo(nodeId) != null;
             broadcastAuxStatus(hasAux);
 
@@ -7347,8 +7360,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                             }
                         }
                         if (!missing.isEmpty()) {
-                            logger.warn("AUX status missing from nodes {}, requesting refresh", missing);
-                            broadcastAuxStatus(hasAux);
+                            logger.warn("AUX status missing from nodes {}, skipping auto trigger this round", missing);
+                            return;
                         }
                         if (!noAux.isEmpty()) {
                             logger.warn("AUX status mismatch detected. Nodes without AUX={}", noAux);
@@ -7358,10 +7371,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                                 logger.error("Auto AUX failed for task {}: {}", taskId, ex.getMessage(), ex);
                                 return null;
                             });
-                            return;
-                        }
-                        if (!missing.isEmpty()) {
-                            logger.info("AUX status still missing from nodes {}, skipping auto trigger this round", missing);
                             return;
                         }
 
@@ -7411,24 +7420,12 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return false;
     }
 
-    private CompletableFuture<Void> ensureClusterAuxReady() {
+    private CompletableFuture<Void> ensureLocalAuxReady() {
         boolean hasAux = loadLatestAuxInfo(nodeId) != null;
-        broadcastAuxStatus(hasAux);
-        return waitForAuxStatusAsync().thenRun(() -> {
-            java.util.List<Integer> missing = new java.util.ArrayList<>();
-            java.util.List<Integer> noAux = new java.util.ArrayList<>();
-            for (int id = 1; id <= nodesCount; id++) {
-                Boolean present = auxStatus.get(id);
-                if (present == null) {
-                    missing.add(id);
-                } else if (!present) {
-                    noAux.add(id);
-                }
-            }
-            if (!missing.isEmpty() || !noAux.isEmpty()) {
-                throw new RuntimeException("AUX not ready on all nodes. Missing=" + missing + ", withoutAux=" + noAux);
-            }
-        });
+        if (!hasAux) {
+            return CompletableFuture.failedFuture(new RuntimeException("Missing auxiliary info on local node."));
+        }
+        return CompletableFuture.completedFuture(null);
     }
 
     private void broadcastAuxStatus(boolean hasAux) {

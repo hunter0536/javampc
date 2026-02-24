@@ -68,6 +68,21 @@ public class NodeService {
     @Value("${nodes.reliableBroadcast.quorum:0}")
     private int reliableBroadcastQuorum;
 
+    @Value("${nodes.chaos.enabled:false}")
+    private boolean chaosEnabled;
+
+    @Value("${nodes.chaos.minDelayMs:0}")
+    private long chaosMinDelayMs;
+
+    @Value("${nodes.chaos.maxDelayMs:0}")
+    private long chaosMaxDelayMs;
+
+    @Value("${nodes.chaos.duplicateChance:0}")
+    private double chaosDuplicateChance;
+
+    @Value("#{'${nodes.chaos.types:}'.isEmpty() ? null : '${nodes.chaos.types:}'.split(',')}")
+    private List<String> chaosTypes;
+
     // 使用Constants中的常量
     private final int nodesCount = Constants.NODES_COUNT;
 
@@ -397,6 +412,13 @@ public class NodeService {
      * 发送消息到指定节点
      */
     public CompletableFuture<Void> sendMessage(int receiverId, Message message) {
+        if (shouldApplyChaos(message.type)) {
+            return sendMessageWithChaos(receiverId, message);
+        }
+        return sendMessageInternal(receiverId, message);
+    }
+
+    private CompletableFuture<Void> sendMessageInternal(int receiverId, Message message) {
         NodeInfo nodeInfo = nodes.get(receiverId);
         if (nodeInfo == null) {
             logger.warn("sendMessage: receiver {} not in nodes map (known={}) for type {}", receiverId, nodes.keySet(), message.type);
@@ -422,6 +444,59 @@ public class NodeService {
                     logger.error("Failed to send message to node {}: {}", receiverId, ex.getMessage());
                     throw new RuntimeException(ex);
                 });
+    }
+
+    private boolean shouldApplyChaos(MessageType type) {
+        if (!chaosEnabled) {
+            return false;
+        }
+        if (chaosTypes == null || chaosTypes.isEmpty()) {
+            return true;
+        }
+        String name = type.name();
+        for (String t : chaosTypes) {
+            if (t != null && !t.isBlank() && name.equalsIgnoreCase(t.trim())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private CompletableFuture<Void> sendMessageWithChaos(int receiverId, Message message) {
+        long min = Math.max(0, chaosMinDelayMs);
+        long max = Math.max(min, chaosMaxDelayMs);
+        long delay = max == 0 ? 0 : java.util.concurrent.ThreadLocalRandom.current().nextLong(min, max + 1);
+        CompletableFuture<Void> result = new CompletableFuture<>();
+        Runnable sendOnce = () -> sendMessageInternal(receiverId, message)
+                .whenComplete((v, ex) -> {
+                    if (ex != null) {
+                        result.completeExceptionally(ex);
+                    } else {
+                        result.complete(null);
+                    }
+                });
+        if (delay > 0) {
+            getRetryScheduler().schedule(sendOnce, delay, TimeUnit.MILLISECONDS);
+        } else {
+            sendOnce.run();
+        }
+        if (chaosDuplicateChance > 0) {
+            double r = java.util.concurrent.ThreadLocalRandom.current().nextDouble();
+            if (r < chaosDuplicateChance) {
+                long dupDelay = max == 0 ? 0 : java.util.concurrent.ThreadLocalRandom.current().nextLong(min, max + 1);
+                Runnable dupSend = () -> sendMessageInternal(receiverId, message)
+                        .exceptionally(ex -> {
+                            logger.debug("Chaos duplicate send failed to node {} (type={}): {}", receiverId, message.type, ex.getMessage());
+                            return null;
+                        });
+                if (dupDelay > 0) {
+                    getRetryScheduler().schedule(dupSend, dupDelay, TimeUnit.MILLISECONDS);
+                } else {
+                    dupSend.run();
+                }
+            }
+        }
+        return result;
     }
 
     /**

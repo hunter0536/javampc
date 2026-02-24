@@ -28,6 +28,12 @@ nodes:
     retryCount: 3 # RBC 重试次数
     retryIntervalMs: 200 # RBC 重试间隔（毫秒）
     quorum: 0 # RBC 法定人数（0 表示使用默认规则）
+  chaos:
+    enabled: false # 是否启用消息乱序/延迟/重放
+    minDelayMs: 0 # 乱序最小延迟（毫秒）
+    maxDelayMs: 0 # 乱序最大延迟（毫秒）
+    duplicateChance: 0 # 重放概率（0-1）
+    types: "" # 仅对这些消息类型生效（逗号分隔，空表示全部）
 
 # 日志配置
 logging:

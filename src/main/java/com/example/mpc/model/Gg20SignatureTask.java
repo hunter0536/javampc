@@ -68,6 +68,7 @@ public class Gg20SignatureTask {
     public final ConcurrentHashMap<Integer, ECPoint> presignDeltaPoint = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> presignSPoint = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> presignR2Received = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, Boolean> presignR3Received = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.util.Map<String, Object>> pendingPresignR2 = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> presignDeltaTilde = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> presignSTilde = new ConcurrentHashMap<>();
