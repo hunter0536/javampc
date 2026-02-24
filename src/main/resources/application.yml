@@ -57,7 +57,7 @@ app:
     aux:
       paillierBits: 2048 # 测试用：恢复到 >=2048
       minPaillierBitsForProof: 2047 # 允许 2048 目标位长产生的 2047 位 n
-      autoLeaderId: 1 # 仅该节点执行自动 AUX 触发，<=0 则禁用
+      autoCheckIntervalSeconds: 60 # 自动 AUX 轮询间隔（秒）
 
 # MPC 全局参数
 mpc:

@@ -72,6 +72,7 @@ import java.security.Security;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
@@ -120,8 +121,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     @Value("${app.cggmp.aux.minPaillierBitsForProof:2048}")
     private int auxMinPaillierBitsForProof;
 
-    @Value("${app.cggmp.aux.autoLeaderId:1}")
-    private int auxAutoLeaderId;
+    @Value("${app.cggmp.aux.autoCheckIntervalSeconds:60}")
+    private long auxAutoCheckIntervalSeconds;
 
     @Value("${mpc.dkg.echoEnabled:true}")
     private boolean dkgEchoEnabled;
@@ -148,9 +149,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     private final AtomicBoolean signatureInProgress = new AtomicBoolean(false);
     private final AtomicBoolean auxAutoTriggered = new AtomicBoolean(false);
+    private final AtomicBoolean auxAutoCheckRunning = new AtomicBoolean(false);
     private final ConcurrentHashMap<Integer, Boolean> auxStatus = new ConcurrentHashMap<>();
     private final int nodesCount = Constants.NODES_COUNT;
     private final int threshold = Constants.THRESHOLD;
+    private final ScheduledExecutorService cggmpScheduler = Executors.newSingleThreadScheduledExecutor();
 
     static {
         Security.addProvider(new BouncyCastleProvider());
@@ -160,6 +163,52 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         logger.info("Initializing CGGMP service for node {}", nodeId);
         PresignUsageStore.configureRetentionDays(presignRetentionDays);
         logger.info("CGGMP service initialized successfully");
+    }
+
+    private CompletableFuture<Void> delayMs(long delayMs) {
+        if (delayMs <= 0) {
+            return CompletableFuture.completedFuture(null);
+        }
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        cggmpScheduler.schedule(() -> future.complete(null), delayMs, TimeUnit.MILLISECONDS);
+        return future;
+    }
+
+    private CompletableFuture<Void> retryAsync(java.util.function.Supplier<CompletableFuture<Void>> action,
+                                               int maxAttempts,
+                                               long delayMs,
+                                               String name) {
+        int attempts = Math.max(1, maxAttempts);
+        AtomicInteger counter = new AtomicInteger(0);
+        CompletableFuture<Void> result = new CompletableFuture<>();
+        Runnable runner = new Runnable() {
+            @Override
+            public void run() {
+                int attempt = counter.incrementAndGet();
+                action.get().whenComplete((v, ex) -> {
+                    if (ex == null) {
+                        result.complete(null);
+                        return;
+                    }
+                    if (attempt >= attempts) {
+                        result.completeExceptionally(ex);
+                        return;
+                    }
+                    logger.warn("{} failed (attempt {}/{}): {}", name, attempt, attempts, ex.getMessage());
+                    cggmpScheduler.schedule(this, Math.max(0, delayMs), TimeUnit.MILLISECONDS);
+                });
+            }
+        };
+        cggmpScheduler.execute(runner);
+        return result;
+    }
+
+    private void fireAndForget(CompletableFuture<Void> future, String name) {
+        future.whenComplete((v, ex) -> {
+            if (ex != null) {
+                logger.warn("{} failed: {}", name, ex.getMessage());
+            }
+        });
     }
 
     public String createRefreshTask(String groupPublicKey) {
@@ -180,16 +229,14 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public CompletableFuture<Void> startRefreshTask(String taskId) {
-        return CompletableFuture.runAsync(() -> {
-            com.example.mpc.model.CggmpRefreshTask task = refreshTasks.get(taskId);
-            if (task == null) {
-                throw new RuntimeException("Refresh task not found");
-            }
-            if (!task.start()) {
-                return;
-            }
-            runRefreshProtocol(task);
-        }, ThreadPoolUtil.getIoThreadPool());
+        com.example.mpc.model.CggmpRefreshTask task = refreshTasks.get(taskId);
+        if (task == null) {
+            return CompletableFuture.failedFuture(new RuntimeException("Refresh task not found"));
+        }
+        if (!task.start()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return runRefreshProtocolAsync(task);
     }
 
     private CggmpRefreshTask createRefreshTaskInternal(String taskId, String groupPublicKey, Set<Integer> participants, int initiatorId) {
@@ -240,506 +287,520 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public CompletableFuture<Void> startDkgProcess(String taskId) {
-        return CompletableFuture.runAsync(() -> {
-            logger.info("=================== startDkgProcess START: taskId={} ===================", taskId);
-            final long dkgStartNs = System.nanoTime();
-            CggmpDkgTask task = null;
-            try {
-                task = getDkgTask(taskId);
-                if (!nodeService.isTlsEnabled()) {
-                    throw new RuntimeException("DKG requires TLS-enabled private channels (nodes.ssl.enabled=true).");
-                }
-                if (loadLatestAuxInfo(nodeId) == null) {
-                    throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before DKG.");
-                }
+        return startDkgProcessInternal(taskId, true);
+    }
 
-                if (!task.start()) {
-                    logger.warn("DKG task {} failed to start (may already be in progress), skipping", taskId);
-                    return;
-                }
+    private CompletableFuture<Void> startDkgProcessInternal(String taskId, boolean broadcastInit) {
+        logger.info("=================== startDkgProcess START: taskId={} ===================", taskId);
+        final long dkgStartNs = System.nanoTime();
+        final CggmpDkgTask task;
+        try {
+            task = getDkgTask(taskId);
+            if (!nodeService.isTlsEnabled()) {
+                throw new RuntimeException("DKG requires TLS-enabled private channels (nodes.ssl.enabled=true).");
+            }
+            if (loadLatestAuxInfo(nodeId) == null) {
+                throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before DKG.");
+            }
+            if (!task.start()) {
+                logger.warn("DKG task {} failed to start (may already be in progress), skipping", taskId);
+                return CompletableFuture.completedFuture(null);
+            }
+        } catch (Exception e) {
+            return CompletableFuture.failedFuture(e);
+        }
 
-                logger.info("Starting CGGMP DKG process for task: {}", taskId);
+        logger.info("Starting CGGMP DKG process for task: {}", taskId);
+        logger.info("Waiting for network ready...");
+        long waitNetStart = System.nanoTime();
 
-                logger.info("Waiting for network ready...");
-                long waitNetStart = System.nanoTime();
-                nodeService.waitForNetworkReady().join();
-                logger.debug("DKG waitForNetworkReady took {} ms", (System.nanoTime() - waitNetStart) / 1_000_000);
+        Map<String, Object> initData = new HashMap<>();
+        initData.put("taskId", taskId);
+        initData.put("executionId", task.executionId);
+        initData.put("nodesCount", Constants.NODES_COUNT);
+        initData.put("initiatorId", nodeId);
+        initData.put("participants", new ArrayList<>(task.participants));
 
-                int networkSize = nodeService.getNodes().size() + 1;
-                if (networkSize < nodesCount) {
-                    throw new RuntimeException("Not enough nodes in network. Expected: " + nodesCount + ", found: " + networkSize);
-                }
-                logger.info("Network ready with {} nodes", networkSize);
-
-                try {
-                    long sleepStart = System.nanoTime();
-                    Thread.sleep(Constants.DKG_INIT_WAIT_MS);
-                    logger.debug("DKG init wait sleep {} ms", (System.nanoTime() - sleepStart) / 1_000_000);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                }
-
-                Map<String, Object> initData = new HashMap<>();
-                initData.put("taskId", taskId);
-                initData.put("executionId", task.executionId);
-                initData.put("nodesCount", Constants.NODES_COUNT);
-                initData.put("initiatorId", nodeId);
-                initData.put("participants", new ArrayList<>(task.participants));
-
-                boolean initBroadcastSuccess = false;
-                for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
-                    try {
-                        long bcastStart = System.nanoTime();
-                        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_INIT, initData)).join();
-                        logger.debug("DKG broadcast CGGMP_DKG_INIT took {} ms (attempt {}/{})",
-                                (System.nanoTime() - bcastStart) / 1_000_000, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
-                        logger.info("Broadcasted CGGMP_DKG_INIT for task: {} (attempt {}/{})", taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
-                        initBroadcastSuccess = true;
-                        break;
-                    } catch (Exception e) {
-                        logger.warn("Failed to broadcast CGGMP_DKG_INIT (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
-                        if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
-                            Thread.sleep(Constants.DKG_BROADCAST_RETRY_INTERVAL_MS);
-                        }
+        CompletableFuture<Void> flow = nodeService.waitForNetworkReady()
+                .thenRun(() -> logger.debug("DKG waitForNetworkReady took {} ms", (System.nanoTime() - waitNetStart) / 1_000_000))
+                .thenRun(() -> {
+                    int networkSize = nodeService.getNodes().size() + 1;
+                    if (networkSize < nodesCount) {
+                        throw new RuntimeException("Not enough nodes in network. Expected: " + nodesCount + ", found: " + networkSize);
                     }
-                }
+                    logger.info("Network ready with {} nodes", networkSize);
+                })
+                .thenCompose(v -> ensureClusterAuxReady())
+                .thenCompose(v -> {
+                    if (!broadcastInit) {
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    return delayMs(Constants.DKG_INIT_WAIT_MS)
+                            .thenCompose(x -> retryAsync(
+                                    () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_INIT, initData)),
+                                    Constants.DKG_BROADCAST_RETRY_COUNT,
+                                    Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                                    "Broadcast CGGMP_DKG_INIT"));
+                })
+                .thenCompose(v -> {
+                    long roundsStart = System.nanoTime();
+                    return executeDkgRounds(task)
+                            .whenComplete((x, ex) -> logger.debug("DKG executeDkgRounds took {} ms",
+                                    (System.nanoTime() - roundsStart) / 1_000_000));
+                });
 
-                if (!initBroadcastSuccess) {
-                    throw new RuntimeException("Failed to broadcast CGGMP_DKG_INIT after 3 attempts");
-                }
-
-                long roundsStart = System.nanoTime();
-                executeDkgRounds(task);
-                logger.debug("DKG executeDkgRounds took {} ms", (System.nanoTime() - roundsStart) / 1_000_000);
-
+        return flow.whenComplete((v, ex) -> {
+            if (ex == null) {
                 task.complete();
                 logger.info("CGGMP DKG process completed for task: {}", taskId);
                 logger.debug("=================== startDkgProcess END: taskId={} total {} ms ===================",
                         taskId, (System.nanoTime() - dkgStartNs) / 1_000_000);
-            } catch (Exception e) {
-                if (task != null) {
-                    task.fail();
-                    task.errorMessage = e.getMessage();
-                }
-                logger.error("Error in CGGMP DKG process", e);
-                throw new RuntimeException(e);
+            } else {
+                task.fail();
+                task.errorMessage = ex.getMessage();
+                logger.error("Error in CGGMP DKG process", ex);
             }
-        }, dkgExecutorService);
+        });
     }
 
     public CompletableFuture<Void> startAuxProcess(String taskId) {
-        return CompletableFuture.runAsync(() -> {
-            logger.info("=================== startAuxProcess START: taskId={} ===================", taskId);
-            final long auxStartNs = System.nanoTime();
-            CggmpAuxTask task = auxTasks.get(taskId);
-            if (task == null) {
-                throw new RuntimeException("Aux task not found");
-            }
-            if (!task.start()) {
-                return;
-            }
-            try {
-                nodeService.waitForNetworkReady().join();
-                if (nodeId == task.initiatorId) {
+        logger.info("=================== startAuxProcess START: taskId={} ===================", taskId);
+        final long auxStartNs = System.nanoTime();
+        CggmpAuxTask task = auxTasks.get(taskId);
+        if (task == null) {
+            return CompletableFuture.failedFuture(new RuntimeException("Aux task not found"));
+        }
+        if (!task.start()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        CompletableFuture<Void> flow = nodeService.waitForNetworkReady()
+                .thenCompose(v -> {
+                    if (nodeId != task.initiatorId) {
+                        return CompletableFuture.completedFuture(null);
+                    }
                     Map<String, Object> initData = new HashMap<>();
                     initData.put("taskId", task.taskId);
                     initData.put("executionId", task.executionId);
                     initData.put("initiatorId", nodeId);
                     initData.put("participants", new ArrayList<>(task.participants));
-                    nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_INIT, initData)).join();
-                }
-                runAuxProtocol(task);
+                    return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_INIT, initData));
+                })
+                .thenCompose(v -> runAuxProtocolAsync(task));
+
+        return flow.whenComplete((v, ex) -> {
+            if (ex == null) {
                 task.complete();
                 logger.debug("CGGMP AUX completed for task: {} in {} ms", taskId, (System.nanoTime() - auxStartNs) / 1_000_000);
-            } catch (Exception e) {
-                task.fail(e.getMessage());
-                logger.error("Error in CGGMP AUX process", e);
-                throw new RuntimeException(e);
+            } else {
+                task.fail(ex.getMessage());
+                logger.error("Error in CGGMP AUX process", ex);
             }
-        }, dkgExecutorService);
+        });
     }
 
-    private void executeDkgRounds(CggmpDkgTask task) throws Exception {
+    private CompletableFuture<Void> executeDkgRounds(CggmpDkgTask task) {
         final long roundsStart = System.nanoTime();
         if (task.nonThreshold) {
-            executeDkgRoundsNonThreshold(task);
-            logger.debug("DKG executeDkgRounds total took {} ms", (System.nanoTime() - roundsStart) / 1_000_000);
-            return;
+            return executeDkgRoundsNonThreshold(task)
+                    .whenComplete((v, ex) -> logger.debug("DKG executeDkgRounds total took {} ms",
+                            (System.nanoTime() - roundsStart) / 1_000_000));
         }
         logger.info("Node {} executing CGGMP24 DKG Round 1 (t-of-n)", nodeId);
 
-        BigInteger q = Secp256k1Curve.n();
-        ECPoint g = Secp256k1Curve.G();
+        CompletableFuture<DkgContext> r1Future = CompletableFuture.supplyAsync(() -> {
+            BigInteger q = Secp256k1Curve.n();
+            ECPoint g = Secp256k1Curve.G();
 
-        // Round 1: sample polynomial, compute commitments, Schnorr commitment, rid_i
-        BigInteger[] coeffs = new BigInteger[threshold];
-        for (int i = 0; i < threshold; i++) {
-            coeffs[i] = randomScalar(q);
-        }
-
-        Map<Integer, ECPoint> S_i = new HashMap<>();
-        for (int k = 0; k < threshold; k++) {
-            S_i.put(k, g.multiply(coeffs[k]).normalize());
-        }
-        task.Xjks.put(nodeId, new ConcurrentHashMap<>(S_i));
-
-        BigInteger alpha = randomScalar(q);
-        ECPoint A_i = g.multiply(alpha).normalize();
-        task.Ajks.put(nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
-        task.schAlphas.put(0, alpha);
-
-        byte[] ridPart = new byte[32];
-        secureRandom.nextBytes(ridPart);
-        task.ridParts.put(nodeId, ridPart);
-        byte[] chainCodePart = hdEnabled ? randomBytes(32) : null;
-        if (chainCodePart != null) {
-            task.chainCodeParts.put(nodeId, chainCodePart);
-        }
-
-        Map<String, Object> r1Open = new LinkedHashMap<>();
-        r1Open.put("taskId", task.taskId);
-        r1Open.put("executionId", task.executionId);
-        r1Open.put("senderId", nodeId);
-        r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
-        r1Open.put("S", encodePointMapCompressed(S_i));
-        r1Open.put("A", bytesToHex(A_i.getEncoded(true)));
-        byte[] uCommit = randomBytes(32);
-        r1Open.put("u", HexUtils.bytesToHex(uCommit));
-        if (chainCodePart != null) {
-            r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
-        }
-        String vCommit = computeDkgCommitHash(task.executionId, task.taskId, nodeId, ridPart, S_i, A_i, uCommit, chainCodePart);
-        task.round1PayloadHashes.put(nodeId, vCommit);
-        Map<String, Object> r1Commit = new HashMap<>();
-        r1Commit.put("taskId", task.taskId);
-        r1Commit.put("executionId", task.executionId);
-        r1Commit.put("senderId", nodeId);
-        r1Commit.put("V", vCommit);
-        if (dkgUseRbc) {
-            nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))).join();
-        } else {
-            nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))).join();
-        }
-
-        task.startRound1Waiting();
-        if (!task.round1ReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            task.timeout();
-            throw new Exception("Timeout waiting for DKG Round 1 messages");
-        }
-
-        if (dkgEchoEnabled) {
-            broadcastDkgRound1Echo(task).join();
-            if (!task.round1EchoReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                task.timeout();
-                throw new Exception("Timeout waiting for DKG Round 1 echo messages");
+            BigInteger[] coeffs = new BigInteger[threshold];
+            for (int i = 0; i < threshold; i++) {
+                coeffs[i] = randomScalar(q);
             }
-        }
 
-        // Round 2: send shares privately, broadcast open values
-        if (dkgUseRbc) {
-            nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, r1Open))).join();
-        } else {
-            nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, r1Open))).join();
-        }
-
-        for (int peerId : task.participants) {
-            if (peerId == nodeId) continue;
-            BigInteger sigma = evaluatePolynomial(coeffs, getIndexValue(task, peerId), q);
-            Map<String, Object> share = new HashMap<>();
-            share.put("taskId", task.taskId);
-            share.put("executionId", task.executionId);
-            share.put("senderId", nodeId);
-            share.put("receiverId", peerId);
-            share.put("sigma", sigma.toString(16));
-            nodeService.sendMessage(peerId, new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2, share)).join();
-        }
-
-        if (!task.round2OpenReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            task.timeout();
-            throw new Exception("Timeout waiting for DKG Round 2 open messages");
-        }
-        if (hdEnabled) {
-            task.chainCode = xorChainCodeParts(task);
-        }
-        task.rid = xorRidParts(task);
-        validatePendingRound3(task);
-
-        task.startRound2Waiting();
-        if (!task.round2ReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            task.timeout();
-            throw new Exception("Timeout waiting for DKG Round 2 messages");
-        }
-
-        // Round 3: verify shares and finalize
-        task.startValidating();
-        BigInteger xStar = BigInteger.ZERO;
-        for (int peerId : task.participants) {
-            BigInteger share = peerId == nodeId
-                    ? evaluatePolynomial(coeffs, getIndexValue(task, nodeId), q)
-                    : task.xji.getOrDefault(peerId, new ConcurrentHashMap<>()).get(nodeId);
-            if (share == null) {
-                throw new Exception("Missing share from peer " + peerId);
+            Map<Integer, ECPoint> S_i = new HashMap<>();
+            for (int k = 0; k < threshold; k++) {
+                S_i.put(k, g.multiply(coeffs[k]).normalize());
             }
-            xStar = xStar.add(share).mod(q);
-        }
-        task.secretShare = xStar;
+            task.Xjks.put(nodeId, new ConcurrentHashMap<>(S_i));
 
-        ECPoint X_i = computePublicShare(task, nodeId);
-        PiSchProof psi_i = createSchProofWithAlpha(g, X_i, xStar, task.schAlphas.get(0),
-                buildDkgContext(task.taskId, task.executionId, task.rid, nodeId, "SCH"));
-        Map<String, Object> r3 = new HashMap<>();
-        r3.put("taskId", task.taskId);
-        r3.put("executionId", task.executionId);
-        r3.put("senderId", nodeId);
-        r3.put("psi", encodeSchProof(psi_i));
-        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND3, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND3, r3))).join();
+            BigInteger alpha = randomScalar(q);
+            ECPoint A_i = g.multiply(alpha).normalize();
+            task.Ajks.put(nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
+            task.schAlphas.put(0, alpha);
 
-        if (!task.round3ReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            task.timeout();
-            throw new Exception("Timeout waiting for DKG Round 3 messages");
-        }
-
-        ECPoint groupPublicKey = g.getCurve().getInfinity();
-        for (int peerId : task.participants) {
-            Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
-            if (sVec == null || sVec.get(0) == null) {
-                throw new Exception("Missing S_{j,0} from peer " + peerId);
+            byte[] ridPart = new byte[32];
+            secureRandom.nextBytes(ridPart);
+            task.ridParts.put(nodeId, ridPart);
+            byte[] chainCodePart = hdEnabled ? randomBytes(32) : null;
+            if (chainCodePart != null) {
+                task.chainCodeParts.put(nodeId, chainCodePart);
             }
-            groupPublicKey = groupPublicKey.add(sVec.get(0)).normalize();
-        }
-        task.groupPublicKey = groupPublicKey;
-        task.groupPublicKeyHex = bytesToHex(groupPublicKey.getEncoded(false));
 
-        saveKeyShareToDatabase(task);
-        task.complete();
-        logger.info("CGGMP24 DKG completed! Group public key: {}", task.groupPublicKeyHex);
-        logger.debug("DKG executeDkgRounds total took {} ms", (System.nanoTime() - roundsStart) / 1_000_000);
+            Map<String, Object> r1Open = new LinkedHashMap<>();
+            r1Open.put("taskId", task.taskId);
+            r1Open.put("executionId", task.executionId);
+            r1Open.put("senderId", nodeId);
+            r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
+            r1Open.put("S", encodePointMapCompressed(S_i));
+            r1Open.put("A", bytesToHex(A_i.getEncoded(true)));
+            byte[] uCommit = randomBytes(32);
+            r1Open.put("u", HexUtils.bytesToHex(uCommit));
+            if (chainCodePart != null) {
+                r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
+            }
+            String vCommit = computeDkgCommitHash(task.executionId, task.taskId, nodeId, ridPart, S_i, A_i, uCommit, chainCodePart);
+            task.round1PayloadHashes.put(nodeId, vCommit);
+            Map<String, Object> r1Commit = new HashMap<>();
+            r1Commit.put("taskId", task.taskId);
+            r1Commit.put("executionId", task.executionId);
+            r1Commit.put("senderId", nodeId);
+            r1Commit.put("V", vCommit);
+            if (dkgUseRbc) {
+                fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                        "CGGMP_DKG_ROUND1_RBC");
+            } else {
+                fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                        "CGGMP_DKG_ROUND1");
+            }
+
+            task.startRound1Waiting();
+            return new DkgContext(task, q, g, coeffs, r1Open);
+        }, dkgExecutorService);
+
+        return r1Future
+                .thenCompose(ctx -> waitForDkgLatch(task, task.round1ReceivedLatch, "DKG Round 1 messages")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> {
+                    if (!dkgEchoEnabled) {
+                        return CompletableFuture.completedFuture(ctx);
+                    }
+                    fireAndForget(broadcastDkgRound1Echo(task), "CGGMP_DKG_ROUND1_ECHO");
+                    return waitForDkgLatch(task, task.round1EchoReceivedLatch, "DKG Round 1 echo messages")
+                            .thenApply(v -> ctx);
+                })
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    if (dkgUseRbc) {
+                        fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open))),
+                                "CGGMP_DKG_ROUND2_BROAD_RBC");
+                    } else {
+                        fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open))),
+                                "CGGMP_DKG_ROUND2_BROAD");
+                    }
+
+                    for (int peerId : task.participants) {
+                        if (peerId == nodeId) continue;
+                        BigInteger sigma = evaluatePolynomial(ctx.coeffs, getIndexValue(task, peerId), ctx.q);
+                        Map<String, Object> share = new HashMap<>();
+                        share.put("taskId", task.taskId);
+                        share.put("executionId", task.executionId);
+                        share.put("senderId", nodeId);
+                        share.put("receiverId", peerId);
+                        share.put("sigma", sigma.toString(16));
+                        fireAndForget(nodeService.sendMessage(peerId, new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2, share)),
+                                "CGGMP_DKG_ROUND2");
+                    }
+                }, dkgExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForDkgLatch(task, task.round2OpenReceivedLatch, "DKG Round 2 open messages")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    if (hdEnabled) {
+                        task.chainCode = xorChainCodeParts(task);
+                    }
+                    task.rid = xorRidParts(task);
+                    validatePendingRound3(task);
+                    task.startRound2Waiting();
+                }, dkgExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForDkgLatch(task, task.round2ReceivedLatch, "DKG Round 2 messages")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    task.startValidating();
+                    BigInteger xStar = BigInteger.ZERO;
+                    for (int peerId : task.participants) {
+                        BigInteger share = peerId == nodeId
+                                ? evaluatePolynomial(ctx.coeffs, getIndexValue(task, nodeId), ctx.q)
+                                : task.xji.getOrDefault(peerId, new ConcurrentHashMap<>()).get(nodeId);
+                        if (share == null) {
+                            throw new RuntimeException("Missing share from peer " + peerId);
+                        }
+                        xStar = xStar.add(share).mod(ctx.q);
+                    }
+                    task.secretShare = xStar;
+
+                    ECPoint X_i = computePublicShare(task, nodeId);
+                    PiSchProof psi_i = createSchProofWithAlpha(ctx.g, X_i, xStar, task.schAlphas.get(0),
+                            buildDkgContext(task.taskId, task.executionId, task.rid, nodeId, "SCH"));
+                    Map<String, Object> r3 = new HashMap<>();
+                    r3.put("taskId", task.taskId);
+                    r3.put("executionId", task.executionId);
+                    r3.put("senderId", nodeId);
+                    r3.put("psi", encodeSchProof(psi_i));
+                    fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND3, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND3, r3))),
+                            "CGGMP_DKG_ROUND3");
+                }, dkgExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForDkgLatch(task, task.round3ReceivedLatch, "DKG Round 3 messages")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    ECPoint groupPublicKey = ctx.g.getCurve().getInfinity();
+                    for (int peerId : task.participants) {
+                        Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
+                        if (sVec == null || sVec.get(0) == null) {
+                            throw new RuntimeException("Missing S_{j,0} from peer " + peerId);
+                        }
+                        groupPublicKey = groupPublicKey.add(sVec.get(0)).normalize();
+                    }
+                    task.groupPublicKey = groupPublicKey;
+                    task.groupPublicKeyHex = bytesToHex(groupPublicKey.getEncoded(false));
+
+                    saveKeyShareToDatabase(task);
+                    task.complete();
+                    logger.info("CGGMP24 DKG completed! Group public key: {}", task.groupPublicKeyHex);
+                }, dkgExecutorService))
+                .whenComplete((v, ex) -> logger.debug("DKG executeDkgRounds total took {} ms",
+                        (System.nanoTime() - roundsStart) / 1_000_000));
     }
 
-    private void executeDkgRoundsNonThreshold(CggmpDkgTask task) throws Exception {
+    private CompletableFuture<Void> executeDkgRoundsNonThreshold(CggmpDkgTask task) {
         logger.info("Node {} executing CGGMP24 DKG Round 1 (n-of-n)", nodeId);
-        BigInteger q = Secp256k1Curve.n();
-        ECPoint g = Secp256k1Curve.G();
+        return CompletableFuture.supplyAsync(() -> {
+            BigInteger q = Secp256k1Curve.n();
+            ECPoint g = Secp256k1Curve.G();
 
-        BigInteger x_i = randomScalar(q);
-        ECPoint X_i = g.multiply(x_i).normalize();
-        Map<Integer, ECPoint> S_i = new HashMap<>();
-        S_i.put(0, X_i);
-        task.Xjks.put(nodeId, new ConcurrentHashMap<>(S_i));
+            BigInteger x_i = randomScalar(q);
+            ECPoint X_i = g.multiply(x_i).normalize();
+            Map<Integer, ECPoint> S_i = new HashMap<>();
+            S_i.put(0, X_i);
+            task.Xjks.put(nodeId, new ConcurrentHashMap<>(S_i));
 
-        BigInteger alpha = randomScalar(q);
-        ECPoint A_i = g.multiply(alpha).normalize();
-        task.Ajks.put(nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
-        task.schAlphas.put(0, alpha);
+            BigInteger alpha = randomScalar(q);
+            ECPoint A_i = g.multiply(alpha).normalize();
+            task.Ajks.put(nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
+            task.schAlphas.put(0, alpha);
 
-        byte[] ridPart = new byte[32];
-        secureRandom.nextBytes(ridPart);
-        task.ridParts.put(nodeId, ridPart);
-        byte[] chainCodePart = hdEnabled ? randomBytes(32) : null;
-        if (chainCodePart != null) {
-            task.chainCodeParts.put(nodeId, chainCodePart);
-        }
-
-        byte[] uCommit = randomBytes(32);
-        Map<String, Object> r1Open = new LinkedHashMap<>();
-        r1Open.put("taskId", task.taskId);
-        r1Open.put("executionId", task.executionId);
-        r1Open.put("senderId", nodeId);
-        r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
-        r1Open.put("S", encodePointMapCompressed(S_i));
-        r1Open.put("A", bytesToHex(A_i.getEncoded(true)));
-        r1Open.put("u", HexUtils.bytesToHex(uCommit));
-        if (chainCodePart != null) {
-            r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
-        }
-        String vCommit = computeDkgCommitHash(task.executionId, task.taskId, nodeId, ridPart, S_i, A_i, uCommit, chainCodePart);
-        task.round1PayloadHashes.put(nodeId, vCommit);
-        Map<String, Object> r1Commit = new HashMap<>();
-        r1Commit.put("taskId", task.taskId);
-        r1Commit.put("executionId", task.executionId);
-        r1Commit.put("senderId", nodeId);
-        r1Commit.put("V", vCommit);
-        if (dkgUseRbc) {
-            nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))).join();
-        } else {
-            nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))).join();
-        }
-
-        task.startRound1Waiting();
-        if (!task.round1ReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            task.timeout();
-            throw new Exception("Timeout waiting for DKG Round 1 messages");
-        }
-
-        if (dkgEchoEnabled) {
-            broadcastDkgRound1Echo(task).join();
-            if (!task.round1EchoReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                task.timeout();
-                throw new Exception("Timeout waiting for DKG Round 1 echo messages");
+            byte[] ridPart = new byte[32];
+            secureRandom.nextBytes(ridPart);
+            task.ridParts.put(nodeId, ridPart);
+            byte[] chainCodePart = hdEnabled ? randomBytes(32) : null;
+            if (chainCodePart != null) {
+                task.chainCodeParts.put(nodeId, chainCodePart);
             }
-        }
 
-        if (dkgUseRbc) {
-            nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, r1Open))).join();
-        } else {
-            nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, r1Open))).join();
-        }
-
-        if (!task.round2OpenReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            task.timeout();
-            throw new Exception("Timeout waiting for DKG Round 2 open messages");
-        }
-        if (hdEnabled) {
-            task.chainCode = xorChainCodeParts(task);
-        }
-        task.rid = xorRidParts(task);
-        validatePendingRound3(task);
-
-        task.secretShare = x_i;
-        PiSchProof psi_i = createSchProofWithAlpha(g, X_i, x_i, task.schAlphas.get(0),
-                buildDkgContext(task.taskId, task.executionId, task.rid, nodeId, "SCH"));
-        Map<String, Object> r3 = new HashMap<>();
-        r3.put("taskId", task.taskId);
-        r3.put("executionId", task.executionId);
-        r3.put("senderId", nodeId);
-        r3.put("psi", encodeSchProof(psi_i));
-        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND3, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND3, r3))).join();
-
-        if (!task.round3ReceivedLatch.await(Constants.DKG_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            task.timeout();
-            throw new Exception("Timeout waiting for DKG Round 3 messages");
-        }
-
-        ECPoint groupPublicKey = g.getCurve().getInfinity();
-        for (int peerId : task.participants) {
-            Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
-            if (sVec == null || sVec.get(0) == null) {
-                throw new Exception("Missing X_j from peer " + peerId);
+            byte[] uCommit = randomBytes(32);
+            Map<String, Object> r1Open = new LinkedHashMap<>();
+            r1Open.put("taskId", task.taskId);
+            r1Open.put("executionId", task.executionId);
+            r1Open.put("senderId", nodeId);
+            r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
+            r1Open.put("S", encodePointMapCompressed(S_i));
+            r1Open.put("A", bytesToHex(A_i.getEncoded(true)));
+            r1Open.put("u", HexUtils.bytesToHex(uCommit));
+            if (chainCodePart != null) {
+                r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
             }
-            groupPublicKey = groupPublicKey.add(sVec.get(0)).normalize();
-        }
-        task.groupPublicKey = groupPublicKey;
-        task.groupPublicKeyHex = bytesToHex(groupPublicKey.getEncoded(false));
+            String vCommit = computeDkgCommitHash(task.executionId, task.taskId, nodeId, ridPart, S_i, A_i, uCommit, chainCodePart);
+            task.round1PayloadHashes.put(nodeId, vCommit);
+            Map<String, Object> r1Commit = new HashMap<>();
+            r1Commit.put("taskId", task.taskId);
+            r1Commit.put("executionId", task.executionId);
+            r1Commit.put("senderId", nodeId);
+            r1Commit.put("V", vCommit);
+            if (dkgUseRbc) {
+                fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                        "CGGMP_DKG_ROUND1_RBC");
+            } else {
+                fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                        "CGGMP_DKG_ROUND1");
+            }
+            task.startRound1Waiting();
+            return new DkgNonThresholdContext(task, q, g, x_i, X_i, r1Open);
+        }, dkgExecutorService)
+                .thenCompose(ctx -> waitForDkgLatch(task, task.round1ReceivedLatch, "DKG Round 1 messages")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> {
+                    if (!dkgEchoEnabled) {
+                        return CompletableFuture.completedFuture(ctx);
+                    }
+                    fireAndForget(broadcastDkgRound1Echo(task), "CGGMP_DKG_ROUND1_ECHO");
+                    return waitForDkgLatch(task, task.round1EchoReceivedLatch, "DKG Round 1 echo messages")
+                            .thenApply(v -> ctx);
+                })
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    if (dkgUseRbc) {
+                        fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open))),
+                                "CGGMP_DKG_ROUND2_BROAD_RBC");
+                    } else {
+                        fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open))),
+                                "CGGMP_DKG_ROUND2_BROAD");
+                    }
+                }, dkgExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForDkgLatch(task, task.round2OpenReceivedLatch, "DKG Round 2 open messages")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    if (hdEnabled) {
+                        task.chainCode = xorChainCodeParts(task);
+                    }
+                    task.rid = xorRidParts(task);
+                    validatePendingRound3(task);
 
-        saveKeyShareToDatabase(task);
-        task.complete();
-        logger.info("CGGMP24 DKG (n-of-n) completed! Group public key: {}", task.groupPublicKeyHex);
+                    task.secretShare = ctx.x_i;
+                    PiSchProof psi_i = createSchProofWithAlpha(ctx.g, ctx.X_i, ctx.x_i, task.schAlphas.get(0),
+                            buildDkgContext(task.taskId, task.executionId, task.rid, nodeId, "SCH"));
+                    Map<String, Object> r3 = new HashMap<>();
+                    r3.put("taskId", task.taskId);
+                    r3.put("executionId", task.executionId);
+                    r3.put("senderId", nodeId);
+                    r3.put("psi", encodeSchProof(psi_i));
+                    fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND3, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND3, r3))),
+                            "CGGMP_DKG_ROUND3");
+                }, dkgExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForDkgLatch(task, task.round3ReceivedLatch, "DKG Round 3 messages")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    ECPoint groupPublicKey = ctx.g.getCurve().getInfinity();
+                    for (int peerId : task.participants) {
+                        Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
+                        if (sVec == null || sVec.get(0) == null) {
+                            throw new RuntimeException("Missing X_j from peer " + peerId);
+                        }
+                        groupPublicKey = groupPublicKey.add(sVec.get(0)).normalize();
+                    }
+                    task.groupPublicKey = groupPublicKey;
+                    task.groupPublicKeyHex = bytesToHex(groupPublicKey.getEncoded(false));
+
+                    saveKeyShareToDatabase(task);
+                    task.complete();
+                    logger.info("CGGMP24 DKG (n-of-n) completed! Group public key: {}", task.groupPublicKeyHex);
+                }, dkgExecutorService));
     }
 
-    private void runAuxProtocol(CggmpAuxTask task) throws Exception {
-        long auxStartNs = System.nanoTime();
-        BigInteger q = Secp256k1Curve.n();
-        long paillierStart = System.nanoTime();
-        PaillierEncryption paillier = new PaillierEncryption(auxPaillierBits);
-        logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, auxPaillierBits);
-        task.paillier = paillier;
-        long pedStart = System.nanoTime();
-        BigInteger[] ped = generateRefreshPedersen(paillier.getPublicKeyInfo().bitLength);
-        logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength);
-        task.hatN = ped[0];
-        task.s = ped[1];
-        task.t = ped[2];
-        task.pedersenLambda = ped[3];
+    private CompletableFuture<Void> runAuxProtocolAsync(CggmpAuxTask task) {
+        final long auxStartNs = System.nanoTime();
+        return CompletableFuture.supplyAsync(() -> {
+            long paillierStart = System.nanoTime();
+            PaillierEncryption paillier = new PaillierEncryption(auxPaillierBits);
+            logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, auxPaillierBits);
+            task.paillier = paillier;
+            long pedStart = System.nanoTime();
+            BigInteger[] ped = generateRefreshPedersen(paillier.getPublicKeyInfo().bitLength);
+            logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength);
+            task.hatN = ped[0];
+            task.s = ped[1];
+            task.t = ped[2];
+            task.pedersenLambda = ped[3];
 
-        byte[] rho_i = randomBytes(32);
-        byte[] u_i = randomBytes(32);
-        task.rho.put(nodeId, rho_i);
-        task.u.put(nodeId, u_i);
+            byte[] rho_i = randomBytes(32);
+            byte[] u_i = randomBytes(32);
+            task.rho.put(nodeId, rho_i);
+            task.u.put(nodeId, u_i);
 
-        PiPrmProof prmProof = RefreshProofs.createPrmProof(task.hatN, task.s, task.t, task.pedersenLambda,
-                buildAuxContext(task.taskId, task.executionId, nodeId, "PRM"));
-        task.prmProof = prmProof;
+            PiPrmProof prmProof = RefreshProofs.createPrmProof(task.hatN, task.s, task.t, task.pedersenLambda,
+                    buildAuxContext(task.taskId, task.executionId, nodeId, "PRM"));
+            task.prmProof = prmProof;
 
-        Map<String, Object> commitOpen = buildAuxCommitMap(task.taskId, task.executionId, nodeId, paillier.getPublicKeyInfo(),
-                task.hatN, task.s, task.t, prmProof, rho_i, u_i);
-        String vCommit = computeAuxCommitHash(task.executionId, task.taskId, nodeId,
-                CggmpDkgCodec.encodePaillierPublicKey(paillier.getPublicKeyInfo()),
-                task.hatN.toString(16), task.s.toString(16), task.t.toString(16),
-                CggmpDkgCodec.encodePiPrmProof(prmProof), rho_i, u_i);
-        task.commitHashes.put(nodeId, vCommit);
+            String vCommit = computeAuxCommitHash(task.executionId, task.taskId, nodeId,
+                    CggmpDkgCodec.encodePaillierPublicKey(paillier.getPublicKeyInfo()),
+                    task.hatN.toString(16), task.s.toString(16), task.t.toString(16),
+                    CggmpDkgCodec.encodePiPrmProof(prmProof), rho_i, u_i);
+            task.commitHashes.put(nodeId, vCommit);
 
-        Map<String, Object> r1 = new HashMap<>();
-        r1.put("taskId", task.taskId);
-        r1.put("executionId", task.executionId);
-        r1.put("senderId", nodeId);
-        r1.put("V", vCommit);
-        nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1, r1)).join();
-
-        long r1WaitStart = System.nanoTime();
-        if (!task.commitLatch.await(Constants.AUX_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            throw new RuntimeException("Timeout waiting for AUX R1");
-        }
-        logger.debug("AUX R1 complete in {} ms", (System.nanoTime() - r1WaitStart) / 1_000_000);
-
-        String echo = computeAuxEchoHash(task);
-        Map<String, Object> r1Echo = new HashMap<>();
-        r1Echo.put("taskId", task.taskId);
-        r1Echo.put("executionId", task.executionId);
-        r1Echo.put("senderId", nodeId);
-        r1Echo.put("hash", echo);
-        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)).join();
-
-        long r1EchoWaitStart = System.nanoTime();
-        if (!task.echoLatch.await(Constants.AUX_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            throw new RuntimeException("Timeout waiting for AUX R1 echo");
-        }
-        logger.debug("AUX R1 echo complete in {} ms", (System.nanoTime() - r1EchoWaitStart) / 1_000_000);
-
-        Map<String, Object> r2 = new HashMap<>();
-        r2.put("taskId", task.taskId);
-        r2.put("executionId", task.executionId);
-        r2.put("senderId", nodeId);
-        r2.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(paillier.getPublicKeyInfo()));
-        r2.put("hatN", task.hatN.toString(16));
-        r2.put("s", task.s.toString(16));
-        r2.put("t", task.t.toString(16));
-        r2.put("prmProof", CggmpDkgCodec.encodePiPrmProof(prmProof));
-        r2.put("rho", HexUtils.bytesToHex(rho_i));
-        r2.put("u", HexUtils.bytesToHex(u_i));
-        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R2, r2)).join();
-
-        long r2WaitStart = System.nanoTime();
-        if (!task.revealLatch.await(Constants.AUX_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            throw new RuntimeException("Timeout waiting for AUX R2");
-        }
-        logger.debug("AUX R2 complete in {} ms", (System.nanoTime() - r2WaitStart) / 1_000_000);
-
-        byte[] rho = xorAuxRho(task);
-        byte[] modCtx = buildAuxContext(task.taskId, task.executionId, nodeId, "MOD", rho);
-        long modProofStart = System.nanoTime();
-        BiPrimeBlumProof modProof = new BiPrimeProofGenerator().createProof(paillier.getPrivateKeyInfo(), modCtx);
-        logger.debug("AUX mod proof generated in {} ms", (System.nanoTime() - modProofStart) / 1_000_000);
-        Map<String, Object> facProofs = new HashMap<>();
-        for (int peerId : task.participants) {
-            if (peerId == nodeId) continue;
-            BigInteger hatN = task.peerHatN.get(peerId);
-            BigInteger s = task.peerS.get(peerId);
-            BigInteger t = task.peerT.get(peerId);
-            if (hatN == null || s == null || t == null) {
-                continue;
-            }
-            ZKSetup zk = new ZKSetup(hatN, s, t);
-            long facStart = System.nanoTime();
-            NoSmallFactorProof facProof = new NoSmallFactorProofGenerator(zk).createProof(paillier.getPrivateKeyInfo(), modCtx);
-            logger.debug("AUX fac proof generated for peer {} in {} ms", peerId, (System.nanoTime() - facStart) / 1_000_000);
-            facProofs.put(String.valueOf(peerId), CggmpDkgCodec.encodeNoSmallFactorProof(facProof));
-        }
-        Map<String, Object> r3 = new HashMap<>();
-        r3.put("taskId", task.taskId);
-        r3.put("executionId", task.executionId);
-        r3.put("senderId", nodeId);
-        r3.put("modProof", CggmpDkgCodec.encodeBiPrimeProof(modProof));
-        r3.put("facProofs", facProofs);
-        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R3, r3)).join();
-
-        long r3WaitStart = System.nanoTime();
-        if (!task.proofLatch.await(Constants.AUX_ROUND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-            throw new RuntimeException("Timeout waiting for AUX R3");
-        }
-        logger.debug("AUX R3 complete in {} ms", (System.nanoTime() - r3WaitStart) / 1_000_000);
-
-        saveAuxInfo(task);
-        logger.debug("AUX protocol completed in {} ms", (System.nanoTime() - auxStartNs) / 1_000_000);
+            Map<String, Object> r1 = new HashMap<>();
+            r1.put("taskId", task.taskId);
+            r1.put("executionId", task.executionId);
+            r1.put("senderId", nodeId);
+            r1.put("V", vCommit);
+            fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1, r1)),
+                    "CGGMP_AUX_R1_RBC");
+            return new AuxContext(task, paillier, prmProof, rho_i, u_i);
+        }, dkgExecutorService)
+                .thenCompose(ctx -> waitForLatchAsync(task.commitLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1")
+                        .exceptionally(ex -> {
+                            // Re-broadcast R1 once to cover missing peer delivery.
+                            fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1, Map.of(
+                                    "taskId", task.taskId,
+                                    "executionId", task.executionId,
+                                    "senderId", nodeId,
+                                    "V", task.commitHashes.get(nodeId)
+                            ))), "CGGMP_AUX_R1_RBC_RETRY");
+                            throw new CompletionException(ex);
+                        })
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    String echo = computeAuxEchoHash(task);
+                    Map<String, Object> r1Echo = new HashMap<>();
+                    r1Echo.put("taskId", task.taskId);
+                    r1Echo.put("executionId", task.executionId);
+                    r1Echo.put("senderId", nodeId);
+                    r1Echo.put("hash", echo);
+                    fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
+                            "CGGMP_AUX_R1_ECHO");
+                }, dkgExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForLatchAsync(task.echoLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1 echo")
+                        .exceptionally(ex -> {
+                            String echo = computeAuxEchoHash(task);
+                            if (echo != null) {
+                                Map<String, Object> r1Echo = new HashMap<>();
+                                r1Echo.put("taskId", task.taskId);
+                                r1Echo.put("executionId", task.executionId);
+                                r1Echo.put("senderId", nodeId);
+                                r1Echo.put("hash", echo);
+                                fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
+                                        "CGGMP_AUX_R1_ECHO_RETRY");
+                            }
+                            throw new CompletionException(ex);
+                        })
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    Map<String, Object> r2 = new HashMap<>();
+                    r2.put("taskId", task.taskId);
+                    r2.put("executionId", task.executionId);
+                    r2.put("senderId", nodeId);
+                    r2.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(ctx.paillier.getPublicKeyInfo()));
+                    r2.put("hatN", task.hatN.toString(16));
+                    r2.put("s", task.s.toString(16));
+                    r2.put("t", task.t.toString(16));
+                    r2.put("prmProof", CggmpDkgCodec.encodePiPrmProof(ctx.prmProof));
+                    r2.put("rho", HexUtils.bytesToHex(ctx.rho));
+                    r2.put("u", HexUtils.bytesToHex(ctx.u));
+                    fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R2, r2)),
+                            "CGGMP_AUX_R2");
+                }, dkgExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForLatchAsync(task.revealLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R2")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    byte[] rho = xorAuxRho(task);
+                    byte[] modCtx = buildAuxContext(task.taskId, task.executionId, nodeId, "MOD", rho);
+                    long modProofStart = System.nanoTime();
+                    BiPrimeBlumProof modProof = new BiPrimeProofGenerator().createProof(ctx.paillier.getPrivateKeyInfo(), modCtx);
+                    logger.debug("AUX mod proof generated in {} ms", (System.nanoTime() - modProofStart) / 1_000_000);
+                    Map<String, Object> facProofs = new HashMap<>();
+                    for (int peerId : task.participants) {
+                        if (peerId == nodeId) continue;
+                        BigInteger hatN = task.peerHatN.get(peerId);
+                        BigInteger s = task.peerS.get(peerId);
+                        BigInteger t = task.peerT.get(peerId);
+                        if (hatN == null || s == null || t == null) {
+                            continue;
+                        }
+                        ZKSetup zk = new ZKSetup(hatN, s, t);
+                        long facStart = System.nanoTime();
+                        NoSmallFactorProof facProof = new NoSmallFactorProofGenerator(zk).createProof(ctx.paillier.getPrivateKeyInfo(), modCtx);
+                        logger.debug("AUX fac proof generated for peer {} in {} ms", peerId, (System.nanoTime() - facStart) / 1_000_000);
+                        facProofs.put(String.valueOf(peerId), CggmpDkgCodec.encodeNoSmallFactorProof(facProof));
+                    }
+                    Map<String, Object> r3 = new HashMap<>();
+                    r3.put("taskId", task.taskId);
+                    r3.put("executionId", task.executionId);
+                    r3.put("senderId", nodeId);
+                    r3.put("modProof", CggmpDkgCodec.encodeBiPrimeProof(modProof));
+                    r3.put("facProofs", facProofs);
+                    fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R3, r3)),
+                            "CGGMP_AUX_R3");
+                }, dkgExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForLatchAsync(task.proofLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R3")
+                        .thenApply(v -> ctx))
+                .thenRunAsync(() -> {
+                    saveAuxInfo(task);
+                    logger.debug("AUX protocol completed in {} ms", (System.nanoTime() - auxStartNs) / 1_000_000);
+                }, dkgExecutorService);
     }
 
     private Map<String, Object> buildDkgRound1Payload(CggmpDkgTask task,
@@ -927,7 +988,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
             logger.info("Created DKG task {} on node {}", taskId, nodeId);
 
-            startDkgProcess(taskId);
+            startDkgProcessInternal(taskId, false);
         }
     }
 
@@ -961,9 +1022,17 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return;
         }
         try {
-            nodeService.waitForNetworkReady().join();
-            runAuxProtocol(task);
-            task.complete();
+            nodeService.waitForNetworkReady()
+                    .thenCompose(v -> runAuxProtocolAsync(task))
+                    .whenComplete((v, ex) -> {
+                        if (ex == null) {
+                            task.complete();
+                        } else {
+                            task.fail(ex.getMessage());
+                            logger.error("Error in CGGMP AUX process", ex);
+                        }
+                    });
+            return;
         } catch (Exception e) {
             task.fail(e.getMessage());
             logger.error("Error in CGGMP AUX process", e);
@@ -1247,6 +1316,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             task.round1PayloadHashes.put(senderNodeId, vCommit);
             task.round1ReceivedLatch.countDown();
         }
+        Map<String, Object> pendingOpen = task.pendingRound2Open.remove(senderNodeId);
+        if (pendingOpen != null) {
+            processDkgRound2Open(task, senderNodeId, pendingOpen);
+        }
         if (task.round1PayloadHashes.size() >= task.participants.size()) {
             if (dkgEchoEnabled) {
                 validatePendingRound1Echoes(task);
@@ -1299,7 +1372,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             evidence.put("receiverId", receiverId);
             evidence.put("sigma", sigmaHex);
             evidence.put("S", encodePointMapCompressed(S));
-            broadcastDkgComplaint(task, senderNodeId, "Invalid share in DKG Round2", evidence).join();
+            fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Invalid share in DKG Round2", evidence),
+                    "CGGMP_DKG_COMPLAINT");
             task.fail();
             task.errorMessage = "Invalid share from node " + senderNodeId;
             task.lastComplaintReason = "Invalid share in DKG Round2";
@@ -1350,9 +1424,37 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         open.put("S", sMap);
         open.put("A", aHex);
         open.put("u", uHex);
+        if (cHex != null) {
+            open.put("c", cHex);
+        }
+        processDkgRound2Open(task, senderNodeId, open);
+    }
+
+    private void processDkgRound2Open(CggmpDkgTask task, int senderNodeId, Map<String, Object> open) {
+        String taskId = (String) open.get("taskId");
+        String executionId = (String) open.get("executionId");
+        String ridPartHex = (String) open.get("ridPart");
+        Map<?, ?> sMap = (Map<?, ?>) open.get("S");
+        String aHex = (String) open.get("A");
+        String uHex = (String) open.get("u");
+        String cHex = (String) open.get("c");
+        if (taskId == null) {
+            taskId = task.taskId;
+        }
+        if (executionId == null) {
+            executionId = task.executionId;
+        }
+        if (ridPartHex == null || sMap == null || aHex == null || uHex == null) {
+            return;
+        }
         String expected = task.round1PayloadHashes.get(senderNodeId);
+        if (expected == null) {
+            task.pendingRound2Open.put(senderNodeId, open);
+            logger.debug("Cached DKG Round2 open from node {} for task {} (waiting for Round1 commit)", senderNodeId, taskId);
+            return;
+        }
         String actual = computeDkgCommitHashFromWire(executionId, taskId, senderNodeId, ridPartHex, sMap, aHex, uHex, cHex);
-        if (expected == null || !expected.equals(actual)) {
+        if (!expected.equals(actual)) {
             Map<String, Object> evidence = new HashMap<>();
             evidence.put("senderId", senderNodeId);
             evidence.put("expected", expected);
@@ -1364,7 +1466,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (cHex != null) {
                 evidence.put("c", cHex);
             }
-            broadcastDkgComplaint(task, senderNodeId, "Round1 commit mismatch", evidence).join();
+            fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Round1 commit mismatch", evidence),
+                    "CGGMP_DKG_COMPLAINT");
             task.fail();
             task.errorMessage = "Round1 commit mismatch from node " + senderNodeId
                     + " expected=" + expected + " actual=" + actual;
@@ -1377,7 +1480,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             Map<String, Object> evidence = new HashMap<>();
             evidence.put("senderId", senderNodeId);
             evidence.put("c", cHex);
-            broadcastDkgComplaint(task, senderNodeId, "Invalid chain code part in DKG Round2", evidence).join();
+            fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Invalid chain code part in DKG Round2", evidence),
+                    "CGGMP_DKG_COMPLAINT");
             task.fail();
             task.errorMessage = "Invalid chain code part from node " + senderNodeId;
             task.lastComplaintReason = "Invalid chain code part in DKG Round2";
@@ -1398,7 +1502,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             Map<String, Object> evidence = new HashMap<>();
             evidence.put("senderId", senderNodeId);
             evidence.put("error", e.getMessage());
-            broadcastDkgComplaint(task, senderNodeId, "Invalid Round2 open encoding", evidence).join();
+            fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Invalid Round2 open encoding", evidence),
+                    "CGGMP_DKG_COMPLAINT");
             task.fail();
             task.errorMessage = "Invalid Round2 open encoding from node " + senderNodeId;
             task.lastComplaintReason = "Invalid Round2 open encoding";
@@ -1411,7 +1516,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             evidence.put("senderId", senderNodeId);
             evidence.put("expected", threshold);
             evidence.put("actual", S.size());
-            broadcastDkgComplaint(task, senderNodeId, "Invalid commitment vector size in DKG Round2", evidence).join();
+            fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Invalid commitment vector size in DKG Round2", evidence),
+                    "CGGMP_DKG_COMPLAINT");
             task.fail();
             task.errorMessage = "Invalid commitment vector size from node " + senderNodeId;
             task.lastComplaintReason = "Invalid commitment vector size in DKG Round2";
@@ -1424,7 +1530,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             evidence.put("senderId", senderNodeId);
             evidence.put("expected", 1);
             evidence.put("actual", S.size());
-            broadcastDkgComplaint(task, senderNodeId, "Invalid commitment vector size in DKG Round2", evidence).join();
+            fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Invalid commitment vector size in DKG Round2", evidence),
+                    "CGGMP_DKG_COMPLAINT");
             task.fail();
             task.errorMessage = "Invalid commitment vector size from node " + senderNodeId;
             task.lastComplaintReason = "Invalid commitment vector size in DKG Round2";
@@ -1518,105 +1625,100 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         final Map<Integer, ECPoint> XjkFinal = Xjk;
         final Map<Integer, ECPoint> AjkFinal = Ajk;
 
-        CompletableFuture.runAsync(() -> {
-            try {
-                byte[] modCtx = buildDkgContext(taskFinal.taskId, taskFinal.executionId, taskFinal.rid, senderNodeIdFinal, "MOD");
-                NoSmallFactorProofValidator facValidator = taskFinal.noSmallFactorValidators.computeIfAbsent(senderNodeIdFinal, k -> new NoSmallFactorProofValidator(zkFinal));
-                Boolean cached = taskFinal.modFacVerified.get(senderNodeIdFinal);
-                boolean modFacOk;
-                if (cached != null) {
-                    modFacOk = cached;
-                } else if (taskFinal.round2ModFacVerifyFutures.containsKey(senderNodeIdFinal)) {
-                    modFacOk = taskFinal.round2ModFacVerifyFutures.get(senderNodeIdFinal).join();
-                } else {
-                    long verifyStart = System.nanoTime();
-                    CompletableFuture<Boolean> modFuture = CompletableFuture.supplyAsync(
-                            () -> BI_PRIME_VALIDATOR.verifyProof(modProofFinal, pkFinal, modCtx), dkgExecutorService);
-                    CompletableFuture<Boolean> facFuture = CompletableFuture.supplyAsync(
-                            () -> facValidator.verifyProof(facProofFinal, pkFinal, modCtx), dkgExecutorService);
-                    boolean modOk = modFuture.join();
-                    boolean facOk = facFuture.join();
-                    modFacOk = modOk && facOk;
-                    taskFinal.modFacVerified.put(senderNodeIdFinal, modFacOk);
-                    logger.debug("DKG Round2 mod/fac proof verify took {} ms", (System.nanoTime() - verifyStart) / 1_000_000);
-                }
-                if (!modFacOk) {
-                    logger.warn("Invalid PiMod/Blum or PiFac/NoSmallFactor proof from node {}", senderNodeIdFinal);
-                    Map<String, Object> evidence = new HashMap<>();
-                    evidence.put("senderId", senderNodeIdFinal);
-                    evidence.put("modProof", modMap);
-                    evidence.put("facProof", facMap);
-                    broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid PiMod/PiFac proof in DKG Round2", evidence).join();
-                    taskFinal.lastComplaintReason = "Invalid PiMod/PiFac proof in DKG Round2";
-                    taskFinal.lastComplaintOffenderId = senderNodeIdFinal;
-                    taskFinal.lastComplaintEvidence = evidence;
-                    return;
-                }
+        CompletableFuture<Boolean> modFacFuture;
+        Boolean cached = taskFinal.modFacVerified.get(senderNodeIdFinal);
+        if (cached != null) {
+            modFacFuture = CompletableFuture.completedFuture(cached);
+        } else if (taskFinal.round2ModFacVerifyFutures.containsKey(senderNodeIdFinal)) {
+            modFacFuture = taskFinal.round2ModFacVerifyFutures.get(senderNodeIdFinal);
+        } else {
+            byte[] modCtx = buildDkgContext(taskFinal.taskId, taskFinal.executionId, taskFinal.rid, senderNodeIdFinal, "MOD");
+            NoSmallFactorProofValidator facValidator = taskFinal.noSmallFactorValidators.computeIfAbsent(senderNodeIdFinal, k -> new NoSmallFactorProofValidator(zkFinal));
+            CompletableFuture<Boolean> modFuture = CompletableFuture.supplyAsync(
+                    () -> BI_PRIME_VALIDATOR.verifyProof(modProofFinal, pkFinal, modCtx), dkgExecutorService);
+            CompletableFuture<Boolean> facFuture = CompletableFuture.supplyAsync(
+                    () -> facValidator.verifyProof(facProofFinal, pkFinal, modCtx), dkgExecutorService);
+            modFacFuture = modFuture.thenCombine(facFuture, (modOk, facOk) -> modOk && facOk);
+            taskFinal.round2ModFacVerifyFutures.put(senderNodeIdFinal, modFacFuture);
+        }
 
-                long schVerifyStart = System.nanoTime();
-                boolean schOk;
-                if (taskFinal.round2SchVerifyFutures.containsKey(senderNodeIdFinal)) {
-                    schOk = taskFinal.round2SchVerifyFutures.get(senderNodeIdFinal).join();
-                } else {
-                    schOk = verifySchProofsParallel(taskFinal, senderNodeIdFinal, schProofsFinal, XjkFinal, AjkFinal);
-                }
-                if (!schOk) {
-                    logger.warn("Invalid PiSch proof(s) from node {}", senderNodeIdFinal);
-                    Map<String, Object> evidence = new HashMap<>();
-                    evidence.put("senderId", senderNodeIdFinal);
-                    evidence.put("schProofs", schMap);
-                    broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid PiSch proof in DKG Round2", evidence).join();
-                    taskFinal.lastComplaintReason = "Invalid PiSch proof in DKG Round2";
-                    taskFinal.lastComplaintOffenderId = senderNodeIdFinal;
-                    taskFinal.lastComplaintEvidence = evidence;
-                    return;
-                }
-                logger.debug("DKG Round2 Sch proof verify took {} ms", (System.nanoTime() - schVerifyStart) / 1_000_000);
+        CompletableFuture<Boolean> schFuture = taskFinal.round2SchVerifyFutures.computeIfAbsent(senderNodeIdFinal,
+                k -> verifySchProofsParallelAsync(taskFinal, senderNodeIdFinal, schProofsFinal, XjkFinal, AjkFinal));
 
-                ECPoint Yji = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(yHexFinal));
-                BigInteger Cji = new BigInteger(cHexFinal, 16);
-                BigInteger rho = deriveDkgMask(taskFinal.taskId, taskFinal.rid, senderNodeIdFinal, nodeId, Yji);
-                BigInteger xji = Cji.subtract(rho).mod(Secp256k1Curve.n());
-                ECPoint expected = computeExpectedShareFromXjk(XjkFinal, taskFinal.evalPowers);
-                ECPoint actual = Secp256k1Curve.G().multiply(xji).normalize();
-                if (!actual.equals(expected)) {
-                    logger.warn("Invalid share from node {} for receiver {}", senderNodeIdFinal, nodeId);
-                    Map<String, Object> evidence = new HashMap<>();
-                    evidence.put("senderId", senderNodeIdFinal);
-                    evidence.put("receiverId", nodeId);
-                    evidence.put("C", cHexFinal);
-                    evidence.put("Y", yHexFinal);
-                    evidence.put("expected", HexUtils.bytesToHex(expected.getEncoded(true)));
-                    evidence.put("actual", HexUtils.bytesToHex(actual.getEncoded(true)));
-                    broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid share in DKG Round2", evidence).join();
-                    taskFinal.fail();
-                    taskFinal.errorMessage = "Invalid share from node " + senderNodeIdFinal;
-                    taskFinal.lastComplaintReason = "Invalid share in DKG Round2";
-                    taskFinal.lastComplaintOffenderId = senderNodeIdFinal;
-                    taskFinal.lastComplaintEvidence = evidence;
-                    return;
-                }
-
-                taskFinal.xji.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, xji);
-                taskFinal.Yji.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, Yji);
-                taskFinal.Cji.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, Cji);
-                taskFinal.modProofs.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, modProofFinal);
-                taskFinal.facProofs.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, facProofFinal);
-                taskFinal.round2Evidence.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(String.valueOf(nodeId), Map.of(
-                        "C", cHexFinal,
-                        "Y", yHexFinal,
-                        "schProofs", schMap,
-                        "modProof", modMap,
-                        "facProof", facMap
-                ));
-                taskFinal.round2Received.put(senderNodeIdFinal, Boolean.TRUE);
-                taskFinal.round2ReceivedLatch.countDown();
-            } catch (Exception e) {
-                logger.error("Error handling CGGMP_DKG_ROUND2 (async verify): {}", e.getMessage(), e);
-            } finally {
-                taskFinal.round2Processing.remove(senderNodeIdFinal);
+        modFacFuture.thenCompose(modFacOk -> {
+            if (!modFacOk) {
+                logger.warn("Invalid PiMod/Blum or PiFac/NoSmallFactor proof from node {}", senderNodeIdFinal);
+                Map<String, Object> evidence = new HashMap<>();
+                evidence.put("senderId", senderNodeIdFinal);
+                evidence.put("modProof", modMap);
+                evidence.put("facProof", facMap);
+                fireAndForget(broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid PiMod/PiFac proof in DKG Round2", evidence),
+                        "CGGMP_DKG_COMPLAINT");
+                taskFinal.lastComplaintReason = "Invalid PiMod/PiFac proof in DKG Round2";
+                taskFinal.lastComplaintOffenderId = senderNodeIdFinal;
+                taskFinal.lastComplaintEvidence = evidence;
+                return CompletableFuture.completedFuture(false);
             }
-        }, dkgExecutorService);
+            return schFuture;
+        }).thenAccept(schOk -> {
+            if (!schOk) {
+                logger.warn("Invalid PiSch proof(s) from node {}", senderNodeIdFinal);
+                Map<String, Object> evidence = new HashMap<>();
+                evidence.put("senderId", senderNodeIdFinal);
+                evidence.put("schProofs", schMap);
+                fireAndForget(broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid PiSch proof in DKG Round2", evidence),
+                        "CGGMP_DKG_COMPLAINT");
+                taskFinal.lastComplaintReason = "Invalid PiSch proof in DKG Round2";
+                taskFinal.lastComplaintOffenderId = senderNodeIdFinal;
+                taskFinal.lastComplaintEvidence = evidence;
+                return;
+            }
+
+            ECPoint Yji = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(yHexFinal));
+            BigInteger Cji = new BigInteger(cHexFinal, 16);
+            BigInteger rho = deriveDkgMask(taskFinal.taskId, taskFinal.rid, senderNodeIdFinal, nodeId, Yji);
+            BigInteger xji = Cji.subtract(rho).mod(Secp256k1Curve.n());
+            ECPoint expected = computeExpectedShareFromXjk(XjkFinal, taskFinal.evalPowers);
+            ECPoint actual = Secp256k1Curve.G().multiply(xji).normalize();
+            if (!actual.equals(expected)) {
+                logger.warn("Invalid share from node {} for receiver {}", senderNodeIdFinal, nodeId);
+                Map<String, Object> evidence = new HashMap<>();
+                evidence.put("senderId", senderNodeIdFinal);
+                evidence.put("receiverId", nodeId);
+                evidence.put("C", cHexFinal);
+                evidence.put("Y", yHexFinal);
+                evidence.put("expected", HexUtils.bytesToHex(expected.getEncoded(true)));
+                evidence.put("actual", HexUtils.bytesToHex(actual.getEncoded(true)));
+                fireAndForget(broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid share in DKG Round2", evidence),
+                        "CGGMP_DKG_COMPLAINT");
+                taskFinal.fail();
+                taskFinal.errorMessage = "Invalid share from node " + senderNodeIdFinal;
+                taskFinal.lastComplaintReason = "Invalid share in DKG Round2";
+                taskFinal.lastComplaintOffenderId = senderNodeIdFinal;
+                taskFinal.lastComplaintEvidence = evidence;
+                return;
+            }
+
+            taskFinal.xji.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, xji);
+            taskFinal.Yji.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, Yji);
+            taskFinal.Cji.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, Cji);
+            taskFinal.modProofs.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, modProofFinal);
+            taskFinal.facProofs.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, facProofFinal);
+            taskFinal.round2Evidence.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(String.valueOf(nodeId), Map.of(
+                    "C", cHexFinal,
+                    "Y", yHexFinal,
+                    "schProofs", schMap,
+                    "modProof", modMap,
+                    "facProof", facMap
+            ));
+            taskFinal.round2Received.put(senderNodeIdFinal, Boolean.TRUE);
+            taskFinal.round2ReceivedLatch.countDown();
+        }).whenComplete((v, ex) -> {
+            if (ex != null) {
+                logger.error("Error handling CGGMP_DKG_ROUND2 (async verify): {}", ex.getMessage(), ex);
+            }
+            taskFinal.round2Processing.remove(senderNodeIdFinal);
+        });
     }
 
     @SuppressWarnings("unchecked")
@@ -1692,8 +1794,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         if (!expected.equals(hash)) {
             logger.warn("Round1 echo mismatch from node {} (task {})", senderNodeId, taskId);
-            broadcastDkgComplaint(task, senderNodeId, "Round1 echo mismatch",
-                    Map.of("senderId", senderNodeId, "expected", expected, "received", hash)).join();
+            fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Round1 echo mismatch",
+                    Map.of("senderId", senderNodeId, "expected", expected, "received", hash)),
+                    "CGGMP_DKG_COMPLAINT");
             task.fail();
             task.errorMessage = "Round1 echo mismatch from node " + senderNodeId
                     + " expected=" + expected + " received=" + hash;
@@ -1723,8 +1826,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             String hash = e.getValue();
             if (!expected.equals(hash)) {
                 logger.warn("Round1 echo mismatch from node {} (task {})", senderId, task.taskId);
-                broadcastDkgComplaint(task, senderId, "Round1 echo mismatch",
-                        Map.of("senderId", senderId, "expected", expected, "received", hash)).join();
+                fireAndForget(broadcastDkgComplaint(task, senderId, "Round1 echo mismatch",
+                        Map.of("senderId", senderId, "expected", expected, "received", hash)),
+                        "CGGMP_DKG_COMPLAINT");
                 task.fail();
                 task.errorMessage = "Round1 echo mismatch from node " + senderId
                         + " expected=" + expected + " received=" + hash;
@@ -1802,7 +1906,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         ECPoint X = computePublicShare(task, senderNodeId);
         byte[] ctx = buildDkgContext(task.taskId, task.executionId, task.rid, senderNodeId, "SCH");
         if (!verifySchProofWithCommitment(Secp256k1Curve.G(), X, A, proof.z(), ctx)) {
-            broadcastDkgComplaint(task, senderNodeId, "Invalid Schnorr proof in DKG Round3", Map.of("senderId", senderNodeId)).join();
+            fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Invalid Schnorr proof in DKG Round3", Map.of("senderId", senderNodeId)),
+                    "CGGMP_DKG_COMPLAINT");
             task.fail();
             task.errorMessage = "Invalid Schnorr proof from node " + senderNodeId;
             return;
@@ -1911,7 +2016,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 String newExecutionId = dataMap.get("executionId") instanceof String v ? v : UUID.randomUUID().toString();
                 CggmpDkgTask newTask = createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, participants, senderId);
                 dkgTasks.putIfAbsent(newTaskId, newTask);
-                startDkgProcess(newTaskId);
+                startDkgProcessInternal(newTaskId, false);
             }
         }
     }
@@ -1965,7 +2070,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         CggmpDkgTask newTask = createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, newParticipants, task.initiatorId);
         dkgTasks.putIfAbsent(newTaskId, newTask);
         logger.warn("DKG exclusion: offender {} removed, restarting DKG task {}", offenderId, newTaskId);
-        broadcastDkgExclude(task, offenderId, reason, newTaskId, newParticipants, newExecutionId).join();
+        fireAndForget(broadcastDkgExclude(task, offenderId, reason, newTaskId, newParticipants, newExecutionId),
+                "CGGMP_DKG_EXCLUDE");
         startDkgProcess(newTaskId);
         task.fail();
         task.errorMessage = "DKG restart after excluding offender " + offenderId;
@@ -2075,7 +2181,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private AuxInfo loadLatestAuxInfo(int nodeId) {
-        AuxInfo info = auxInfoDao.loadLatest(nodeId).join();
+        AuxInfo info = auxInfoDao.loadLatestSync(nodeId);
         if (info != null && auxPaillier == null) {
             try {
                 BigInteger p = new BigInteger(info.getPaillierP(), 16);
@@ -2151,27 +2257,31 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return CompletableFuture.failedFuture(new RuntimeException("Failed to start signature task"));
         }
 
-        return CompletableFuture.runAsync(() -> {
-            try {
-                initSignatureContext(task);
-                if (broadcastInit) {
-                    broadcastOfflineInit(task).join();
-                }
-                runOfflinePhase(task).join();
-                if (broadcastInit) {
-                    if (!task.offlineReadyLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                        throw new RuntimeException("Timeout waiting for offline ready");
+        try {
+            initSignatureContext(task);
+        } catch (Exception e) {
+            task.fail(e.getMessage());
+            return CompletableFuture.failedFuture(e);
+        }
+
+        CompletableFuture<Void> flow = (broadcastInit ? broadcastOfflineInit(task) : CompletableFuture.completedFuture(null))
+                .thenCompose(v -> runOfflinePhase(task))
+                .thenCompose(v -> {
+                    if (!broadcastInit) {
+                        return CompletableFuture.completedFuture(null);
                     }
-                    broadcastOnlineInit(task).join();
-                }
-                runOnlinePhase(task).join();
-            } catch (Exception e) {
-                logger.error("Error in CGGMP signature process: {}", e.getMessage());
-                task.fail(e.getMessage());
+                    return waitForLatchAsync(task.offlineReadyLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "offline ready")
+                            .thenCompose(v2 -> broadcastOnlineInit(task));
+                })
+                .thenCompose(v -> runOnlinePhase(task));
+
+        return flow.whenComplete((v, ex) -> {
+            if (ex != null) {
+                logger.error("Error in CGGMP signature process: {}", ex.getMessage());
+                task.fail(ex.getMessage());
                 signatureInProgress.set(false);
-                throw new RuntimeException(e);
             }
-        }, ThreadPoolUtil.getIoThreadPool());
+        });
     }
 
     public SignatureTaskStatusResponse getSignatureTaskStatus(String taskId) {
@@ -2238,7 +2348,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (task.publicShares != null && task.indexMap != null) {
             return;
         }
-        KeyShare keyShare = loadKeyShareByGroupPublicKey(task.groupPublicKey).join();
+        KeyShare keyShare = loadKeyShareByGroupPublicKeySync(task.groupPublicKey);
         if (keyShare == null) {
             throw new RuntimeException("Key share not found");
         }
@@ -2258,7 +2368,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private CompletableFuture<Void> runOfflinePhase(Gg20SignatureTask task) {
-        return CompletableFuture.runAsync(() -> {
+        CompletableFuture<PresignR1Context> r1Future = CompletableFuture.supplyAsync(() -> {
             try {
                 BigInteger curveOrder = Secp256k1Curve.n();
                 initSignaturePaillier(task);
@@ -2335,350 +2445,239 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     logger.warn("Local PiEncElg proof (G) failed before broadcast, task {}: eq1={}, eq2={}, eq3={}, eq4={}, z1InRange={}",
                             task.taskId, localEncElgG.eq1(), localEncElgG.eq2(), localEncElgG.eq3(), localEncElgG.eq4(), localEncElgG.z1InRange());
                 }
-                broadcastPresignR1(task, K, G, Y_i, A1, A2, B1, B2, encElgK, encElgG).join();
-                if (!task.gammaCommitLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    throw new RuntimeException("Timeout waiting for presign R1");
-                }
-                if (presignEchoEnabled) {
-                    broadcastPresignR1Echo(task).join();
-                    if (!task.presignR1EchoLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                        throw new RuntimeException("Timeout waiting for presign R1 echo");
-                    }
-                }
-                logger.info("Presign R1 completed for task {}, proceeding to R2", task.taskId);
-
-                // Round 2: compute Γ_i and D/F/D̂/F̂ for each peer.
-                ECPoint Gamma_i = Secp256k1Curve.multiply(Secp256k1Curve.G(), gamma_i);
-                Map<Integer, BigInteger> D = new HashMap<>();
-                Map<Integer, BigInteger> Dhat = new HashMap<>();
-                Map<Integer, BigInteger> F = new HashMap<>();
-                Map<Integer, BigInteger> Fhat = new HashMap<>();
-                BigInteger x_i_raw = loadLocalShare(task.groupPublicKey);
-                BigInteger lambda_i = computeSignatureLagrange(task, nodeId, curveOrder);
-                BigInteger x_i = x_i_raw.multiply(lambda_i).mod(curveOrder);
-                ECPoint X_i = resolvePublicShare(task, nodeId, lambda_i, x_i);
-                Map<Integer, PiAffGProof> affGProofs = new HashMap<>();
-                Map<Integer, PiAffGProof> affGProofsHat = new HashMap<>();
-                int skippedPeers = 0;
-                long r2StartNs = System.nanoTime();
-                logger.info("Presign R2 starting proof generation for task {} (peers={})", task.taskId, task.participants.size() - 1);
-                List<CompletableFuture<PeerR2Result>> r2Futures = new ArrayList<>();
-                for (int peerId : task.participants) {
-                    if (peerId == nodeId) continue;
-                    r2Futures.add(CompletableFuture.supplyAsync(() -> {
-                        long peerStartNs = System.nanoTime();
-                        PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(peerId);
-                        BigInteger K_peer = task.presignK.get(peerId);
-                        if (pk == null || K_peer == null) {
-                            return PeerR2Result.skipped(peerId);
-                        }
-                        BigInteger beta = randomNonZero(curveOrder);
-                        BigInteger betaHat = randomNonZero(curveOrder);
-                        PaillierEncryption.Encryption encNegBeta = pk.encryptWithRandomness(negateModN(beta, pk.n));
-                        PaillierEncryption.Encryption encNegBetaHat = pk.encryptWithRandomness(negateModN(betaHat, pk.n));
-                        BigInteger D_ji = pk.multiply(K_peer, gamma_i).multiply(encNegBeta.c).mod(pk.nSquared);
-                        BigInteger Dhat_ji = pk.multiply(K_peer, x_i).multiply(encNegBetaHat.c).mod(pk.nSquared);
-                        PaillierEncryption.Encryption encBeta = task.paillier.getPublicKeyInfo().encryptWithRandomness(beta);
-                        PaillierEncryption.Encryption encBetaHat = task.paillier.getPublicKeyInfo().encryptWithRandomness(betaHat);
-                        BigInteger F_ji = encBeta.c;
-                        BigInteger Fhat_ji = encBetaHat.c;
-                        PiAffGProof proof = PresignProofs.createAffGProofNegY(
-                                Secp256k1Curve.G(), Gamma_i, pk.n, task.paillier.getPublicKeyInfo().n,
-                                K_peer, D_ji, F_ji, gamma_i, beta, encNegBeta.r, encBeta.r, proofKappa, proofEpsBits, buildPresignContext(task.taskId, nodeId, "R2")
-                        );
-                        PiAffGProof proofHat = PresignProofs.createAffGProofNegY(
-                                Secp256k1Curve.G(), X_i, pk.n, task.paillier.getPublicKeyInfo().n,
-                                K_peer, Dhat_ji, Fhat_ji, x_i, betaHat, encNegBetaHat.r, encBetaHat.r, proofKappa, proofEpsBits, buildPresignContext(task.taskId, nodeId, "R2H")
-                        );
-                        long peerMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - peerStartNs);
-                        return PeerR2Result.done(peerId, beta, betaHat, D_ji, Dhat_ji, F_ji, Fhat_ji,
-                                encNegBeta.r, encBeta.r, encNegBetaHat.r, encBetaHat.r, proof, proofHat, peerMs);
-                    }, dkgExecutorService));
-                }
-                CompletableFuture.allOf(r2Futures.toArray(new CompletableFuture[0])).join();
-                for (CompletableFuture<PeerR2Result> future : r2Futures) {
-                    PeerR2Result result = future.join();
-                    if (result.skipped) {
-                        skippedPeers++;
-                        continue;
-                    }
-                    int peerId = result.peerId;
-                    task.presignBeta.put(peerId, result.beta);
-                    task.presignBetaHat.put(peerId, result.betaHat);
-                    D.put(peerId, result.d);
-                    Dhat.put(peerId, result.dhat);
-                    F.put(peerId, result.f);
-                    Fhat.put(peerId, result.fhat);
-                    task.presignFOutgoing.put(peerId, result.f);
-                    task.presignFhatOutgoing.put(peerId, result.fhat);
-                    task.presignRho.put(peerId, result.rho);
-                    task.presignMu.put(peerId, result.mu);
-                    task.presignRhoHat.put(peerId, result.rhoHat);
-                    task.presignMuHat.put(peerId, result.muHat);
-                    affGProofs.put(peerId, result.proof);
-                    affGProofsHat.put(peerId, result.proofHat);
-                    logger.debug("Presign R2 proof generated for task {} peer {} in {} ms", task.taskId, peerId, result.peerMs);
-                }
-                long r2Ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - r2StartNs);
-                logger.info("Presign R2 prepared for task {}: peers={}, proofs={}, skipped={}",
-                        task.taskId, task.participants.size() - 1, affGProofs.size(), skippedPeers);
-                logger.debug("Presign R2 proof generation total time for task {}: {} ms", task.taskId, r2Ms);
-
-                ECPoint Y_i_r2 = task.presignY.get(nodeId);
-                ECPoint B1_r2 = task.presignB1.get(nodeId);
-                ECPoint B2_r2 = task.presignB2.get(nodeId);
-                if (Y_i_r2 == null || B1_r2 == null || B2_r2 == null || task.presignBScalar == null) {
-                    throw new RuntimeException("Missing presign R1 commitments for PiLog proof");
-                }
-                byte[] ctxR2 = buildPresignContext(task.taskId, nodeId, "R2");
-                PiLogProof logProof = PresignProofs.createLogProof(
-                        Secp256k1Curve.G(),
-                        Secp256k1Curve.G(),
-                        Gamma_i,
-                        Y_i_r2,
-                        B1_r2,
-                        B2_r2,
-                        gamma_i,
-                        task.presignBScalar,
-                        ctxR2
-                );
-                broadcastPresignR2(task, Gamma_i, D, Dhat, F, Fhat, affGProofs, affGProofsHat, logProof, X_i).join();
-                logger.info("Presign R2 broadcasted for task {}", task.taskId);
-
-                if (!task.presignR2Latch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    throw new RuntimeException("Timeout waiting for presign R2");
-                }
-
-                // Round 3: decrypt alphas, compute delta/chi, broadcast.
-                BigInteger delta_i = gamma_i.multiply(task.k_i).mod(curveOrder);
-                BigInteger chi_i = x_i.multiply(task.k_i).mod(curveOrder);
-                List<Integer> missingR3Peers = new ArrayList<>();
-                for (int peerId : task.participants) {
-                    if (peerId == nodeId) continue;
-                    BigInteger D_ij = task.presignD.get(peerId);
-                    BigInteger Dhat_ij = task.presignDhat.get(peerId);
-                    BigInteger beta = task.presignBeta.get(peerId);
-                    BigInteger betaHat = task.presignBetaHat.get(peerId);
-                    if (D_ij == null || Dhat_ij == null || beta == null || betaHat == null) {
-                        logger.warn("Presign R3 missing inputs for task {} peer {}: D={}, Dhat={}, beta={}, betaHat={}",
-                                task.taskId,
-                                peerId,
-                                D_ij == null ? null : D_ij.toString(16),
-                                Dhat_ij == null ? null : Dhat_ij.toString(16),
-                                beta == null ? null : beta.toString(16),
-                                betaHat == null ? null : betaHat.toString(16));
-                        missingR3Peers.add(peerId);
-                        continue;
-                    }
-                    BigInteger alpha = decodeSigned(task.paillier.decrypt(D_ij), task.paillier.getPublicKeyInfo().n);
-                    BigInteger alphaHat = decodeSigned(task.paillier.decrypt(Dhat_ij), task.paillier.getPublicKeyInfo().n);
-                    BigInteger oldDelta = delta_i;
-                    BigInteger oldChi = chi_i;
-                    delta_i = delta_i.add(alpha).add(beta).mod(curveOrder);
-                    chi_i = chi_i.add(alphaHat).add(betaHat).mod(curveOrder);
-                    logger.info("Presign R3 accumulate task {} peer {}: alpha={}, beta={}, alphaHat={}, betaHat={}, delta_i: {} -> {}, chi_i: {} -> {}",
-                            task.taskId,
-                            peerId,
-                            alpha.toString(16),
-                            beta.toString(16),
-                            alphaHat.toString(16),
-                            betaHat.toString(16),
-                            oldDelta.toString(16),
-                            delta_i.toString(16),
-                            oldChi.toString(16),
-                            chi_i.toString(16));
-                }
-                if (!missingR3Peers.isEmpty()) {
-                    throw new RuntimeException("Presign R3 missing inputs from peers: " + missingR3Peers);
-                }
-                ECPoint Gamma = sumPresignGamma(task);
-                ECPoint Delta_i = Gamma.multiply(task.k_i).normalize();
-                ECPoint S_i = Gamma.multiply(chi_i).normalize();
-                task.presignDelta.put(nodeId, delta_i);
-                task.presignDeltaPoint.put(nodeId, Delta_i);
-                task.presignSPoint.put(nodeId, S_i);
-                byte[] ctxR3 = buildPresignContext(task.taskId, nodeId, "R3");
-                ECPoint Y_i_r3 = task.presignY.get(nodeId);
-                ECPoint A1_r3 = task.presignA1.get(nodeId);
-                ECPoint A2_r3 = task.presignA2.get(nodeId);
-                if (Y_i_r3 == null || A1_r3 == null || A2_r3 == null || task.presignAScalar == null) {
-                    throw new RuntimeException("Missing presign R1 commitments for PiLog proof (R3)");
-                }
-                PiLogProof logProofR3 = PresignProofs.createLogProof(
-                        Secp256k1Curve.G(),
-                        Gamma,
-                        Delta_i,
-                        Y_i_r3,
-                        A1_r3,
-                        A2_r3,
-                        task.k_i,
-                        task.presignAScalar,
-                        ctxR3
-                );
-                broadcastPresignR3(task, delta_i, Delta_i, S_i, logProofR3).join();
-                if (!task.offlineDoneLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    throw new RuntimeException("Timeout waiting for presign R3");
-                }
-
-                BigInteger delta = sumShares(task.presignDelta, curveOrder);
-                ECPoint left = Secp256k1Curve.multiply(Secp256k1Curve.G(), delta);
-                ECPoint right = sumPoints(task.presignDeltaPoint);
-                if (!left.equals(right)) {
-                    logger.warn("Presign delta verification mismatch for task {}: left={}, right={}, delta={}, participants={}",
-                            task.taskId,
-                            HexUtils.bytesToHex(Secp256k1Curve.encodePoint(left)),
-                            HexUtils.bytesToHex(Secp256k1Curve.encodePoint(right)),
-                            delta.toString(16),
-                            task.participants);
-                    Map<String, Object> evidence = buildDecEvidenceDelta(task, gamma_i, delta_i);
-                    broadcastComplaint(task, null, "Presign delta verification failed", evidence).join();
-                    failSignatureTask(task, "Presign delta verification failed");
-                    return;
-                }
-                ECPoint X = task.groupPublicKeyPoint;
-                ECPoint leftS = X.multiply(delta).normalize();
-                ECPoint rightS = sumPoints(task.presignSPoint);
-                if (!leftS.equals(rightS)) {
-                    logger.warn("Presign chi verification mismatch for task {}: leftS={}, rightS={}, delta={}, participants={}",
-                            task.taskId,
-                            HexUtils.bytesToHex(Secp256k1Curve.encodePoint(leftS)),
-                            HexUtils.bytesToHex(Secp256k1Curve.encodePoint(rightS)),
-                            delta.toString(16),
-                            task.participants);
-                    for (int peerId : task.participants) {
-                        ECPoint sPoint = task.presignSPoint.get(peerId);
-                        BigInteger deltaShare = task.presignDelta.get(peerId);
-                        if (sPoint == null && deltaShare == null) {
-                            continue;
-                        }
-                        logger.warn("Presign chi mismatch details task {} peer {}: S_i={}, delta_i={}",
-                                task.taskId,
-                                peerId,
-                                sPoint == null ? null : HexUtils.bytesToHex(Secp256k1Curve.encodePoint(sPoint)),
-                                deltaShare == null ? null : deltaShare.toString(16));
-                    }
-                    Map<String, Object> evidence = buildDecEvidenceChi(task, x_i, chi_i);
-                    broadcastComplaint(task, null, "Presign chi verification failed", evidence).join();
-                    failSignatureTask(task, "Presign chi verification failed");
-                    return;
-                }
-                BigInteger deltaInv = delta.modInverse(curveOrder);
-                ECPoint GammaFinal = Gamma.normalize();
-                BigInteger kTilde = task.k_i.multiply(deltaInv).mod(curveOrder);
-                BigInteger chiTilde = chi_i.multiply(deltaInv).mod(curveOrder);
-                task.presignature = new Presignature(GammaFinal, kTilde, chiTilde);
-                task.presignatureLatch.countDown();
-
-                for (Map.Entry<Integer, ECPoint> e : task.presignDeltaPoint.entrySet()) {
-                    task.presignDeltaTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
-                }
-                for (Map.Entry<Integer, ECPoint> e : task.presignSPoint.entrySet()) {
-                    task.presignSTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
-                }
-
-                if (nodeId == task.initiatorId) {
-                    markOfflineReady(task, nodeId);
-                } else {
-                    sendOfflineReady(task).join();
-                }
+                fireAndForget(broadcastPresignR1(task, K, G, Y_i, A1, A2, B1, B2, encElgK, encElgG),
+                        "CGGMP_PRESIGN_R1");
+                return new PresignR1Context(task, curveOrder, gamma_i);
             } catch (Exception e) {
                 task.fail(e.getMessage());
                 throw new RuntimeException(e);
             }
         }, ThreadPoolUtil.getIoThreadPool());
+
+        CompletableFuture<PresignR2Context> r2ContextFuture = r1Future
+                .thenCompose(ctx -> waitForLatchAsync(task.gammaCommitLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presign R1")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> {
+                    if (!presignEchoEnabled) {
+                        return CompletableFuture.completedFuture(ctx);
+                    }
+                    fireAndForget(broadcastPresignR1Echo(task), "CGGMP_PRESIGN_R1_ECHO");
+                    return waitForLatchAsync(task.presignR1EchoLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presign R1 echo")
+                            .thenApply(v -> ctx);
+                })
+                .thenCompose(ctx -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        logger.info("Presign R1 completed for task {}, proceeding to R2", task.taskId);
+                        ECPoint Gamma_i = Secp256k1Curve.multiply(Secp256k1Curve.G(), ctx.gamma_i);
+                        BigInteger x_i_raw = loadLocalShare(task.groupPublicKey);
+                        BigInteger lambda_i = computeSignatureLagrange(task, nodeId, ctx.curveOrder);
+                        BigInteger x_i = x_i_raw.multiply(lambda_i).mod(ctx.curveOrder);
+                        ECPoint X_i = resolvePublicShare(task, nodeId, lambda_i, x_i);
+
+                        long r2StartNs = System.nanoTime();
+                        logger.info("Presign R2 starting proof generation for task {} (peers={})", task.taskId, task.participants.size() - 1);
+                        List<CompletableFuture<PeerR2Result>> r2Futures = new ArrayList<>();
+                        for (int peerId : task.participants) {
+                            if (peerId == nodeId) continue;
+                            r2Futures.add(CompletableFuture.supplyAsync(() -> {
+                                long peerStartNs = System.nanoTime();
+                                PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(peerId);
+                                BigInteger K_peer = task.presignK.get(peerId);
+                                if (pk == null || K_peer == null) {
+                                    return PeerR2Result.skipped(peerId);
+                                }
+                                BigInteger beta = randomNonZero(ctx.curveOrder);
+                                BigInteger betaHat = randomNonZero(ctx.curveOrder);
+                                PaillierEncryption.Encryption encNegBeta = pk.encryptWithRandomness(negateModN(beta, pk.n));
+                                PaillierEncryption.Encryption encNegBetaHat = pk.encryptWithRandomness(negateModN(betaHat, pk.n));
+                                BigInteger D_ji = pk.multiply(K_peer, ctx.gamma_i).multiply(encNegBeta.c).mod(pk.nSquared);
+                                BigInteger Dhat_ji = pk.multiply(K_peer, x_i).multiply(encNegBetaHat.c).mod(pk.nSquared);
+                                PaillierEncryption.Encryption encBeta = task.paillier.getPublicKeyInfo().encryptWithRandomness(beta);
+                                PaillierEncryption.Encryption encBetaHat = task.paillier.getPublicKeyInfo().encryptWithRandomness(betaHat);
+                                BigInteger F_ji = encBeta.c;
+                                BigInteger Fhat_ji = encBetaHat.c;
+                                PiAffGProof proof = PresignProofs.createAffGProofNegY(
+                                        Secp256k1Curve.G(), Gamma_i, pk.n, task.paillier.getPublicKeyInfo().n,
+                                        K_peer, D_ji, F_ji, ctx.gamma_i, beta, encNegBeta.r, encBeta.r, proofKappa, proofEpsBits, buildPresignContext(task.taskId, nodeId, "R2")
+                                );
+                                PiAffGProof proofHat = PresignProofs.createAffGProofNegY(
+                                        Secp256k1Curve.G(), X_i, pk.n, task.paillier.getPublicKeyInfo().n,
+                                        K_peer, Dhat_ji, Fhat_ji, x_i, betaHat, encNegBetaHat.r, encBetaHat.r, proofKappa, proofEpsBits, buildPresignContext(task.taskId, nodeId, "R2H")
+                                );
+                                long peerMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - peerStartNs);
+                                return PeerR2Result.done(peerId, beta, betaHat, D_ji, Dhat_ji, F_ji, Fhat_ji,
+                                        encNegBeta.r, encBeta.r, encNegBetaHat.r, encBetaHat.r, proof, proofHat, peerMs);
+                            }, dkgExecutorService));
+                        }
+                        return new PresignR2Context(task, ctx.curveOrder, ctx.gamma_i, x_i, Gamma_i, X_i, r2Futures, r2StartNs);
+                    } catch (Exception e) {
+                        task.fail(e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                }, ThreadPoolUtil.getIoThreadPool()));
+
+        return r2ContextFuture
+                .thenCompose(ctx -> CompletableFuture.allOf(ctx.r2Futures.toArray(new CompletableFuture[0]))
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        Map<Integer, BigInteger> D = new HashMap<>();
+                        Map<Integer, BigInteger> Dhat = new HashMap<>();
+                        Map<Integer, BigInteger> F = new HashMap<>();
+                        Map<Integer, BigInteger> Fhat = new HashMap<>();
+                        Map<Integer, PiAffGProof> affGProofs = new HashMap<>();
+                        Map<Integer, PiAffGProof> affGProofsHat = new HashMap<>();
+                        int skippedPeers = 0;
+
+                        for (CompletableFuture<PeerR2Result> future : ctx.r2Futures) {
+                            PeerR2Result result = future.getNow(null);
+                            if (result == null) {
+                                throw new RuntimeException("Presign R2 missing result after completion");
+                            }
+                            if (result.skipped) {
+                                skippedPeers++;
+                                continue;
+                            }
+                            int peerId = result.peerId;
+                            ctx.task.presignBeta.put(peerId, result.beta);
+                            ctx.task.presignBetaHat.put(peerId, result.betaHat);
+                            D.put(peerId, result.d);
+                            Dhat.put(peerId, result.dhat);
+                            F.put(peerId, result.f);
+                            Fhat.put(peerId, result.fhat);
+                            ctx.task.presignFOutgoing.put(peerId, result.f);
+                            ctx.task.presignFhatOutgoing.put(peerId, result.fhat);
+                            ctx.task.presignRho.put(peerId, result.rho);
+                            ctx.task.presignMu.put(peerId, result.mu);
+                            ctx.task.presignRhoHat.put(peerId, result.rhoHat);
+                            ctx.task.presignMuHat.put(peerId, result.muHat);
+                            affGProofs.put(peerId, result.proof);
+                            affGProofsHat.put(peerId, result.proofHat);
+                            logger.debug("Presign R2 proof generated for task {} peer {} in {} ms",
+                                    ctx.task.taskId, peerId, result.peerMs);
+                        }
+                        long r2Ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - ctx.r2StartNs);
+                        logger.info("Presign R2 prepared for task {}: peers={}, proofs={}, skipped={}",
+                                ctx.task.taskId, ctx.task.participants.size() - 1, affGProofs.size(), skippedPeers);
+                        logger.debug("Presign R2 proof generation total time for task {}: {} ms", ctx.task.taskId, r2Ms);
+
+                        ECPoint Y_i_r2 = ctx.task.presignY.get(nodeId);
+                        ECPoint B1_r2 = ctx.task.presignB1.get(nodeId);
+                        ECPoint B2_r2 = ctx.task.presignB2.get(nodeId);
+                        if (Y_i_r2 == null || B1_r2 == null || B2_r2 == null || ctx.task.presignBScalar == null) {
+                            throw new RuntimeException("Missing presign R1 commitments for PiLog proof");
+                        }
+                        byte[] ctxR2 = buildPresignContext(ctx.task.taskId, nodeId, "R2");
+                        PiLogProof logProof = PresignProofs.createLogProof(
+                                Secp256k1Curve.G(),
+                                Secp256k1Curve.G(),
+                                ctx.Gamma_i,
+                                Y_i_r2,
+                                B1_r2,
+                                B2_r2,
+                                ctx.gamma_i,
+                                ctx.task.presignBScalar,
+                                ctxR2
+                        );
+                        fireAndForget(broadcastPresignR2(ctx.task, ctx.Gamma_i, D, Dhat, F, Fhat, affGProofs, affGProofsHat, logProof, ctx.X_i),
+                                "CGGMP_PRESIGN_R2");
+                        logger.info("Presign R2 broadcasted for task {}", ctx.task.taskId);
+
+                        return new PresignR2Bundle(ctx, D, Dhat, F, Fhat);
+                    } catch (Exception e) {
+                        ctx.task.fail(e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                }, ThreadPoolUtil.getIoThreadPool()))
+                .thenCompose(this::continuePresignAfterR2)
+                .whenComplete((v, ex) -> {
+                    if (ex == null) {
+                        return;
+                    }
+                    Throwable cause = ex instanceof CompletionException ? ex.getCause() : ex;
+                    if (cause == null) {
+                        task.fail(ex.getMessage());
+                    } else {
+                        task.fail(cause.getMessage());
+                    }
+                });
     }
 
     private CompletableFuture<Void> runOnlinePhase(Gg20SignatureTask task) {
-        return CompletableFuture.runAsync(() -> {
-            try {
-                if (!task.offlineDoneLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    throw new RuntimeException("Timeout waiting for offline phase");
-                }
-                if (!task.presignatureLatch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    throw new RuntimeException("Timeout waiting for local presignature");
-                }
-                if (task.messageHash == null) {
-                    throw new RuntimeException("Missing message hash for online phase");
-                }
-                if (!signatureInProgress.compareAndSet(false, true)) {
-                    throw new RuntimeException("Signature process is already in progress");
-                }
-
-                BigInteger curveOrder = Secp256k1Curve.n();
-                if (task.presignature == null) {
-                    throw new RuntimeException("Missing presignature");
-                }
-                if (task.presignatureUsed) {
-                    throw new RuntimeException("Presignature already used");
-                }
-                if (nodeId == task.initiatorId) {
-                    if (!PresignUsageStore.markUsed(task.groupPublicKey, task.presignature.Gamma())) {
-                        throw new RuntimeException("Presignature already used (persistent)");
-                    }
-                }
-                task.presignatureUsed = true;
-                ECPoint Gamma = task.presignature.Gamma();
-                task.r = Gamma.getAffineXCoord().toBigInteger().mod(curveOrder);
-                if (task.r.signum() == 0) {
-                    throw new RuntimeException("Invalid r (zero), restart signature");
-                }
-
-                BigInteger e = new BigInteger(1, task.messageHash).mod(curveOrder);
-                BigInteger chiTilde = task.presignature.chiTilde();
-                BigInteger shift = resolveSignShift(task, curveOrder);
-                if (shift.signum() != 0) {
-                    chiTilde = chiTilde.add(task.presignature.kTilde().multiply(shift)).mod(curveOrder);
-                }
-                BigInteger sigma_i = task.presignature.kTilde().multiply(e).add(task.r.multiply(chiTilde)).mod(curveOrder);
-                if (nodeId == task.initiatorId) {
-                    if (!verifySigmaShare(task, nodeId, sigma_i)) {
-                        throw new RuntimeException("Local signature share verification failed");
-                    }
-                    task.sShares.put(nodeId, sigma_i);
-                    if (!task.sShareLatch.await(Constants.SIGNATURE_SHARE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                        throw new RuntimeException("Timeout waiting for signature shares");
-                    }
-                    List<Integer> offenders = findInvalidSigmaShares(task);
-                    if (!offenders.isEmpty()) {
-                        for (int offender : offenders) {
-                            broadcastComplaint(task, offender, "Invalid signature share (Figure 10)", Map.of("r", HexUtils.toHex(task.r))).join();
+        return waitForLatchAsync(task.offlineDoneLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "offline phase")
+                .thenCompose(v -> waitForLatchAsync(task.presignatureLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "local presignature"))
+                .thenCompose(v -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        if (task.messageHash == null) {
+                            throw new RuntimeException("Missing message hash for online phase");
                         }
-                        failSignatureTask(task, "Invalid signature shares: " + offenders);
+                        if (!signatureInProgress.compareAndSet(false, true)) {
+                            throw new RuntimeException("Signature process is already in progress");
+                        }
+
+                        BigInteger curveOrder = Secp256k1Curve.n();
+                        if (task.presignature == null) {
+                            throw new RuntimeException("Missing presignature");
+                        }
+                        if (task.presignatureUsed) {
+                            throw new RuntimeException("Presignature already used");
+                        }
+                        if (nodeId == task.initiatorId) {
+                            if (!PresignUsageStore.markUsed(task.groupPublicKey, task.presignature.Gamma())) {
+                                throw new RuntimeException("Presignature already used (persistent)");
+                            }
+                        }
+                        task.presignatureUsed = true;
+                        ECPoint Gamma = task.presignature.Gamma();
+                        task.r = Gamma.getAffineXCoord().toBigInteger().mod(curveOrder);
+                        if (task.r.signum() == 0) {
+                            throw new RuntimeException("Invalid r (zero), restart signature");
+                        }
+
+                        BigInteger e = new BigInteger(1, task.messageHash).mod(curveOrder);
+                        BigInteger chiTilde = task.presignature.chiTilde();
+                        BigInteger shift = resolveSignShift(task, curveOrder);
+                        if (shift.signum() != 0) {
+                            chiTilde = chiTilde.add(task.presignature.kTilde().multiply(shift)).mod(curveOrder);
+                        }
+                        BigInteger sigma_i = task.presignature.kTilde().multiply(e).add(task.r.multiply(chiTilde)).mod(curveOrder);
+                        return new OnlineContext(task, curveOrder, sigma_i);
+                    } catch (Exception e) {
+                        task.fail(e.getMessage());
+                        signatureInProgress.set(false);
+                        clearPresignAll(task);
+                        throw new RuntimeException(e);
+                    }
+                }, ThreadPoolUtil.getIoThreadPool()))
+                .thenCompose(ctx -> {
+                    if (nodeId == ctx.task.initiatorId) {
+                        if (!verifySigmaShare(ctx.task, nodeId, ctx.sigma_i)) {
+                            failSignatureTask(ctx.task, "Local signature share verification failed");
+                            signatureInProgress.set(false);
+                            clearPresignAll(ctx.task);
+                            return CompletableFuture.completedFuture(null);
+                        }
+                        ctx.task.sShares.put(nodeId, ctx.sigma_i);
+                        return waitForLatchAsync(ctx.task.sShareLatch, Constants.SIGNATURE_SHARE_TIMEOUT_SECONDS, "signature shares")
+                                .thenRunAsync(() -> finalizeSignatureAsInitiator(ctx), ThreadPoolUtil.getIoThreadPool());
+                    }
+                    return CompletableFuture.runAsync(() -> {
+                        fireAndForget(sendSShare(ctx.task, ctx.sigma_i), "CGGMP_SIGN_S_SHARE");
+                        ctx.task.complete();
+                        signatureInProgress.set(false);
+                        clearPresignLocal(ctx.task);
+                    }, ThreadPoolUtil.getIoThreadPool());
+                })
+                .whenComplete((v, ex) -> {
+                    if (ex == null) {
                         return;
                     }
-                    BigInteger s = sumShares(task.sShares, curveOrder);
-                    if (s.compareTo(curveOrder.shiftRight(1)) > 0) {
-                        s = curveOrder.subtract(s);
-                    }
-                    byte[] der = derEncodeSignature(task.r, s);
-                    boolean verified = verifySignature(task.groupPublicKeyPoint, task.messageHash, task.r, s, buildDomain());
-                    if (!verified) {
-                        List<Integer> suspects = findInvalidSigmaShares(task);
-                        for (int offender : suspects) {
-                            broadcastComplaint(task, offender, "Aggregate signature verification failed (Figure 10)", Map.of("r", HexUtils.toHex(task.r))).join();
-                        }
-                        failSignatureTask(task, "Aggregate signature verification failed");
-                        return;
-                    }
-                    task.signature = Base64.getEncoder().encodeToString(der);
-                    task.verified = verified;
-                    task.complete();
+                    Throwable cause = ex instanceof CompletionException ? ex.getCause() : ex;
+                    String msg = cause == null ? ex.getMessage() : cause.getMessage();
+                    task.fail(msg);
                     signatureInProgress.set(false);
                     clearPresignAll(task);
-                    logger.info("CGGMP signature task {} completed successfully, verified: {}", task.taskId, verified);
-                } else {
-                    sendSShare(task, sigma_i).join();
-                    task.complete();
-                    signatureInProgress.set(false);
-                    clearPresignLocal(task);
-                }
-            } catch (Exception e) {
-                task.fail(e.getMessage());
-                signatureInProgress.set(false);
-                clearPresignAll(task);
-                throw new RuntimeException(e);
-            }
-        }, ThreadPoolUtil.getIoThreadPool());
+                });
     }
 
     private CompletableFuture<Void> broadcastOfflineInit(Gg20SignatureTask task) {
@@ -2691,18 +2690,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (task.hdShift != null) {
             initData.put("hdShift", task.hdShift.toString(16));
         }
-        try {
-            for (int attempt = 1; attempt <= Constants.SIGNATURE_BROADCAST_RETRY_COUNT; attempt++) {
-                nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_OFFLINE_INIT, initData)).join();
-                logger.info("Broadcasted CGGMP_SIGN_OFFLINE_INIT for signature task: {} (attempt {}/{})", task.taskId, attempt, Constants.SIGNATURE_BROADCAST_RETRY_COUNT);
-                if (attempt < Constants.SIGNATURE_BROADCAST_RETRY_COUNT) {
-                    Thread.sleep(Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS);
-                }
+        return retryAsync(
+                () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_OFFLINE_INIT, initData)),
+                Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
+                Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_SIGN_OFFLINE_INIT"
+        ).whenComplete((v, ex) -> {
+            if (ex != null) {
+                logger.warn("Failed to broadcast CGGMP_SIGN_OFFLINE_INIT, proceeding: {}", ex.getMessage());
             }
-        } catch (Exception e) {
-            logger.warn("Failed to broadcast CGGMP_SIGN_OFFLINE_INIT, proceeding: {}", e.getMessage());
-        }
-        return CompletableFuture.completedFuture(null);
+        });
     }
 
     private CompletableFuture<Void> broadcastOnlineInit(Gg20SignatureTask task) {
@@ -2711,18 +2708,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("messageHash", Base64.getEncoder().encodeToString(task.messageHash));
         data.put("initiatorId", task.initiatorId);
         data.put("participants", new ArrayList<>(task.participants));
-        try {
-            for (int attempt = 1; attempt <= Constants.SIGNATURE_BROADCAST_RETRY_COUNT; attempt++) {
-                nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_ONLINE_INIT, data)).join();
-                logger.info("Broadcasted CGGMP_SIGN_ONLINE_INIT for signature task: {} (attempt {}/{})", task.taskId, attempt, Constants.SIGNATURE_BROADCAST_RETRY_COUNT);
-                if (attempt < Constants.SIGNATURE_BROADCAST_RETRY_COUNT) {
-                    Thread.sleep(Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS);
-                }
+        return retryAsync(
+                () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_ONLINE_INIT, data)),
+                Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
+                Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_SIGN_ONLINE_INIT"
+        ).whenComplete((v, ex) -> {
+            if (ex != null) {
+                logger.warn("Failed to broadcast CGGMP_SIGN_ONLINE_INIT, proceeding: {}", ex.getMessage());
             }
-        } catch (Exception e) {
-            logger.warn("Failed to broadcast CGGMP_SIGN_ONLINE_INIT, proceeding: {}", e.getMessage());
-        }
-        return CompletableFuture.completedFuture(null);
+        });
     }
 
     private CompletableFuture<Void> broadcastPresignR1(Gg20SignatureTask task,
@@ -2749,18 +2744,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("encElgProofG", CggmpDkgCodec.encodePiEncElgProof(encElgG));
         data.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
         data.put("zkSetup", CggmpDkgCodec.encodeZkSetup(task.zkSetup));
-        try {
-            for (int attempt = 1; attempt <= Constants.SIGNATURE_BROADCAST_RETRY_COUNT; attempt++) {
-                nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R1, data)).join();
-                logger.info("Broadcasted CGGMP_PRESIGN_R1 for signature task: {} (attempt {}/{})", task.taskId, attempt, Constants.SIGNATURE_BROADCAST_RETRY_COUNT);
-                if (attempt < Constants.SIGNATURE_BROADCAST_RETRY_COUNT) {
-                    Thread.sleep(Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS);
-                }
+        return retryAsync(
+                () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R1, data)),
+                Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
+                Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_PRESIGN_R1"
+        ).whenComplete((v, ex) -> {
+            if (ex != null) {
+                logger.warn("Failed to broadcast CGGMP_PRESIGN_R1, proceeding: {}", ex.getMessage());
             }
-        } catch (Exception e) {
-            logger.warn("Failed to broadcast CGGMP_PRESIGN_R1, proceeding: {}", e.getMessage());
-        }
-        return CompletableFuture.completedFuture(null);
+        });
     }
 
     private CompletableFuture<Void> broadcastPresignR1Echo(Gg20SignatureTask task) {
@@ -3357,13 +3350,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return sum;
     }
 
-    private boolean verifySchProofsParallel(CggmpDkgTask task,
-                                            int senderNodeId,
-                                            Map<Integer, PiSchProof> schProofs,
-                                            Map<Integer, ECPoint> Xjk,
-                                            Map<Integer, ECPoint> Ajk) {
+    private CompletableFuture<Boolean> verifySchProofsParallelAsync(CggmpDkgTask task,
+                                                                    int senderNodeId,
+                                                                    Map<Integer, PiSchProof> schProofs,
+                                                                    Map<Integer, ECPoint> Xjk,
+                                                                    Map<Integer, ECPoint> Ajk) {
         if (schProofs == null || schProofs.size() != threshold) {
-            return false;
+            return CompletableFuture.completedFuture(false);
         }
         if (threshold <= 3) {
             for (int k = 0; k < threshold; k++) {
@@ -3371,20 +3364,20 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 ECPoint AjkPoint = Ajk.get(k);
                 ECPoint XjkPoint = Xjk.get(k);
                 if (proof == null || AjkPoint == null || XjkPoint == null) {
-                    return false;
+                    return CompletableFuture.completedFuture(false);
                 }
                 byte[] ctx = buildDkgContext(task.taskId, task.executionId, task.rid, senderNodeId, "SCH:" + k);
                 long schOneStart = System.nanoTime();
                 if (!proof.A().equals(AjkPoint)) {
-                    return false;
+                    return CompletableFuture.completedFuture(false);
                 }
                 boolean ok = RefreshProofs.verifySchProof(proof, Secp256k1Curve.G(), XjkPoint, ctx);
                 logger.debug("DKG Round2 Sch proof verify k={} took {} ms", k, (System.nanoTime() - schOneStart) / 1_000_000);
                 if (!ok) {
-                    return false;
+                    return CompletableFuture.completedFuture(false);
                 }
             }
-            return true;
+            return CompletableFuture.completedFuture(true);
         }
 
         List<CompletableFuture<Boolean>> futures = new ArrayList<>(threshold);
@@ -3393,7 +3386,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             ECPoint AjkPoint = Ajk.get(k);
             ECPoint XjkPoint = Xjk.get(k);
             if (proof == null || AjkPoint == null || XjkPoint == null) {
-                return false;
+                return CompletableFuture.completedFuture(false);
             }
             byte[] ctx = buildDkgContext(task.taskId, task.executionId, task.rid, senderNodeId, "SCH:" + k);
             final int kk = k;
@@ -3407,13 +3400,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 return ok;
             }, dkgExecutorService));
         }
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-        for (CompletableFuture<Boolean> f : futures) {
-            if (!f.join()) {
-                return false;
-            }
-        }
-        return true;
+        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .thenApply(v -> {
+                    for (CompletableFuture<Boolean> f : futures) {
+                        Boolean ok = f.getNow(false);
+                        if (!Boolean.TRUE.equals(ok)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                });
     }
 
     private static PiSchProof createSchProofWithAlpha(ECPoint g, ECPoint X, BigInteger x, BigInteger alpha, byte[] context) {
@@ -3450,160 +3446,166 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return nodeService.sendMessage(task.initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_OFFLINE_READY, data));
     }
 
-    private void runRefreshProtocol(com.example.mpc.model.CggmpRefreshTask task) {
-        try {
-            BigInteger q = Secp256k1Curve.n();
-            logger.info("Refresh {} waiting for network ready...", task.taskId);
-            try {
-                nodeService.waitForNetworkReady().get(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                throw new RuntimeException("Refresh network ready timeout", e);
-            }
-            logger.info("Refresh {} network ready", task.taskId);
-            if (!task.participants.contains(nodeId)) {
-                return;
-            }
-            long paillierStart = System.currentTimeMillis();
-            logger.info("Refresh {} generating Paillier ({} bits)...", task.taskId, refreshPaillierBits);
-            task.paillier = new PaillierEncryption(refreshPaillierBits);
-            logger.debug("Refresh {} Paillier ready in {} ms", task.taskId, System.currentTimeMillis() - paillierStart);
-            task.zkSetup = ZKSetup.generate(task.paillier.getPublicKeyInfo().bitLength);
+    private CompletableFuture<Void> runRefreshProtocolAsync(CggmpRefreshTask task) {
+        return waitForNetworkReadyAsync(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS)
+                .thenCompose(ready -> {
+                    if (!ready) {
+                        return CompletableFuture.failedFuture(new RuntimeException("Refresh network ready timeout"));
+                    }
+                    return CompletableFuture.supplyAsync(() -> {
+                        try {
+                            BigInteger q = Secp256k1Curve.n();
+                            logger.info("Refresh {} network ready", task.taskId);
+                            if (!task.participants.contains(nodeId)) {
+                                return null;
+                            }
+                long paillierStart = System.currentTimeMillis();
+                logger.info("Refresh {} generating Paillier ({} bits)...", task.taskId, refreshPaillierBits);
+                task.paillier = new PaillierEncryption(refreshPaillierBits);
+                logger.debug("Refresh {} Paillier ready in {} ms", task.taskId, System.currentTimeMillis() - paillierStart);
+                task.zkSetup = ZKSetup.generate(task.paillier.getPublicKeyInfo().bitLength);
 
-            BigInteger[] ped = generateRefreshPedersen(task.paillier.getPublicKeyInfo().bitLength);
-            task.pedersenHatN = ped[0];
-            task.pedersenS = ped[1];
-            task.pedersenT = ped[2];
-            task.pedersenLambda = ped[3];
-            task.prmProof = RefreshProofs.createPrmProof(
-                    task.pedersenHatN,
-                    task.pedersenS,
-                    task.pedersenT,
-                    task.pedersenLambda,
-                    buildRefreshContext(task.taskId, null, nodeId, "PRM")
-            );
-
-            BigInteger xi = loadLocalShare(task.groupPublicKey);
-            ECPoint Xi = Secp256k1Curve.multiply(Secp256k1Curve.G(), xi);
-
-            BigInteger sum = BigInteger.ZERO;
-            for (int peerId : task.participants) {
-                BigInteger share;
-                if (peerId == nodeId) {
-                    continue;
-                }
-                share = randomNonZero(q);
-                task.xShares.put(peerId, share);
-                sum = sum.add(share).mod(q);
-            }
-            BigInteger selfShare = q.subtract(sum).mod(q);
-            task.xShares.put(nodeId, selfShare);
-            for (int peerId : task.participants) {
-                BigInteger x = task.xShares.get(peerId);
-                task.xPoints.put(peerId, Secp256k1Curve.multiply(Secp256k1Curve.G(), x));
-            }
-
-            for (int peerId : task.participants) {
-                BigInteger y = randomNonZero(q);
-                task.yShares.put(peerId, y);
-                task.yPoints.put(peerId, Secp256k1Curve.multiply(Secp256k1Curve.G(), y));
-            }
-
-            Map<Integer, ECPoint> A = new HashMap<>();
-            SecureRandom rnd = new SecureRandom();
-            for (int peerId : task.participants) {
-                BigInteger alpha = new BigInteger(q.bitLength(), rnd).mod(q);
-                task.schAlphas.put(peerId, alpha);
-                A.put(peerId, Secp256k1Curve.multiply(Secp256k1Curve.G(), alpha));
-            }
-
-            byte[] rid = randomBytes(32);
-            byte[] u = randomBytes(32);
-
-            String v = computeRefreshCommit(task.taskId, nodeId, task.xPoints, task.yPoints, A, Xi,
-                    task.paillier.getPublicKeyInfo(), task.zkSetup, task.pedersenHatN, task.pedersenS, task.pedersenT,
-                    task.prmProof, rid, u);
-            task.round1Commit.put(nodeId, v);
-            broadcastRefreshR1(task, v).join();
-
-            if (!task.round1Latch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                throw new RuntimeException("Timeout waiting for refresh R1");
-            }
-
-            Map<Integer, ECPoint> yMap = new HashMap<>(task.yPoints);
-            Map<Integer, ECPoint> xMap = new HashMap<>(task.xPoints);
-            Map<Integer, ECPoint> aMap = A;
-            CggmpRefreshTask.RefreshRound2Data r2 = new CggmpRefreshTask.RefreshRound2Data(
-                    task.paillier.getPublicKeyInfo(),
-                    task.zkSetup,
-                    task.pedersenHatN,
-                    task.pedersenS,
-                    task.pedersenT,
-                    task.prmProof,
-                    yMap,
-                    xMap,
-                    aMap,
-                    Xi,
-                    rid,
-                    u
-            );
-            task.round2Data.put(nodeId, r2);
-            broadcastRefreshR2(task, r2).join();
-
-            if (!task.round2Latch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                throw new RuntimeException("Timeout waiting for refresh R2");
-            }
-
-            byte[] mergedRid = xorAllRid(task);
-            task.rid = mergedRid;
-
-            Map<Integer, BigInteger> C = new HashMap<>();
-            Map<Integer, PiSchProof> schProofs = new HashMap<>();
-            for (int peerId : task.participants) {
-                if (peerId == nodeId) continue;
-                ECPoint Yji = task.round2Data.get(peerId).Y.get(nodeId);
-                BigInteger y = task.yShares.get(peerId);
-                BigInteger rho = deriveRefreshMask(task.taskId, mergedRid, nodeId, peerId, Yji, y);
-                BigInteger xij = task.xShares.get(peerId);
-                C.put(peerId, xij.add(rho).mod(q));
-            }
-            for (int peerId : task.participants) {
-                BigInteger xij = task.xShares.get(peerId);
-                PiSchProof sch = RefreshProofs.createSchProof(
-                        Secp256k1Curve.G(),
-                        task.xPoints.get(peerId),
-                        xij,
-                        buildRefreshContext(task.taskId, mergedRid, nodeId, "SCH:" + peerId)
+                BigInteger[] ped = generateRefreshPedersen(task.paillier.getPublicKeyInfo().bitLength);
+                task.pedersenHatN = ped[0];
+                task.pedersenS = ped[1];
+                task.pedersenT = ped[2];
+                task.pedersenLambda = ped[3];
+                task.prmProof = RefreshProofs.createPrmProof(
+                        task.pedersenHatN,
+                        task.pedersenS,
+                        task.pedersenT,
+                        task.pedersenLambda,
+                        buildRefreshContext(task.taskId, null, nodeId, "PRM")
                 );
-                schProofs.put(peerId, sch);
+
+                BigInteger xi = loadLocalShare(task.groupPublicKey);
+                ECPoint Xi = Secp256k1Curve.multiply(Secp256k1Curve.G(), xi);
+
+                BigInteger sum = BigInteger.ZERO;
+                for (int peerId : task.participants) {
+                    if (peerId == nodeId) {
+                        continue;
+                    }
+                    BigInteger share = randomNonZero(q);
+                    task.xShares.put(peerId, share);
+                    sum = sum.add(share).mod(q);
+                }
+                BigInteger selfShare = q.subtract(sum).mod(q);
+                task.xShares.put(nodeId, selfShare);
+                for (int peerId : task.participants) {
+                    BigInteger x = task.xShares.get(peerId);
+                    task.xPoints.put(peerId, Secp256k1Curve.multiply(Secp256k1Curve.G(), x));
+                }
+
+                for (int peerId : task.participants) {
+                    BigInteger y = randomNonZero(q);
+                    task.yShares.put(peerId, y);
+                    task.yPoints.put(peerId, Secp256k1Curve.multiply(Secp256k1Curve.G(), y));
+                }
+
+                Map<Integer, ECPoint> A = new HashMap<>();
+                SecureRandom rnd = new SecureRandom();
+                for (int peerId : task.participants) {
+                    BigInteger alpha = new BigInteger(q.bitLength(), rnd).mod(q);
+                    task.schAlphas.put(peerId, alpha);
+                    A.put(peerId, Secp256k1Curve.multiply(Secp256k1Curve.G(), alpha));
+                }
+
+                byte[] rid = randomBytes(32);
+                byte[] u = randomBytes(32);
+
+                String v = computeRefreshCommit(task.taskId, nodeId, task.xPoints, task.yPoints, A, Xi,
+                        task.paillier.getPublicKeyInfo(), task.zkSetup, task.pedersenHatN, task.pedersenS, task.pedersenT,
+                        task.prmProof, rid, u);
+                task.round1Commit.put(nodeId, v);
+                fireAndForget(broadcastRefreshR1(task, v), "CGGMP_REFRESH_R1");
+
+                Map<Integer, ECPoint> yMap = new HashMap<>(task.yPoints);
+                Map<Integer, ECPoint> xMap = new HashMap<>(task.xPoints);
+                Map<Integer, ECPoint> aMap = A;
+                        CggmpRefreshTask.RefreshRound2Data r2 = new CggmpRefreshTask.RefreshRound2Data(
+                                task.paillier.getPublicKeyInfo(),
+                                task.zkSetup,
+                                task.pedersenHatN,
+                                task.pedersenS,
+                                task.pedersenT,
+                                task.prmProof,
+                                yMap,
+                                xMap,
+                                aMap,
+                                Xi,
+                                rid,
+                                u
+                        );
+                        task.round2Data.put(nodeId, r2);
+                            return task;
+                        } catch (Exception e) {
+                            task.fail(e.getMessage());
+                            throw new RuntimeException(e);
+                        }
+                    }, dkgExecutorService);
+                })
+                .thenCompose(t -> {
+            if (t == null) {
+                return CompletableFuture.completedFuture(null);
             }
+            return waitForLatchAsync(task.round1Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "refresh R1")
+                    .thenCompose(v -> broadcastRefreshR2(task, task.round2Data.get(nodeId)))
+                    .thenCompose(v -> waitForLatchAsync(task.round2Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "refresh R2"))
+                    .thenCompose(v -> CompletableFuture.runAsync(() -> {
+                        byte[] mergedRid = xorAllRid(task);
+                        task.rid = mergedRid;
 
-            BiPrimeBlumProof biPrime = new BiPrimeProofGenerator().createProof(task.paillier.getPrivateKeyInfo(),
-                    buildRefreshContext(task.taskId, mergedRid, nodeId, "MOD"));
-            NoSmallFactorProof factor = new NoSmallFactorProofGenerator(task.zkSetup)
-                    .createProof(task.paillier.getPrivateKeyInfo(), buildRefreshContext(task.taskId, mergedRid, nodeId, "FAC"));
+                        Map<Integer, BigInteger> C = new HashMap<>();
+                        Map<Integer, PiSchProof> schProofs = new HashMap<>();
+                        for (int peerId : task.participants) {
+                            if (peerId == nodeId) continue;
+                            ECPoint Yji = task.round2Data.get(peerId).Y.get(nodeId);
+                            BigInteger y = task.yShares.get(peerId);
+                            BigInteger rho = deriveRefreshMask(task.taskId, mergedRid, nodeId, peerId, Yji, y);
+                            BigInteger xij = task.xShares.get(peerId);
+                            C.put(peerId, xij.add(rho).mod(Secp256k1Curve.n()));
+                        }
+                        for (int peerId : task.participants) {
+                            BigInteger xij = task.xShares.get(peerId);
+                            PiSchProof sch = RefreshProofs.createSchProof(
+                                    Secp256k1Curve.G(),
+                                    task.xPoints.get(peerId),
+                                    xij,
+                                    buildRefreshContext(task.taskId, mergedRid, nodeId, "SCH:" + peerId)
+                            );
+                            schProofs.put(peerId, sch);
+                        }
 
-            CggmpRefreshTask.RefreshRound3Data r3 = new CggmpRefreshTask.RefreshRound3Data(
-                    C,
-                    schProofs,
-                    biPrime,
-                    factor
-            );
-            task.round3Data.put(nodeId, r3);
-            broadcastRefreshR3(task, r3).join();
+                        BiPrimeBlumProof biPrime = new BiPrimeProofGenerator().createProof(task.paillier.getPrivateKeyInfo(),
+                                buildRefreshContext(task.taskId, mergedRid, nodeId, "MOD"));
+                        NoSmallFactorProof factor = new NoSmallFactorProofGenerator(task.zkSetup)
+                                .createProof(task.paillier.getPrivateKeyInfo(), buildRefreshContext(task.taskId, mergedRid, nodeId, "FAC"));
 
-            if (!task.round3Latch.await(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                throw new RuntimeException("Timeout waiting for refresh R3");
-            }
-
-            if (!finalizeRefresh(task)) {
-                task.fail("Refresh verification failed");
+                        CggmpRefreshTask.RefreshRound3Data r3 = new CggmpRefreshTask.RefreshRound3Data(
+                                C,
+                                schProofs,
+                                biPrime,
+                                factor
+                        );
+                        task.round3Data.put(nodeId, r3);
+                        fireAndForget(broadcastRefreshR3(task, r3), "CGGMP_REFRESH_R3");
+                    }, dkgExecutorService))
+                    .thenCompose(v -> waitForLatchAsync(task.round3Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "refresh R3"))
+                    .thenRunAsync(() -> {
+                        if (!finalizeRefresh(task)) {
+                            task.fail("Refresh verification failed");
+                            return;
+                        }
+                        task.complete();
+                    }, dkgExecutorService);
+                }).whenComplete((v, ex) -> {
+            if (ex == null) {
                 return;
             }
-            task.complete();
-        } catch (Exception e) {
-            task.fail(e.getMessage());
-            throw new RuntimeException(e);
-        }
+            Throwable cause = ex instanceof CompletionException ? ex.getCause() : ex;
+            task.fail(cause == null ? ex.getMessage() : cause.getMessage());
+        });
     }
 
     private CompletableFuture<Void> broadcastRefreshR1(CggmpRefreshTask task, String commit) {
@@ -3770,7 +3772,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
             String commit = task.round1Commit.get(senderId);
             if (commit == null) {
-                broadcastRefreshComplaint(task, senderId, "Missing refresh R1 commit", refreshEvidence(task, senderId, "Missing refresh R1 commit", null)).join();
+                fireAndForget(broadcastRefreshComplaint(task, senderId, "Missing refresh R1 commit",
+                        refreshEvidence(task, senderId, "Missing refresh R1 commit", null)), "CGGMP_REFRESH_COMPLAINT");
                 task.fail("Missing refresh R1 commit");
                 return;
             }
@@ -3780,21 +3783,24 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("expectedCommit", expected);
                 extra.put("commit", commit);
-                broadcastRefreshComplaint(task, senderId, "Refresh R1 commit mismatch", refreshEvidence(task, senderId, "Refresh R1 commit mismatch", extra)).join();
+                fireAndForget(broadcastRefreshComplaint(task, senderId, "Refresh R1 commit mismatch",
+                        refreshEvidence(task, senderId, "Refresh R1 commit mismatch", extra)), "CGGMP_REFRESH_COMPLAINT");
                 task.fail("Refresh commit mismatch");
                 return;
             }
 
             if (!validatePaillierPublicKey(pk)) {
-                broadcastRefreshComplaint(task, senderId, "Invalid Paillier public key",
-                        refreshEvidence(task, senderId, "Invalid Paillier public key", Map.of("n", pk.n.toString(16)))).join();
+                fireAndForget(broadcastRefreshComplaint(task, senderId, "Invalid Paillier public key",
+                        refreshEvidence(task, senderId, "Invalid Paillier public key", Map.of("n", pk.n.toString(16)))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 task.fail("Invalid Paillier key");
                 return;
             }
 
             if (!RefreshProofs.verifyPrmProof(prmProof, hatN, s, t, buildRefreshContext(task.taskId, null, senderId, "PRM"))) {
-                broadcastRefreshComplaint(task, senderId, "Invalid PiPrm proof",
-                        refreshEvidence(task, senderId, "Invalid PiPrm proof", Map.of("hatN", hatN.toString(16)))).join();
+                fireAndForget(broadcastRefreshComplaint(task, senderId, "Invalid PiPrm proof",
+                        refreshEvidence(task, senderId, "Invalid PiPrm proof", Map.of("hatN", hatN.toString(16)))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 task.fail("Invalid PiPrm proof");
                 return;
             }
@@ -3931,8 +3937,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         BigInteger q = Secp256k1Curve.n();
         for (int peerId : task.participants) {
             if (!task.round1Commit.containsKey(peerId) || !task.round2Data.containsKey(peerId) || !task.round3Data.containsKey(peerId)) {
-                broadcastRefreshComplaint(task, peerId, "Missing refresh data",
-                        refreshEvidence(task, peerId, "Missing refresh data", Map.of("peerId", peerId))).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Missing refresh data",
+                        refreshEvidence(task, peerId, "Missing refresh data", Map.of("peerId", peerId))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
         }
@@ -3950,12 +3957,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 extra.put("peerId", peerId);
                 extra.put("commit", commit);
                 extra.put("expectedCommit", expected);
-                broadcastRefreshComplaint(task, peerId, "Refresh commit mismatch", refreshEvidence(task, peerId, "Refresh commit mismatch", extra)).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Refresh commit mismatch",
+                        refreshEvidence(task, peerId, "Refresh commit mismatch", extra)),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
             if (!RefreshProofs.verifyPrmProof(r2.prmProof, r2.hatN, r2.s, r2.t, buildRefreshContext(task.taskId, null, peerId, "PRM"))) {
-                broadcastRefreshComplaint(task, peerId, "Invalid PiPrm proof",
-                        refreshEvidence(task, peerId, "Invalid PiPrm proof", Map.of("peerId", peerId))).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Invalid PiPrm proof",
+                        refreshEvidence(task, peerId, "Invalid PiPrm proof", Map.of("peerId", peerId))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
             ECPoint sum = sumPoints(r2.X);
@@ -3963,7 +3973,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("peerId", peerId);
                 extra.put("xSum", bytesToHex(sum.getEncoded(false)));
-                broadcastRefreshComplaint(task, peerId, "Sum of X not identity", refreshEvidence(task, peerId, "Sum of X not identity", extra)).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Sum of X not identity",
+                        refreshEvidence(task, peerId, "Sum of X not identity", extra)),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
         }
@@ -3978,14 +3990,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
             BiPrimeProofValidator biPrimeValidator = new BiPrimeProofValidator();
             if (!biPrimeValidator.verifyProof(r3.biPrimeProof, r2.paillierKey, buildRefreshContext(task.taskId, task.rid, peerId, "MOD"))) {
-                broadcastRefreshComplaint(task, peerId, "Invalid Blum proof",
-                        refreshEvidence(task, peerId, "Invalid Blum proof", Map.of("peerId", peerId))).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Invalid Blum proof",
+                        refreshEvidence(task, peerId, "Invalid Blum proof", Map.of("peerId", peerId))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
             NoSmallFactorProofValidator factorValidator = new NoSmallFactorProofValidator(r2.zkSetup);
             if (!factorValidator.verifyProof(r3.factorProof, r2.paillierKey, buildRefreshContext(task.taskId, task.rid, peerId, "FAC"))) {
-                broadcastRefreshComplaint(task, peerId, "Invalid NoSmallFactor proof",
-                        refreshEvidence(task, peerId, "Invalid NoSmallFactor proof", Map.of("peerId", peerId))).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Invalid NoSmallFactor proof",
+                        refreshEvidence(task, peerId, "Invalid NoSmallFactor proof", Map.of("peerId", peerId))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
 
@@ -3993,13 +4007,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 PiSchProof sch = r3.schProofs.get(k);
                 ECPoint Xjk = r2.X.get(k);
                 if (sch == null || Xjk == null) {
-                    broadcastRefreshComplaint(task, peerId, "Missing Schnorr proof",
-                            refreshEvidence(task, peerId, "Missing Schnorr proof", Map.of("peerId", peerId, "k", k))).join();
+                    fireAndForget(broadcastRefreshComplaint(task, peerId, "Missing Schnorr proof",
+                            refreshEvidence(task, peerId, "Missing Schnorr proof", Map.of("peerId", peerId, "k", k))),
+                            "CGGMP_REFRESH_COMPLAINT");
                     return false;
                 }
                 if (!RefreshProofs.verifySchProof(sch, Secp256k1Curve.G(), Xjk, buildRefreshContext(task.taskId, task.rid, peerId, "SCH:" + k))) {
-                    broadcastRefreshComplaint(task, peerId, "Invalid Schnorr proof",
-                            refreshEvidence(task, peerId, "Invalid Schnorr proof", Map.of("peerId", peerId, "k", k))).join();
+                    fireAndForget(broadcastRefreshComplaint(task, peerId, "Invalid Schnorr proof",
+                            refreshEvidence(task, peerId, "Invalid Schnorr proof", Map.of("peerId", peerId, "k", k))),
+                            "CGGMP_REFRESH_COMPLAINT");
                     return false;
                 }
             }
@@ -4009,14 +4025,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             }
             BigInteger Cji = r3.C.get(nodeId);
             if (Cji == null) {
-                broadcastRefreshComplaint(task, peerId, "Missing C_{j,i}",
-                        refreshEvidence(task, peerId, "Missing C_{j,i}", Map.of("peerId", peerId, "missingFor", nodeId))).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Missing C_{j,i}",
+                        refreshEvidence(task, peerId, "Missing C_{j,i}", Map.of("peerId", peerId, "missingFor", nodeId))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
             ECPoint Yji = r2.Y.get(nodeId);
             if (Yji == null) {
-                broadcastRefreshComplaint(task, peerId, "Missing Y_{j,i}",
-                        refreshEvidence(task, peerId, "Missing Y_{j,i}", Map.of("peerId", peerId, "missingFor", nodeId))).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Missing Y_{j,i}",
+                        refreshEvidence(task, peerId, "Missing Y_{j,i}", Map.of("peerId", peerId, "missingFor", nodeId))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
             BigInteger yij = task.yShares.get(peerId);
@@ -4027,14 +4045,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             BigInteger xji = Cji.subtract(rho).mod(q);
             ECPoint Xji = r2.X.get(nodeId);
             if (Xji == null) {
-                broadcastRefreshComplaint(task, peerId, "Missing X_{j,i}",
-                        refreshEvidence(task, peerId, "Missing X_{j,i}", Map.of("peerId", peerId, "missingFor", nodeId))).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Missing X_{j,i}",
+                        refreshEvidence(task, peerId, "Missing X_{j,i}", Map.of("peerId", peerId, "missingFor", nodeId))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
             ECPoint check = Secp256k1Curve.multiply(Secp256k1Curve.G(), xji);
             if (!check.equals(Xji)) {
-                broadcastRefreshComplaint(task, peerId, "Invalid C_{j,i} decryption",
-                        refreshEvidence(task, peerId, "Invalid C_{j,i} decryption", Map.of("peerId", peerId, "missingFor", nodeId))).join();
+                fireAndForget(broadcastRefreshComplaint(task, peerId, "Invalid C_{j,i} decryption",
+                        refreshEvidence(task, peerId, "Invalid C_{j,i} decryption", Map.of("peerId", peerId, "missingFor", nodeId))),
+                        "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
             deltas.put(peerId, xji);
@@ -4235,7 +4255,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         String newTaskId = UUID.randomUUID().toString();
         createRefreshTaskInternal(newTaskId, task.groupPublicKey, newParticipants, task.initiatorId);
         logger.warn("Refresh exclusion: offender {} removed, restarting refresh task {}", offenderId, newTaskId);
-        broadcastRefreshExclude(task, offenderId, reason, newTaskId, newParticipants).join();
+        fireAndForget(broadcastRefreshExclude(task, offenderId, reason, newTaskId, newParticipants),
+                "CGGMP_REFRESH_EXCLUDE");
         startRefreshTask(newTaskId).exceptionally(ex -> {
             logger.error("Failed to restart refresh task {}: {}", newTaskId, ex.getMessage());
             return null;
@@ -4377,7 +4398,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private BigInteger loadLocalShare(String groupPublicKey) {
-        KeyShare keyShare = loadKeyShareByGroupPublicKey(groupPublicKey).join();
+        KeyShare keyShare = loadKeyShareByGroupPublicKeySync(groupPublicKey);
         if (keyShare == null) {
             throw new RuntimeException("Key share not found");
         }
@@ -4993,8 +5014,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
 
-    private CompletableFuture<KeyShare> loadKeyShareByGroupPublicKey(String groupPublicKey) {
-        return keyShareDao.findByGroupPublicKey(nodeId, groupPublicKey);
+    private KeyShare loadKeyShareByGroupPublicKeySync(String groupPublicKey) {
+        return keyShareDao.findByGroupPublicKeySync(nodeId, groupPublicKey);
     }
 
     private ECPoint decodeECPoint(byte[] encoded) {
@@ -5342,7 +5363,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         PaillierEncryption.PublicKey publicKey = CggmpDkgCodec.decodePaillierPublicKey(pkMap);
         ZKSetup zkSetup = CggmpDkgCodec.decodeZkSetup(zkMap);
         if (!ensurePeerKeyConsistency(task, senderId, publicKey, zkSetup)) {
-            broadcastComplaint(task, senderId, "Inconsistent Paillier key/zkSetup (presign R1)", Map.of("paillierPublicKey", pkMap, "zkSetup", zkMap)).join();
+            fireAndForget(broadcastComplaint(task, senderId, "Inconsistent Paillier key/zkSetup (presign R1)", Map.of("paillierPublicKey", pkMap, "zkSetup", zkMap)),
+                    "CGGMP_PRESIGN_COMPLAINT");
             failSignatureTask(task, "Inconsistent Paillier key/zkSetup (presign R1)");
             return;
         }
@@ -5352,7 +5374,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (!encElgKResult.ok()) {
             logger.warn("Invalid PiEncElg proof (K) from node {}: eq1={}, eq2={}, eq3={}, eq4={}, z1InRange={}",
                     senderId, encElgKResult.eq1(), encElgKResult.eq2(), encElgKResult.eq3(), encElgKResult.eq4(), encElgKResult.z1InRange());
-            broadcastComplaint(task, senderId, "Invalid PiEncElg proof (K)", Map.of("K", kHex)).join();
+            fireAndForget(broadcastComplaint(task, senderId, "Invalid PiEncElg proof (K)", Map.of("K", kHex)),
+                    "CGGMP_PRESIGN_COMPLAINT");
             failSignatureTask(task, "Invalid PiEncElg proof (K)");
             return;
         }
@@ -5362,7 +5385,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (!encElgGResult.ok()) {
             logger.warn("Invalid PiEncElg proof (G) from node {}: eq1={}, eq2={}, eq3={}, eq4={}, z1InRange={}",
                     senderId, encElgGResult.eq1(), encElgGResult.eq2(), encElgGResult.eq3(), encElgGResult.eq4(), encElgGResult.z1InRange());
-            broadcastComplaint(task, senderId, "Invalid PiEncElg proof (G)", Map.of("G", gHex)).join();
+            fireAndForget(broadcastComplaint(task, senderId, "Invalid PiEncElg proof (G)", Map.of("G", gHex)),
+                    "CGGMP_PRESIGN_COMPLAINT");
             failSignatureTask(task, "Invalid PiEncElg proof (G)");
             return;
         }
@@ -5376,6 +5400,17 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (task.presignR1Received.putIfAbsent(senderId, Boolean.TRUE) == null
                 && task.gammaCommitLatch.getCount() > 0) {
             task.gammaCommitLatch.countDown();
+        }
+        if (presignEchoEnabled) {
+            validatePendingPresignR1Echo(task);
+        }
+        Map<String, Object> pendingR2 = task.pendingPresignR2.remove(senderId);
+        if (pendingR2 != null) {
+            processPresignR2(task, senderId, pendingR2);
+        }
+        Map<String, Object> pendingR3 = task.pendingPresignR3.remove(senderId);
+        if (pendingR3 != null) {
+            processPresignR3(task, senderId, pendingR3);
         }
     }
 
@@ -5404,15 +5439,46 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return;
         }
         String expected = computePresignR1EchoHash(task);
-        if (expected == null || !expected.equals(hash)) {
-            broadcastComplaint(task, senderId, "Presign R1 echo mismatch",
-                    Map.of("senderId", senderId, "expected", expected, "received", hash)).join();
+        if (expected == null) {
+            task.pendingPresignR1Echo.put(senderId, hash);
+            return;
+        }
+        if (!expected.equals(hash)) {
+            fireAndForget(broadcastComplaint(task, senderId, "Presign R1 echo mismatch",
+                    Map.of("senderId", senderId, "expected", expected, "received", hash)),
+                    "CGGMP_PRESIGN_COMPLAINT");
             failSignatureTask(task, "Presign R1 echo mismatch from node " + senderId);
             return;
         }
         if (task.presignR1EchoReceived.putIfAbsent(senderId, Boolean.TRUE) == null
                 && task.presignR1EchoLatch.getCount() > 0) {
             task.presignR1EchoLatch.countDown();
+        }
+    }
+
+    private void validatePendingPresignR1Echo(Gg20SignatureTask task) {
+        if (task == null || task.pendingPresignR1Echo.isEmpty()) {
+            return;
+        }
+        String expected = computePresignR1EchoHash(task);
+        if (expected == null) {
+            return;
+        }
+        for (Map.Entry<Integer, String> e : new HashMap<>(task.pendingPresignR1Echo).entrySet()) {
+            int senderId = e.getKey();
+            String hash = e.getValue();
+            if (!expected.equals(hash)) {
+                fireAndForget(broadcastComplaint(task, senderId, "Presign R1 echo mismatch",
+                        Map.of("senderId", senderId, "expected", expected, "received", hash)),
+                        "CGGMP_PRESIGN_COMPLAINT");
+                failSignatureTask(task, "Presign R1 echo mismatch from node " + senderId);
+                return;
+            }
+            task.pendingPresignR1Echo.remove(senderId);
+            if (task.presignR1EchoReceived.putIfAbsent(senderId, Boolean.TRUE) == null
+                    && task.presignR1EchoLatch.getCount() > 0) {
+                task.presignR1EchoLatch.countDown();
+            }
         }
     }
 
@@ -5437,6 +5503,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (!task.participants.contains(nodeId)) {
             logger.info("Skip CGGMP_PRESIGN_R2 for task {} on node {} (not a participant, participants={})",
                     task.taskId, nodeId, task.participants);
+            return;
+        }
+        processPresignR2(task, senderId, dataMap);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void processPresignR2(Gg20SignatureTask task, int senderId, Map<?, ?> dataMap) {
+        String gammaHex = (String) dataMap.get("Gamma");
+        if (gammaHex == null) {
             return;
         }
         Map<?, ?> dMap = (Map<?, ?>) dataMap.get("D");
@@ -5472,8 +5547,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         ECPoint B1 = task.presignB1.get(senderId);
         ECPoint B2 = task.presignB2.get(senderId);
         if (Y == null || B1 == null || B2 == null) {
-            broadcastComplaint(task, senderId, "Missing presign R1 commitments for PiLog proof", Map.of("Gamma", gammaHex)).join();
-            failSignatureTask(task, "Missing presign R1 commitments for PiLog proof");
+            task.pendingPresignR2.put(senderId, new HashMap<String, Object>((Map<String, Object>) dataMap));
             return;
         }
         if (!PresignProofs.verifyLogProof(logProof, Secp256k1Curve.G(), Secp256k1Curve.G(), Gamma, Y, B1, B2, ctx)) {
@@ -5481,7 +5555,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             ev.put("Gamma", gammaHex);
             ev.put("D", dMap);
             ev.put("F", fMap);
-            broadcastComplaint(task, senderId, "Invalid PiLog proof (R2)", ev).join();
+            fireAndForget(broadcastComplaint(task, senderId, "Invalid PiLog proof (R2)", ev),
+                    "CGGMP_PRESIGN_COMPLAINT");
             failSignatureTask(task, "Invalid presign R2 proof");
             return;
         }
@@ -5497,7 +5572,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 Map<String, Object> ev = new HashMap<>();
                 ev.put("expectedX", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(expectedX)));
                 ev.put("providedX", xHex);
-                broadcastComplaint(task, senderId, "Invalid X in presign R2", ev).join();
+                fireAndForget(broadcastComplaint(task, senderId, "Invalid X in presign R2", ev),
+                        "CGGMP_PRESIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid X in presign R2 from node " + senderId);
                 return;
             }
@@ -5507,7 +5583,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             X_i_resolved = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(xHex));
         }
         if (X_i_resolved == null) {
-            broadcastComplaint(task, senderId, "Missing X in presign R2", Map.of("senderId", senderId)).join();
+            fireAndForget(broadcastComplaint(task, senderId, "Missing X in presign R2", Map.of("senderId", senderId)),
+                    "CGGMP_PRESIGN_COMPLAINT");
             failSignatureTask(task, "Missing X in presign R2 from node " + senderId);
             return;
         }
@@ -5543,7 +5620,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     logger.warn("Invalid PiAffG proof from node {}: index={}, eq1={}, eq2={}, eq3={}, zInRange={}, zPrimeInRange={}",
                             senderId, affGResult.index(), affGResult.eq1(), affGResult.eq2(),
                             affGResult.eq3(), affGResult.zInRange(), affGResult.zPrimeInRange());
-                    broadcastComplaint(task, senderId, "Invalid PiAffG proof", Map.of("D", dMap, "F", fMap)).join();
+                    fireAndForget(broadcastComplaint(task, senderId, "Invalid PiAffG proof", Map.of("D", dMap, "F", fMap)),
+                            "CGGMP_PRESIGN_COMPLAINT");
                     failSignatureTask(task, "Invalid presign R2 affG proof");
                     return;
                 }
@@ -5566,7 +5644,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     logger.warn("Invalid PiAffG proof (hat) from node {}: index={}, eq1={}, eq2={}, eq3={}, zInRange={}, zPrimeInRange={}",
                             senderId, affGHatResult.index(), affGHatResult.eq1(), affGHatResult.eq2(),
                             affGHatResult.eq3(), affGHatResult.zInRange(), affGHatResult.zPrimeInRange());
-                    broadcastComplaint(task, senderId, "Invalid PiAffG proof (hat)", Map.of("Dhat", dhMap, "Fhat", fhMap)).join();
+                    fireAndForget(broadcastComplaint(task, senderId, "Invalid PiAffG proof (hat)", Map.of("Dhat", dhMap, "Fhat", fhMap)),
+                            "CGGMP_PRESIGN_COMPLAINT");
                     failSignatureTask(task, "Invalid presign R2 affG hat proof");
                     return;
                 }
@@ -5610,27 +5689,40 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (!task.participants.contains(nodeId)) {
             return;
         }
+        processPresignR3(task, senderId, dataMap);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void processPresignR3(Gg20SignatureTask task, int senderId, Map<?, ?> dataMap) {
+        String deltaHex = (String) dataMap.get("delta");
+        String deltaPointHex = (String) dataMap.get("Delta");
+        String sPointHex = (String) dataMap.get("S");
+        Map<?, ?> logProofMap = (Map<?, ?>) dataMap.get("logProof");
+        if (deltaHex == null || deltaPointHex == null || sPointHex == null) {
+            return;
+        }
         PiLogProof logProof = logProofMap == null ? null : CggmpDkgCodec.decodePiLogProof(logProofMap);
         ECPoint Delta = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(deltaPointHex));
         ECPoint S = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(sPointHex));
         byte[] ctx = buildPresignContext(task.taskId, senderId, "R3");
+        if (task.presignR2Latch.getCount() > 0) {
+            task.pendingPresignR3.put(senderId, new HashMap<String, Object>((Map<String, Object>) dataMap));
+            return;
+        }
         ECPoint Gamma = sumPresignGamma(task);
         ECPoint Y = task.presignY.get(senderId);
         ECPoint A1 = task.presignA1.get(senderId);
         ECPoint A2 = task.presignA2.get(senderId);
         if (Y == null || A1 == null || A2 == null) {
-            Map<String, Object> ev = new HashMap<>();
-            ev.put("Delta", deltaPointHex);
-            ev.put("S", sPointHex);
-            broadcastComplaint(task, senderId, "Missing presign R1 commitments for PiLog proof (R3)", ev).join();
-            failSignatureTask(task, "Invalid presign R3 proof");
+            task.pendingPresignR3.put(senderId, new HashMap<String, Object>((Map<String, Object>) dataMap));
             return;
         }
         if (!PresignProofs.verifyLogProof(logProof, Secp256k1Curve.G(), Gamma, Delta, Y, A1, A2, ctx)) {
             Map<String, Object> ev = new HashMap<>();
             ev.put("Delta", deltaPointHex);
             ev.put("S", sPointHex);
-            broadcastComplaint(task, senderId, "Invalid PiLog proof (R3)", ev).join();
+            fireAndForget(broadcastComplaint(task, senderId, "Invalid PiLog proof (R3)", ev),
+                    "CGGMP_PRESIGN_COMPLAINT");
             failSignatureTask(task, "Invalid presign R3 proof");
             return;
         }
@@ -6304,7 +6396,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             failSignatureTask(task, "Not enough participants after exclusion");
             return;
         }
-        broadcastExclude(task, offenderId).join();
+        fireAndForget(broadcastExclude(task, offenderId), "CGGMP_SIGN_EXCLUDE");
         failSignatureTask(task, "Excluded offender " + offenderId + ", restarting");
 
         String newTaskId = task.taskId + "-excl-" + offenderId + "-" + System.currentTimeMillis();
@@ -6315,7 +6407,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         initSignatureContext(newTask);
         newTask.start();
-        broadcastOfflineInit(newTask).join();
+        fireAndForget(broadcastOfflineInit(newTask), "CGGMP_SIGN_OFFLINE_INIT");
         runOfflinePhase(newTask).exceptionally(ex -> {
             logger.error("Failed offline phase for restarted task {}: {}", newTaskId, ex.getMessage());
             return null;
@@ -6366,7 +6458,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 evidence.put("proofA", proofAHex);
                 evidence.put("proofR", proofRHex);
                 evidence.put("proofS", proofSHex);
-                broadcastComplaint(task, senderId, "Invalid gamma commitment proof", evidence).join();
+                fireAndForget(broadcastComplaint(task, senderId, "Invalid gamma commitment proof", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid gamma commitment proof");
                 return;
             }
@@ -6411,7 +6504,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Missing gamma commitment for node {} in task {}", senderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("gamma", gammaHex);
-                broadcastComplaint(task, senderId, "Missing gamma commitment", evidence).join();
+                fireAndForget(broadcastComplaint(task, senderId, "Missing gamma commitment", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Missing gamma commitment");
                 return;
             }
@@ -6419,7 +6513,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Invalid gamma point from node {} for task {}", senderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("gamma", gammaHex);
-                broadcastComplaint(task, senderId, "Invalid gamma point", evidence).join();
+                fireAndForget(broadcastComplaint(task, senderId, "Invalid gamma point", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid gamma point");
                 return;
             }
@@ -6428,7 +6523,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("gamma", gammaHex);
                 evidence.put("r", rHex);
-                broadcastComplaint(task, senderId, "Invalid gamma commitment opening", evidence).join();
+                fireAndForget(broadcastComplaint(task, senderId, "Invalid gamma commitment opening", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid gamma commitment opening");
                 return;
             }
@@ -6479,7 +6575,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Invalid Paillier public key for KA from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
-                broadcastComplaint(task, initiatorId, "Invalid Paillier public key (KA)", evidence).join();
+                fireAndForget(broadcastComplaint(task, initiatorId, "Invalid Paillier public key (KA)", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid Paillier public key (KA)");
                 return;
             }
@@ -6487,7 +6584,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Missing KA MtA initiator proofs for task {}", taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("initiatorMessage", msgMap);
-                broadcastComplaint(task, initiatorId, "Missing KA MtA initiator proofs", evidence).join();
+                fireAndForget(broadcastComplaint(task, initiatorId, "Missing KA MtA initiator proofs", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Missing KA MtA initiator proofs");
                 return;
             }
@@ -6496,7 +6594,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
                 evidence.put("zkSetup", zkMap);
-                broadcastComplaint(task, initiatorId, "Inconsistent Paillier key/zkSetup (KA)", evidence).join();
+                fireAndForget(broadcastComplaint(task, initiatorId, "Inconsistent Paillier key/zkSetup (KA)", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Inconsistent Paillier key/zkSetup (KA)");
                 return;
             }
@@ -6509,7 +6608,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Invalid KA MtA initiator proofs for task {}", taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("initiatorMessage", msgMap);
-                broadcastComplaint(task, initiatorId, "Invalid KA MtA initiator proofs", evidence).join();
+                fireAndForget(broadcastComplaint(task, initiatorId, "Invalid KA MtA initiator proofs", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid KA MtA initiator proofs");
                 return;
             }
@@ -6527,7 +6627,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             resp.put("responderId", nodeId);
             com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
             resp.put("result", CggmpDkgCodec.encodeMtAResult(publicResult));
-            nodeService.sendMessage(initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_KA_RESPONSE, resp)).join();
+            fireAndForget(nodeService.sendMessage(initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_KA_RESPONSE, resp)),
+                    "CGGMP_SIGN_MTA_KA_RESPONSE");
         } catch (Exception e) {
             logger.error("Failed to handle CGGMP_SIGN_MTA_KA_INIT from node {}: {}", senderId, e.getMessage());
         }
@@ -6567,7 +6668,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Missing KA MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("result", resultMap);
-                broadcastComplaint(task, responderId, "Missing KA MtA respondent proof", evidence).join();
+                fireAndForget(broadcastComplaint(task, responderId, "Missing KA MtA respondent proof", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Missing KA MtA respondent proof");
                 return;
             }
@@ -6577,7 +6679,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Invalid KA MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("result", resultMap);
-                broadcastComplaint(task, responderId, "Invalid KA MtA respondent proof", evidence).join();
+                fireAndForget(broadcastComplaint(task, responderId, "Invalid KA MtA respondent proof", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid KA MtA respondent proof");
                 return;
             }
@@ -6717,7 +6820,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Invalid Paillier public key for ST from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
-                broadcastComplaint(task, initiatorId, "Invalid Paillier public key (ST)", evidence).join();
+                fireAndForget(broadcastComplaint(task, initiatorId, "Invalid Paillier public key (ST)", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid Paillier public key (ST)");
                 return;
             }
@@ -6725,7 +6829,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Missing ST MtA initiator proofs for task {}", taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("initiatorMessage", msgMap);
-                broadcastComplaint(task, initiatorId, "Missing ST MtA initiator proofs", evidence).join();
+                fireAndForget(broadcastComplaint(task, initiatorId, "Missing ST MtA initiator proofs", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Missing ST MtA initiator proofs");
                 return;
             }
@@ -6734,7 +6839,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
                 evidence.put("zkSetup", zkMap);
-                broadcastComplaint(task, initiatorId, "Inconsistent Paillier key/zkSetup (ST)", evidence).join();
+                fireAndForget(broadcastComplaint(task, initiatorId, "Inconsistent Paillier key/zkSetup (ST)", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Inconsistent Paillier key/zkSetup (ST)");
                 return;
             }
@@ -6747,7 +6853,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Invalid ST MtA initiator proofs for task {}", taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("initiatorMessage", msgMap);
-                broadcastComplaint(task, initiatorId, "Invalid ST MtA initiator proofs", evidence).join();
+                fireAndForget(broadcastComplaint(task, initiatorId, "Invalid ST MtA initiator proofs", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid ST MtA initiator proofs");
                 return;
             }
@@ -6765,7 +6872,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             resp.put("responderId", nodeId);
             com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
             resp.put("result", CggmpDkgCodec.encodeMtAResult(publicResult));
-            nodeService.sendMessage(initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_ST_RESPONSE, resp)).join();
+            fireAndForget(nodeService.sendMessage(initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_ST_RESPONSE, resp)),
+                    "CGGMP_SIGN_MTA_ST_RESPONSE");
         } catch (Exception e) {
             logger.error("Failed to handle CGGMP_SIGN_MTA_ST_INIT from node {}: {}", senderId, e.getMessage());
         }
@@ -6805,7 +6913,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Missing ST MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("result", resultMap);
-                broadcastComplaint(task, responderId, "Missing ST MtA respondent proof", evidence).join();
+                fireAndForget(broadcastComplaint(task, responderId, "Missing ST MtA respondent proof", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Missing ST MtA respondent proof");
                 return;
             }
@@ -6815,7 +6924,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Invalid ST MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("result", resultMap);
-                broadcastComplaint(task, responderId, "Invalid ST MtA respondent proof", evidence).join();
+                fireAndForget(broadcastComplaint(task, responderId, "Invalid ST MtA respondent proof", evidence),
+                        "CGGMP_SIGN_COMPLAINT");
                 failSignatureTask(task, "Invalid ST MtA respondent proof");
                 return;
             }
@@ -6855,7 +6965,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             ev.put("r", task.r == null ? null : HexUtils.toHex(task.r));
             ev.put("DeltaTilde", task.presignDeltaTilde.get(senderId) == null ? null : HexUtils.bytesToHex(task.presignDeltaTilde.get(senderId).getEncoded(false)));
             ev.put("STilde", task.presignSTilde.get(senderId) == null ? null : HexUtils.bytesToHex(task.presignSTilde.get(senderId).getEncoded(false)));
-            broadcastComplaint(task, senderId, "Invalid signature share (Figure 10)", ev).join();
+            fireAndForget(broadcastComplaint(task, senderId, "Invalid signature share (Figure 10)", ev),
+                    "CGGMP_SIGN_COMPLAINT");
             failSignatureTask(task, "Invalid signature share from node " + senderId);
             return;
         }
@@ -7010,17 +7121,173 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
+    private static final class PresignR2Context {
+        final Gg20SignatureTask task;
+        final BigInteger curveOrder;
+        final BigInteger gamma_i;
+        final BigInteger x_i;
+        final ECPoint Gamma_i;
+        final ECPoint X_i;
+        final List<CompletableFuture<PeerR2Result>> r2Futures;
+        final long r2StartNs;
+
+        private PresignR2Context(Gg20SignatureTask task,
+                                 BigInteger curveOrder,
+                                 BigInteger gamma_i,
+                                 BigInteger x_i,
+                                 ECPoint Gamma_i,
+                                 ECPoint X_i,
+                                 List<CompletableFuture<PeerR2Result>> r2Futures,
+                                 long r2StartNs) {
+            this.task = task;
+            this.curveOrder = curveOrder;
+            this.gamma_i = gamma_i;
+            this.x_i = x_i;
+            this.Gamma_i = Gamma_i;
+            this.X_i = X_i;
+            this.r2Futures = r2Futures;
+            this.r2StartNs = r2StartNs;
+        }
+    }
+
+    private static final class PresignR1Context {
+        final Gg20SignatureTask task;
+        final BigInteger curveOrder;
+        final BigInteger gamma_i;
+
+        private PresignR1Context(Gg20SignatureTask task,
+                                 BigInteger curveOrder,
+                                 BigInteger gamma_i) {
+            this.task = task;
+            this.curveOrder = curveOrder;
+            this.gamma_i = gamma_i;
+        }
+    }
+
+    private static final class PresignR2Bundle {
+        final PresignR2Context ctx;
+        final Map<Integer, BigInteger> D;
+        final Map<Integer, BigInteger> Dhat;
+        final Map<Integer, BigInteger> F;
+        final Map<Integer, BigInteger> Fhat;
+
+        private PresignR2Bundle(PresignR2Context ctx,
+                                Map<Integer, BigInteger> D,
+                                Map<Integer, BigInteger> Dhat,
+                                Map<Integer, BigInteger> F,
+                                Map<Integer, BigInteger> Fhat) {
+            this.ctx = ctx;
+            this.D = D;
+            this.Dhat = Dhat;
+            this.F = F;
+            this.Fhat = Fhat;
+        }
+    }
+
+    private static final class PresignR3Context {
+        final PresignR2Context ctx;
+        final BigInteger delta_i;
+        final BigInteger chi_i;
+        final ECPoint Gamma;
+
+        private PresignR3Context(PresignR2Context ctx,
+                                 BigInteger delta_i,
+                                 BigInteger chi_i,
+                                 ECPoint Gamma) {
+            this.ctx = ctx;
+            this.delta_i = delta_i;
+            this.chi_i = chi_i;
+            this.Gamma = Gamma;
+        }
+    }
+
+    private static final class DkgContext {
+        final CggmpDkgTask task;
+        final BigInteger q;
+        final ECPoint g;
+        final BigInteger[] coeffs;
+        final Map<String, Object> r1Open;
+
+        private DkgContext(CggmpDkgTask task,
+                           BigInteger q,
+                           ECPoint g,
+                           BigInteger[] coeffs,
+                           Map<String, Object> r1Open) {
+            this.task = task;
+            this.q = q;
+            this.g = g;
+            this.coeffs = coeffs;
+            this.r1Open = r1Open;
+        }
+    }
+
+    private static final class DkgNonThresholdContext {
+        final CggmpDkgTask task;
+        final BigInteger q;
+        final ECPoint g;
+        final BigInteger x_i;
+        final ECPoint X_i;
+        final Map<String, Object> r1Open;
+
+        private DkgNonThresholdContext(CggmpDkgTask task,
+                                       BigInteger q,
+                                       ECPoint g,
+                                       BigInteger x_i,
+                                       ECPoint X_i,
+                                       Map<String, Object> r1Open) {
+            this.task = task;
+            this.q = q;
+            this.g = g;
+            this.x_i = x_i;
+            this.X_i = X_i;
+            this.r1Open = r1Open;
+        }
+    }
+
+    private static final class AuxContext {
+        final CggmpAuxTask task;
+        final PaillierEncryption paillier;
+        final PiPrmProof prmProof;
+        final byte[] rho;
+        final byte[] u;
+
+        private AuxContext(CggmpAuxTask task,
+                           PaillierEncryption paillier,
+                           PiPrmProof prmProof,
+                           byte[] rho,
+                           byte[] u) {
+            this.task = task;
+            this.paillier = paillier;
+            this.prmProof = prmProof;
+            this.rho = rho;
+            this.u = u;
+        }
+    }
+
+    private static final class OnlineContext {
+        final Gg20SignatureTask task;
+        final BigInteger curveOrder;
+        final BigInteger sigma_i;
+
+        private OnlineContext(Gg20SignatureTask task,
+                              BigInteger curveOrder,
+                              BigInteger sigma_i) {
+            this.task = task;
+            this.curveOrder = curveOrder;
+            this.sigma_i = sigma_i;
+        }
+    }
+
     public CompletableFuture<Void> init(int nodesCount) {
-        return ThreadPoolUtil.submitIoTask(() -> {
-            try {
-                nodeService.startP2PServer().join();
-                nodeService.registerMessageHandler(-1, this);
-                logger.info("CGGMP signature service initialized successfully for node {} with {} total nodes", nodeId, nodesCount);
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            }
-        });
+        return nodeService.startP2PServer()
+                .thenRun(() -> {
+                    nodeService.registerMessageHandler(-1, this);
+                    logger.info("CGGMP signature service initialized successfully for node {} with {} total nodes", nodeId, nodesCount);
+                })
+                .exceptionally(ex -> {
+                    logger.error("Failed to init CGGMP signature service: {}", ex.getMessage(), ex);
+                    throw new RuntimeException(ex);
+                });
     }
 
     public CompletableFuture<Void> ensureAuxProvisionedAfterNetworkReady() {
@@ -7028,67 +7295,143 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (!auxAutoTriggered.compareAndSet(false, true)) {
                 return;
             }
-            // TODO(cggmp-aux-retry): Implement robust AUX auto-provisioning with:
-            // 1) leader-only trigger (min nodeId) + retry with backoff and max attempts
-            // 2) timeout per AUX round and failover to retry
-            // 3) prevention of duplicate triggers if CGGMP_AUX_INIT already received
-            // 4) reuse existing AUX from DB if present
-            // 5) detailed timing logs for Paillier/Pedersen safe-prime generation
-            try {
-                nodeService.waitForNetworkReady().join();
-                boolean hasAux = loadLatestAuxInfo(nodeId) != null;
-                broadcastAuxStatus(hasAux);
-
-                if (auxAutoLeaderId <= 0) {
-                    logger.info("AUX auto provision disabled by config on node {}", nodeId);
-                    return;
-                }
-                if (nodeId != auxAutoLeaderId) {
-                    logger.info("Node {} is not auto leader (leader is {}), skipping AUX trigger", nodeId, auxAutoLeaderId);
-                    return;
-                }
-
-                waitForAuxStatus();
-                java.util.List<Integer> missing = new java.util.ArrayList<>();
-                java.util.List<Integer> noAux = new java.util.ArrayList<>();
-                for (int id = 1; id <= nodesCount; id++) {
-                    Boolean present = auxStatus.get(id);
-                    if (present == null) {
-                        missing.add(id);
-                    } else if (!present) {
-                        noAux.add(id);
-                    }
-                }
-                if (!missing.isEmpty() || !noAux.isEmpty()) {
-                    logger.warn("AUX status mismatch detected. Missing status from nodes={}, nodes without AUX={}",
-                            missing, noAux);
-                    String taskId = createAuxTask();
-                    logger.info("Auto leader {} initiating AUX task {}", nodeId, taskId);
-                    startAuxProcess(taskId).exceptionally(ex -> {
-                        logger.error("Auto AUX failed for task {}: {}", taskId, ex.getMessage(), ex);
+            nodeService.waitForNetworkReady()
+                    .thenRun(() -> {
+                        // Run one check immediately, then keep a periodic compensating check.
+                        runAuxAutoCheck();
+                        long interval = Math.max(5, auxAutoCheckIntervalSeconds);
+                        cggmpScheduler.scheduleWithFixedDelay(this::runAuxAutoCheck, interval, interval, TimeUnit.SECONDS);
+                    })
+                    .exceptionally(ex -> {
+                        logger.error("Auto AUX provisioning failed on node {}: {}", nodeId, ex.getMessage(), ex);
                         return null;
                     });
-                    return;
-                }
+        });
+    }
 
-                if (hasAux) {
-                    logger.info("All nodes report AUX present; skipping auto provision on leader {}", nodeId);
-                    return;
+    private void runAuxAutoCheck() {
+        if (!auxAutoCheckRunning.compareAndSet(false, true)) {
+            return;
+        }
+        boolean asyncStarted = false;
+        try {
+            int leaderId = resolveAuxAutoLeaderId();
+
+            boolean hasAux = loadLatestAuxInfo(nodeId) != null;
+            broadcastAuxStatus(hasAux);
+
+            if (nodeId != leaderId) {
+                logger.debug("Node {} is not auto leader (leader is {}), skipping AUX trigger", nodeId, leaderId);
+                return;
+            }
+
+            if (hasActiveAuxTask()) {
+                logger.debug("AUX auto check: task already in progress on leader {}, skipping", nodeId);
+                return;
+            }
+
+            // Ask peers to refresh status before evaluating mismatch.
+            broadcastAuxStatus(hasAux);
+
+            asyncStarted = true;
+            waitForAuxStatusAsync()
+                    .thenRun(() -> {
+                        java.util.List<Integer> missing = new java.util.ArrayList<>();
+                        java.util.List<Integer> noAux = new java.util.ArrayList<>();
+                        for (int id = 1; id <= nodesCount; id++) {
+                            Boolean present = auxStatus.get(id);
+                            if (present == null) {
+                                missing.add(id);
+                            } else if (!present) {
+                                noAux.add(id);
+                            }
+                        }
+                        if (!missing.isEmpty()) {
+                            logger.warn("AUX status missing from nodes {}, requesting refresh", missing);
+                            broadcastAuxStatus(hasAux);
+                        }
+                        if (!noAux.isEmpty()) {
+                            logger.warn("AUX status mismatch detected. Nodes without AUX={}", noAux);
+                            String taskId = createAuxTask();
+                            logger.info("Auto leader {} initiating AUX task {}", nodeId, taskId);
+                            startAuxProcess(taskId).exceptionally(ex -> {
+                                logger.error("Auto AUX failed for task {}: {}", taskId, ex.getMessage(), ex);
+                                return null;
+                            });
+                            return;
+                        }
+                        if (!missing.isEmpty()) {
+                            logger.info("AUX status still missing from nodes {}, skipping auto trigger this round", missing);
+                            return;
+                        }
+
+                        if (hasAux) {
+                            logger.info("All nodes report AUX present; skipping auto provision on leader {}", nodeId);
+                            return;
+                        }
+                        logger.warn("Leader {} missing AUX but peers reported present; initiating AUX to reconcile", nodeId);
+                        String taskId = createAuxTask();
+                        startAuxProcess(taskId).exceptionally(ex -> {
+                            logger.error("Auto AUX failed for task {}: {}", taskId, ex.getMessage(), ex);
+                            return null;
+                        });
+                    })
+                    .exceptionally(ex -> {
+                        logger.error("Auto AUX status wait failed on node {}: {}", nodeId, ex.getMessage(), ex);
+                        return null;
+                    })
+                    .whenComplete((v, ex) -> auxAutoCheckRunning.set(false));
+        } catch (Exception e) {
+            auxAutoCheckRunning.set(false);
+            logger.error("Auto AUX check failed on node {}: {}", nodeId, e.getMessage(), e);
+            return;
+        } finally {
+            if (!asyncStarted) {
+                auxAutoCheckRunning.set(false);
+            }
+        }
+    }
+
+    private int resolveAuxAutoLeaderId() {
+        int minId = nodeId;
+        for (NodeService.NodeInfo info : nodeService.getNodes()) {
+            if (info != null) {
+                minId = Math.min(minId, info.id);
+            }
+        }
+        return minId;
+    }
+
+    private boolean hasActiveAuxTask() {
+        for (CggmpAuxTask task : auxTasks.values()) {
+            if (task != null && task.status.get() == com.example.mpc.enums.TaskStatus.IN_PROGRESS) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private CompletableFuture<Void> ensureClusterAuxReady() {
+        boolean hasAux = loadLatestAuxInfo(nodeId) != null;
+        broadcastAuxStatus(hasAux);
+        return waitForAuxStatusAsync().thenRun(() -> {
+            java.util.List<Integer> missing = new java.util.ArrayList<>();
+            java.util.List<Integer> noAux = new java.util.ArrayList<>();
+            for (int id = 1; id <= nodesCount; id++) {
+                Boolean present = auxStatus.get(id);
+                if (present == null) {
+                    missing.add(id);
+                } else if (!present) {
+                    noAux.add(id);
                 }
-                logger.warn("Leader {} missing AUX but peers reported present; initiating AUX to reconcile", nodeId);
-                String taskId = createAuxTask();
-                startAuxProcess(taskId).exceptionally(ex -> {
-                    logger.error("Auto AUX failed for task {}: {}", taskId, ex.getMessage(), ex);
-                    return null;
-                });
-            } catch (Exception e) {
-                logger.error("Auto AUX provisioning failed on node {}: {}", nodeId, e.getMessage(), e);
+            }
+            if (!missing.isEmpty() || !noAux.isEmpty()) {
+                throw new RuntimeException("AUX not ready on all nodes. Missing=" + missing + ", withoutAux=" + noAux);
             }
         });
     }
 
     private void broadcastAuxStatus(boolean hasAux) {
-        auxStatus.clear();
         auxStatus.put(nodeId, hasAux);
         Map<String, Object> msg = new HashMap<>();
         msg.put("senderId", nodeId);
@@ -7101,18 +7444,236 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 });
     }
 
-    private void waitForAuxStatus() {
+    private CompletableFuture<Void> waitForAuxStatusAsync() {
         long deadline = System.currentTimeMillis() + Constants.AUX_STATUS_WAIT_MS;
-        while (System.currentTimeMillis() < deadline) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        ScheduledFuture<?> tick = cggmpScheduler.scheduleAtFixedRate(() -> {
             if (auxStatus.size() >= nodesCount) {
+                future.complete(null);
                 return;
             }
-            try {
-                Thread.sleep(200);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
+            if (System.currentTimeMillis() >= deadline) {
+                future.complete(null);
+            }
+        }, 0, 200, TimeUnit.MILLISECONDS);
+        future.whenComplete((v, ex) -> tick.cancel(false));
+        return future;
+    }
+
+    private CompletableFuture<Boolean> waitForNetworkReadyAsync(long timeoutSeconds) {
+        return nodeService.waitForNetworkReady()
+                .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .thenApply(v -> true)
+                .exceptionally(ex -> false);
+    }
+
+    private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds);
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        ScheduledFuture<?> tick = cggmpScheduler.scheduleAtFixedRate(() -> {
+            if (latch.getCount() == 0) {
+                future.complete(null);
                 return;
             }
+            if (System.currentTimeMillis() >= deadline) {
+                future.completeExceptionally(new RuntimeException("Timeout waiting for " + label));
+            }
+        }, 0, 50, TimeUnit.MILLISECONDS);
+        future.whenComplete((v, ex) -> tick.cancel(false));
+        return future;
+    }
+
+    private CompletableFuture<Void> waitForDkgLatch(CggmpDkgTask task, CountDownLatch latch, String label) {
+        return waitForLatchAsync(latch, Constants.DKG_ROUND_TIMEOUT_SECONDS, label)
+                .exceptionally(ex -> {
+                    task.timeout();
+                    throw new CompletionException(ex);
+                });
+    }
+
+    private CompletableFuture<Void> continuePresignAfterR2(PresignR2Bundle bundle) {
+        PresignR2Context ctx = bundle.ctx;
+        return waitForLatchAsync(ctx.task.presignR2Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presign R2")
+                .thenCompose(v -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        BigInteger delta_i = ctx.gamma_i.multiply(ctx.task.k_i).mod(ctx.curveOrder);
+                        BigInteger chi_i = ctx.x_i.multiply(ctx.task.k_i).mod(ctx.curveOrder);
+                        List<Integer> missingR3Peers = new ArrayList<>();
+                        for (int peerId : ctx.task.participants) {
+                            if (peerId == nodeId) continue;
+                            BigInteger D_ij = ctx.task.presignD.get(peerId);
+                            BigInteger Dhat_ij = ctx.task.presignDhat.get(peerId);
+                            BigInteger beta = ctx.task.presignBeta.get(peerId);
+                            BigInteger betaHat = ctx.task.presignBetaHat.get(peerId);
+                            if (D_ij == null || Dhat_ij == null || beta == null || betaHat == null) {
+                                logger.warn("Presign R3 missing inputs for task {} peer {}: D={}, Dhat={}, beta={}, betaHat={}",
+                                        ctx.task.taskId,
+                                        peerId,
+                                        D_ij == null ? null : D_ij.toString(16),
+                                        Dhat_ij == null ? null : Dhat_ij.toString(16),
+                                        beta == null ? null : beta.toString(16),
+                                        betaHat == null ? null : betaHat.toString(16));
+                                missingR3Peers.add(peerId);
+                                continue;
+                            }
+                            BigInteger alpha = decodeSigned(ctx.task.paillier.decrypt(D_ij), ctx.task.paillier.getPublicKeyInfo().n);
+                            BigInteger alphaHat = decodeSigned(ctx.task.paillier.decrypt(Dhat_ij), ctx.task.paillier.getPublicKeyInfo().n);
+                            BigInteger oldDelta = delta_i;
+                            BigInteger oldChi = chi_i;
+                            delta_i = delta_i.add(alpha).add(beta).mod(ctx.curveOrder);
+                            chi_i = chi_i.add(alphaHat).add(betaHat).mod(ctx.curveOrder);
+                            logger.info("Presign R3 accumulate task {} peer {}: alpha={}, beta={}, alphaHat={}, betaHat={}, delta_i: {} -> {}, chi_i: {} -> {}",
+                                    ctx.task.taskId,
+                                    peerId,
+                                    alpha.toString(16),
+                                    beta.toString(16),
+                                    alphaHat.toString(16),
+                                    betaHat.toString(16),
+                                    oldDelta.toString(16),
+                                    delta_i.toString(16),
+                                    oldChi.toString(16),
+                                    chi_i.toString(16));
+                        }
+                        if (!missingR3Peers.isEmpty()) {
+                            throw new RuntimeException("Presign R3 missing inputs from peers: " + missingR3Peers);
+                        }
+                        ECPoint Gamma = sumPresignGamma(ctx.task);
+                        ECPoint Delta_i = Gamma.multiply(ctx.task.k_i).normalize();
+                        ECPoint S_i = Gamma.multiply(chi_i).normalize();
+                        ctx.task.presignDelta.put(nodeId, delta_i);
+                        ctx.task.presignDeltaPoint.put(nodeId, Delta_i);
+                        ctx.task.presignSPoint.put(nodeId, S_i);
+                        byte[] ctxR3 = buildPresignContext(ctx.task.taskId, nodeId, "R3");
+                        ECPoint Y_i_r3 = ctx.task.presignY.get(nodeId);
+                        ECPoint A1_r3 = ctx.task.presignA1.get(nodeId);
+                        ECPoint A2_r3 = ctx.task.presignA2.get(nodeId);
+                        if (Y_i_r3 == null || A1_r3 == null || A2_r3 == null || ctx.task.presignAScalar == null) {
+                            throw new RuntimeException("Missing presign R1 commitments for PiLog proof (R3)");
+                        }
+                        PiLogProof logProofR3 = PresignProofs.createLogProof(
+                                Secp256k1Curve.G(),
+                                Gamma,
+                                Delta_i,
+                                Y_i_r3,
+                                A1_r3,
+                                A2_r3,
+                                ctx.task.k_i,
+                                ctx.task.presignAScalar,
+                                ctxR3
+                        );
+                        fireAndForget(broadcastPresignR3(ctx.task, delta_i, Delta_i, S_i, logProofR3),
+                                "CGGMP_PRESIGN_R3");
+                        return new PresignR3Context(ctx, delta_i, chi_i, Gamma);
+                    } catch (Exception e) {
+                        ctx.task.fail(e.getMessage());
+                        throw new RuntimeException(e);
+                    }
+                }, ThreadPoolUtil.getIoThreadPool()))
+                .thenCompose(r3ctx -> waitForLatchAsync(ctx.task.offlineDoneLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presign R3")
+                        .thenRunAsync(() -> finalizePresign(r3ctx), ThreadPoolUtil.getIoThreadPool()));
+    }
+
+    private void finalizePresign(PresignR3Context r3ctx) {
+        PresignR2Context ctx = r3ctx.ctx;
+        BigInteger delta = sumShares(ctx.task.presignDelta, ctx.curveOrder);
+        ECPoint left = Secp256k1Curve.multiply(Secp256k1Curve.G(), delta);
+        ECPoint right = sumPoints(ctx.task.presignDeltaPoint);
+        if (!left.equals(right)) {
+            logger.warn("Presign delta verification mismatch for task {}: left={}, right={}, delta={}, participants={}",
+                    ctx.task.taskId,
+                    HexUtils.bytesToHex(Secp256k1Curve.encodePoint(left)),
+                    HexUtils.bytesToHex(Secp256k1Curve.encodePoint(right)),
+                    delta.toString(16),
+                    ctx.task.participants);
+            Map<String, Object> evidence = buildDecEvidenceDelta(ctx.task, ctx.gamma_i, r3ctx.delta_i);
+            fireAndForget(broadcastComplaint(ctx.task, null, "Presign delta verification failed", evidence),
+                    "CGGMP_PRESIGN_DELTA_COMPLAINT");
+            failSignatureTask(ctx.task, "Presign delta verification failed");
+            return;
         }
+        ECPoint X = ctx.task.groupPublicKeyPoint;
+        ECPoint leftS = X.multiply(delta).normalize();
+        ECPoint rightS = sumPoints(ctx.task.presignSPoint);
+        if (!leftS.equals(rightS)) {
+            logger.warn("Presign chi verification mismatch for task {}: leftS={}, rightS={}, delta={}, participants={}",
+                    ctx.task.taskId,
+                    HexUtils.bytesToHex(Secp256k1Curve.encodePoint(leftS)),
+                    HexUtils.bytesToHex(Secp256k1Curve.encodePoint(rightS)),
+                    delta.toString(16),
+                    ctx.task.participants);
+            for (int peerId : ctx.task.participants) {
+                ECPoint sPoint = ctx.task.presignSPoint.get(peerId);
+                BigInteger deltaShare = ctx.task.presignDelta.get(peerId);
+                if (sPoint == null && deltaShare == null) {
+                    continue;
+                }
+                logger.warn("Presign chi mismatch details task {} peer {}: S_i={}, delta_i={}",
+                        ctx.task.taskId,
+                        peerId,
+                        sPoint == null ? null : HexUtils.bytesToHex(Secp256k1Curve.encodePoint(sPoint)),
+                        deltaShare == null ? null : deltaShare.toString(16));
+            }
+            Map<String, Object> evidence = buildDecEvidenceChi(ctx.task, ctx.x_i, r3ctx.chi_i);
+            fireAndForget(broadcastComplaint(ctx.task, null, "Presign chi verification failed", evidence),
+                    "CGGMP_PRESIGN_CHI_COMPLAINT");
+            failSignatureTask(ctx.task, "Presign chi verification failed");
+            return;
+        }
+        BigInteger deltaInv = delta.modInverse(ctx.curveOrder);
+        ECPoint GammaFinal = r3ctx.Gamma.normalize();
+        BigInteger kTilde = ctx.task.k_i.multiply(deltaInv).mod(ctx.curveOrder);
+        BigInteger chiTilde = r3ctx.chi_i.multiply(deltaInv).mod(ctx.curveOrder);
+        ctx.task.presignature = new Presignature(GammaFinal, kTilde, chiTilde);
+        ctx.task.presignatureLatch.countDown();
+
+        for (Map.Entry<Integer, ECPoint> e : ctx.task.presignDeltaPoint.entrySet()) {
+            ctx.task.presignDeltaTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
+        }
+        for (Map.Entry<Integer, ECPoint> e : ctx.task.presignSPoint.entrySet()) {
+            ctx.task.presignSTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
+        }
+
+        if (nodeId == ctx.task.initiatorId) {
+            markOfflineReady(ctx.task, nodeId);
+        } else {
+            fireAndForget(sendOfflineReady(ctx.task), "CGGMP_SIGN_OFFLINE_READY");
+        }
+    }
+
+    private void finalizeSignatureAsInitiator(OnlineContext ctx) {
+        List<Integer> offenders = findInvalidSigmaShares(ctx.task);
+        if (!offenders.isEmpty()) {
+            for (int offender : offenders) {
+                fireAndForget(broadcastComplaint(ctx.task, offender, "Invalid signature share (Figure 10)", Map.of("r", HexUtils.toHex(ctx.task.r))),
+                        "CGGMP_SIGN_SHARE_COMPLAINT");
+            }
+            failSignatureTask(ctx.task, "Invalid signature shares: " + offenders);
+            signatureInProgress.set(false);
+            clearPresignAll(ctx.task);
+            return;
+        }
+        BigInteger s = sumShares(ctx.task.sShares, ctx.curveOrder);
+        if (s.compareTo(ctx.curveOrder.shiftRight(1)) > 0) {
+            s = ctx.curveOrder.subtract(s);
+        }
+        byte[] der = derEncodeSignature(ctx.task.r, s);
+        boolean verified = verifySignature(ctx.task.groupPublicKeyPoint, ctx.task.messageHash, ctx.task.r, s, buildDomain());
+        if (!verified) {
+            List<Integer> suspects = findInvalidSigmaShares(ctx.task);
+            for (int offender : suspects) {
+                fireAndForget(broadcastComplaint(ctx.task, offender, "Aggregate signature verification failed (Figure 10)", Map.of("r", HexUtils.toHex(ctx.task.r))),
+                        "CGGMP_SIGN_AGG_COMPLAINT");
+            }
+            failSignatureTask(ctx.task, "Aggregate signature verification failed");
+            signatureInProgress.set(false);
+            clearPresignAll(ctx.task);
+            return;
+        }
+        ctx.task.signature = Base64.getEncoder().encodeToString(der);
+        ctx.task.verified = verified;
+        ctx.task.complete();
+        signatureInProgress.set(false);
+        clearPresignAll(ctx.task);
+        logger.info("CGGMP signature task {} completed successfully, verified: {}", ctx.task.taskId, verified);
     }
 }

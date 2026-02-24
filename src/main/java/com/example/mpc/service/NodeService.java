@@ -83,6 +83,7 @@ public class NodeService {
     private final AtomicBoolean discoveryRunning = new AtomicBoolean(false);
     private final ConcurrentHashMap<Integer, java.util.concurrent.CopyOnWriteArrayList<MessageHandler>> messageHandlers = new ConcurrentHashMap<>();
     private ScheduledExecutorService discoveryScheduler;
+    private ScheduledExecutorService retryScheduler = Executors.newSingleThreadScheduledExecutor();
     private final ConcurrentHashMap<String, java.util.Set<Integer>> reliablePending = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<Void>> reliableFutures = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RbcState> rbcStates = new ConcurrentHashMap<>();
@@ -159,6 +160,13 @@ public class NodeService {
         public static Message ack(int senderId, String ackForId) {
             return new Message(senderId, MessageType.NET_ACK, null, null, false, ackForId, false, null);
         }
+    }
+
+    private synchronized ScheduledExecutorService getRetryScheduler() {
+        if (retryScheduler == null || retryScheduler.isShutdown() || retryScheduler.isTerminated()) {
+            retryScheduler = Executors.newSingleThreadScheduledExecutor();
+        }
+        return retryScheduler;
     }
 
     /**
@@ -337,12 +345,14 @@ public class NodeService {
                         // 自动连接到新发现的节点
                         if (nettyService != null) {
                             submitTask(() -> {
-                                try {
-                                    nettyService.connectToNode(nodeId, address.getHostAddress(), nodePort).join();
-                                    logger.info("Connected to newly discovered node: {}", nodeId);
-                                } catch (Exception e) {
-                                    logger.error("Failed to connect to node {}: {}", nodeId, e.getMessage());
-                                }
+                                nettyService.connectToNode(nodeId, address.getHostAddress(), nodePort)
+                                        .whenComplete((v, ex) -> {
+                                            if (ex == null) {
+                                                logger.info("Connected to newly discovered node: {}", nodeId);
+                                            } else {
+                                                logger.error("Failed to connect to node {}: {}", nodeId, ex.getMessage());
+                                            }
+                                        });
                             });
                         }
                     }
@@ -375,6 +385,10 @@ public class NodeService {
 
             if (nettyService != null) {
                 nettyService.shutdown();
+            }
+            if (retryScheduler != null) {
+                retryScheduler.shutdown();
+                retryScheduler = null;
             }
         });
     }
@@ -443,50 +457,61 @@ public class NodeService {
         if (!reliableBroadcastEnabled) {
             return broadcastMessage(message);
         }
-        return ThreadPoolUtil.submitToIoThreadPool(() -> {
-            String msgId = message.messageId != null ? message.messageId : java.util.UUID.randomUUID().toString();
-            Message reliable = message.requireAck ? message
-                    : new Message(message.senderId, message.type, message.data, msgId, true, null);
-            java.util.Set<Integer> pending = java.util.concurrent.ConcurrentHashMap.newKeySet();
-            pending.addAll(nodes.keySet());
-            pending.remove(nodeId);
-            if (pending.isEmpty()) {
-                return;
-            }
-            CompletableFuture<Void> ackFuture = new CompletableFuture<>();
-            reliablePending.put(msgId, pending);
-            reliableFutures.put(msgId, ackFuture);
-            int attempts = Math.max(1, reliableBroadcastRetryCount);
-            for (int attempt = 1; attempt <= attempts; attempt++) {
-                if (pending.isEmpty()) {
-                    break;
+        String msgId = message.messageId != null ? message.messageId : java.util.UUID.randomUUID().toString();
+        Message reliable = message.requireAck ? message
+                : new Message(message.senderId, message.type, message.data, msgId, true, null);
+        java.util.Set<Integer> pending = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        pending.addAll(nodes.keySet());
+        pending.remove(nodeId);
+        if (pending.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        CompletableFuture<Void> ackFuture = new CompletableFuture<>();
+        reliablePending.put(msgId, pending);
+        reliableFutures.put(msgId, ackFuture);
+        int attempts = Math.max(1, reliableBroadcastRetryCount);
+        java.util.concurrent.atomic.AtomicInteger attemptCounter = new java.util.concurrent.atomic.AtomicInteger(0);
+        Runnable attemptSend = new Runnable() {
+            @Override
+            public void run() {
+                if (ackFuture.isDone()) {
+                    return;
                 }
+                if (pending.isEmpty()) {
+                    ackFuture.complete(null);
+                    return;
+                }
+                int attempt = attemptCounter.incrementAndGet();
                 List<CompletableFuture<Integer>> futures = new ArrayList<>();
                 for (int peerId : pending) {
                     futures.add(sendMessage(peerId, reliable)
                             .thenApply(v -> peerId)
                             .exceptionally(ex -> null));
                 }
-                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-                if (!pending.isEmpty() && attempt < attempts) {
-                    try {
-                        Thread.sleep(reliableBroadcastRetryIntervalMs);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                        .whenComplete((v, ex) -> {
+                            if (ackFuture.isDone()) {
+                                return;
+                            }
+                            if (pending.isEmpty()) {
+                                ackFuture.complete(null);
+                                return;
+                            }
+                            if (attempt < attempts) {
+                                getRetryScheduler().schedule(this, reliableBroadcastRetryIntervalMs, TimeUnit.MILLISECONDS);
+                            } else {
+                                logger.warn("Reliable broadcast failed for {} peers: {}", message.type, pending);
+                                ackFuture.completeExceptionally(new RuntimeException("Reliable broadcast failed for peers " + pending));
+                            }
+                        });
             }
-            if (!pending.isEmpty()) {
-                logger.warn("Reliable broadcast failed for {} peers: {}", message.type, pending);
-                ackFuture.completeExceptionally(new RuntimeException("Reliable broadcast failed for peers " + pending));
-            } else {
-                ackFuture.complete(null);
-            }
+        };
+        getRetryScheduler().execute(attemptSend);
+        ackFuture.whenComplete((v, ex) -> {
             reliablePending.remove(msgId);
             reliableFutures.remove(msgId);
-            ackFuture.join();
         });
+        return ackFuture;
     }
 
     public CompletableFuture<Void> broadcastRbc(Message message) {
@@ -499,7 +524,7 @@ public class NodeService {
         RbcState state = new RbcState(rbc);
         rbcStates.putIfAbsent(msgId, state);
         state.echoes.add(nodeId);
-        broadcastRbcEcho(rbc).join();
+        broadcastRbcEcho(rbc);
         return broadcastReliable(rbc).thenCompose(v -> state.delivered);
     }
 
@@ -676,47 +701,49 @@ public class NodeService {
      * @throws InterruptedException 中断异常
      */
     public CompletableFuture<Void> waitForNetworkReady() {
-        return ThreadPoolUtil.submitIoTask(() -> {
+        CompletableFuture<Void> ready = new CompletableFuture<>();
+        ScheduledFuture<?> periodic = getRetryScheduler().scheduleWithFixedDelay(() -> {
+            if (ready.isDone()) {
+                return;
+            }
             try {
-                while (true) {
-                    if (nodes.size() < nodesCount - 1) {
-                        logger.info("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
-                        Thread.sleep(1000);
-                        continue;
-                    }
+                if (nodes.size() < nodesCount - 1) {
+                    logger.info("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
+                    return;
+                }
 
-                    boolean allConnected = true;
-                    if (nettyService != null) {
-                        for (NodeInfo nodeInfo : nodes.values()) {
-                            if (nodeInfo.id == nodeId) {
-                                continue;
-                            }
-                            var channel = nettyService.getNodeChannel(nodeInfo.id);
-                            if (channel == null || !channel.isActive()) {
-                                allConnected = false;
-                                try {
-                                    nettyService.connectToNode(nodeInfo.id, nodeInfo.host, nodeInfo.port).join();
-                                } catch (Exception e) {
-                                    logger.debug("Waiting for peer connection to node {}: {}", nodeInfo.id, e.getMessage());
-                                }
-                            }
+                boolean allConnected = true;
+                if (nettyService != null) {
+                    for (NodeInfo nodeInfo : nodes.values()) {
+                        if (nodeInfo.id == nodeId) {
+                            continue;
+                        }
+                        var channel = nettyService.getNodeChannel(nodeInfo.id);
+                        if (channel == null || !channel.isActive()) {
+                            allConnected = false;
+                            nettyService.connectToNode(nodeInfo.id, nodeInfo.host, nodeInfo.port)
+                                    .whenComplete((v, ex) -> {
+                                        if (ex != null) {
+                                            logger.debug("Waiting for peer connection to node {}: {}", nodeInfo.id, ex.getMessage());
+                                        }
+                                    });
                         }
                     }
-
-                    if (!allConnected) {
-                        logger.info("Waiting for all peer connections to be active...");
-                        Thread.sleep(1000);
-                        continue;
-                    }
-
-                    logger.info("Network ready with {} nodes", nodes.size() + 1);
-                    break;
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException(e);
+
+                if (!allConnected) {
+                    logger.info("Waiting for all peer connections to be active...");
+                    return;
+                }
+
+                logger.info("Network ready with {} nodes", nodes.size() + 1);
+                ready.complete(null);
+            } catch (Exception e) {
+                ready.completeExceptionally(e);
             }
-        });
+        }, 0, 1, TimeUnit.SECONDS);
+        ready.whenComplete((v, ex) -> periodic.cancel(false));
+        return ready;
     }
 
     /**

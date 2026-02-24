@@ -43,8 +43,12 @@ public class ApplicationInitializer implements CommandLineRunner {
         if (enableCggmp) {
             initializeCggmp();
         } else {
-            nodeService.startP2PServer().join();
-            logger.info("P2P server started successfully");
+            nodeService.startP2PServer()
+                    .thenRun(() -> logger.info("P2P server started successfully"))
+                    .exceptionally(ex -> {
+                        logger.error("Failed to start P2P server", ex);
+                        return null;
+                    });
         }
 
         if (enableLegacy) {
@@ -61,9 +65,15 @@ public class ApplicationInitializer implements CommandLineRunner {
         try {
             cggmpSignatureService.initialize();
             logger.info("Initializing CGGMP signature service...");
-            cggmpSignatureService.init(Constants.NODES_COUNT).join();
-            cggmpSignatureService.ensureAuxProvisionedAfterNetworkReady();
-            logger.info("CGGMP services initialized successfully");
+            cggmpSignatureService.init(Constants.NODES_COUNT)
+                    .thenRun(() -> {
+                        cggmpSignatureService.ensureAuxProvisionedAfterNetworkReady();
+                        logger.info("CGGMP services initialized successfully");
+                    })
+                    .exceptionally(ex -> {
+                        logger.error("Failed to initialize CGGMP services", ex);
+                        return null;
+                    });
         } catch (Exception e) {
             logger.error("Failed to initialize CGGMP services", e);
         }
@@ -73,8 +83,12 @@ public class ApplicationInitializer implements CommandLineRunner {
         logger.info("--- Initializing legacy services ---");
         try {
             logger.info("Initializing Gennaro DKG service...");
-            gennaroDkgService.init().join();
-            logger.info("Gennaro DKG service initialized successfully");
+            gennaroDkgService.init()
+                    .thenRun(() -> logger.info("Gennaro DKG service initialized successfully"))
+                    .exceptionally(ex -> {
+                        logger.error("Failed to initialize legacy services", ex);
+                        return null;
+                    });
 
         } catch (Exception e) {
             logger.error("Failed to initialize legacy services", e);

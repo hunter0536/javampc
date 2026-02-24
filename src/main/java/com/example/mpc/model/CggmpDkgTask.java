@@ -74,6 +74,7 @@ public class CggmpDkgTask {
     public final ConcurrentHashMap<Integer, com.example.mpc.cggmp.proof.NoSmallFactorProof> round2FacProofs = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.util.Map<String, Object>> round2ProofMaps = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.util.Map<String, String>> pendingRound2Shares = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, java.util.Map<String, Object>> pendingRound2Open = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.util.concurrent.CompletableFuture<Boolean>> round2ModFacVerifyFutures = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.util.concurrent.CompletableFuture<Boolean>> round2SchVerifyFutures = new ConcurrentHashMap<>();
 

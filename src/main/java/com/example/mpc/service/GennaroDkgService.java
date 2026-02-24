@@ -23,6 +23,9 @@ import java.security.*;
 import java.security.spec.ECGenParameterSpec;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 @Service
 public class GennaroDkgService implements NodeService.MessageHandler {
@@ -49,6 +52,11 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     private final ConcurrentHashMap<String, GennaroDkgTask> dkgTasks = new ConcurrentHashMap<>();
     private static final ExecutorService dkgExecutorService = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "Gennaro-DKG-Thread");
+        t.setDaemon(true);
+        return t;
+    });
+    private static final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "Gennaro-DKG-Scheduler");
         t.setDaemon(true);
         return t;
     });
@@ -96,102 +104,62 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     }
 
     public CompletableFuture<Void> init() {
-        return ThreadPoolUtil.submitIoTask(() -> {
-            try {
-                nodeService.startP2PServer().join();
-                nodeService.registerMessageHandler(-1, this);
-                logger.info("Gennaro DKG service initialized successfully for node {}", nodeId);
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            }
-        });
+        return nodeService.startP2PServer()
+                .thenRun(() -> {
+                    nodeService.registerMessageHandler(-1, this);
+                    logger.info("Gennaro DKG service initialized successfully for node {}", nodeId);
+                })
+                .exceptionally(ex -> {
+                    logger.error("Failed to init Gennaro DKG service", ex);
+                    throw new CompletionException(ex);
+                });
     }
 
     public CompletableFuture<Void> startDkgProcess(String taskId) {
-        return CompletableFuture.runAsync(() -> {
-            logger.info("startDkgProcess invoked for task {}", taskId);
-            GennaroDkgTask task = null;
-            try {
-                task = dkgTasks.get(taskId);
-                if (task == null) {
-                    int attempts = 0;
-                    while (task == null && attempts < 20) {
-                        try {
-                            Thread.sleep(200);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                        task = dkgTasks.get(taskId);
-                        attempts++;
+        logger.info("startDkgProcess invoked for task {}", taskId);
+        return waitForTask(taskId, 20, 200)
+                .thenCompose(task -> {
+                    if (!task.start()) {
+                        logger.warn("DKG task {} failed to start (may already be in progress), skipping", taskId);
+                        return CompletableFuture.completedFuture(null);
                     }
-                    if (task == null) {
-                        throw new RuntimeException("DKG task not found: " + taskId);
+                    logger.info("Starting Gennaro DKG process for task: {}", taskId);
+                    logger.info("Waiting for network ready...");
+                    return waitForNetworkReadyWithRetry(60, 5)
+                            .exceptionally(ex -> {
+                                logger.warn("Network not fully ready, but proceeding with DKG process");
+                                return null;
+                            })
+                            .thenCompose(v -> {
+                                logger.info("Network ready, broadcasting DKG_INIT message");
+                                Map<String, Object> initData = new HashMap<>();
+                                initData.put("taskId", taskId);
+                                return retryAsync(
+                                        () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_DKG_INIT, initData)),
+                                        Constants.DKG_BROADCAST_RETRY_COUNT,
+                                        Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                                        "Broadcast GENNARO_DKG_INIT");
+                            })
+                            .exceptionally(ex -> {
+                                logger.warn("Failed to broadcast DKG_INIT after {} attempts, proceeding with DKG process anyway",
+                                        Constants.DKG_BROADCAST_RETRY_COUNT);
+                                return null;
+                            })
+                            .thenCompose(v -> generateDistributedKey(taskId))
+                            .thenRun(() -> {
+                                task.complete();
+                                logger.info("Gennaro DKG process completed for task: {}", taskId);
+                            });
+                })
+                .exceptionally(ex -> {
+                    GennaroDkgTask task = dkgTasks.get(taskId);
+                    if (task != null) {
+                        task.fail();
+                        task.errorMessage = ex.getMessage();
                     }
-                }
-
-                if (!task.start()) {
-                    logger.warn("DKG task {} failed to start (may already be in progress), skipping", taskId);
-                    return;
-                }
-                logger.info("Starting Gennaro DKG process for task: {}", taskId);
-
-                logger.info("Waiting for network ready...");
-                boolean networkReady = false;
-                int waitTime = 0;
-                int maxWaitTime = 60;
-
-                while (!networkReady && waitTime < maxWaitTime) {
-                    try {
-                        nodeService.waitForNetworkReady().get(5, TimeUnit.SECONDS);
-                        networkReady = true;
-                    } catch (TimeoutException e) {
-                        waitTime += 5;
-                        logger.info("Network not ready yet, waiting... ({}/{})\n", waitTime, maxWaitTime);
-                    }
-                }
-
-                if (!networkReady) {
-                    logger.warn("Network not fully ready, but proceeding with DKG process");
-                } else {
-                    logger.info("Network ready, broadcasting DKG_INIT message");
-                }
-
-                Map<String, Object> initData = new HashMap<>();
-                initData.put("taskId", taskId);
-                boolean initBroadcastSuccess = false;
-                for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
-                    try {
-                        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_DKG_INIT, initData)).join();
-                        logger.info("Broadcasted DKG_INIT message for task: {} (attempt {}/{})", taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
-                        initBroadcastSuccess = true;
-                        break;
-                    } catch (Exception e) {
-                        logger.warn("Failed to broadcast DKG_INIT (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
-                        if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
-                            Thread.sleep(Constants.DKG_BROADCAST_RETRY_INTERVAL_MS);
-                        }
-                    }
-                }
-
-                if (!initBroadcastSuccess) {
-                    logger.warn("Failed to broadcast DKG_INIT after {} attempts, proceeding with DKG process anyway", Constants.DKG_BROADCAST_RETRY_COUNT);
-                }
-
-                generateDistributedKey(taskId).join();
-
-                task.complete();
-                logger.info("Gennaro DKG process completed for task: {}", taskId);
-            } catch (Exception e) {
-                if (task != null) {
-                    task.fail();
-                    task.errorMessage = e.getMessage();
-                }
-                logger.error("Error in DKG process: {}", e.getMessage(), e);
-                throw new RuntimeException(e);
-            }
-        }, dkgExecutorService);
+                    logger.error("Error in DKG process: {}", ex.getMessage(), ex);
+                    return null;
+                });
     }
 
     public CompletableFuture<KeyShare> generateDistributedKey(String taskId) {
@@ -200,163 +168,160 @@ public class GennaroDkgService implements NodeService.MessageHandler {
 
     public CompletableFuture<KeyShare> generateDistributedKey(String taskId, boolean forceSingleNodeMode) {
         return CompletableFuture.supplyAsync(() -> {
-            GennaroDkgTask task = null;
+            GennaroDkgTask task = dkgTasks.get(taskId);
+            if (task == null) {
+                throw new RuntimeException("DKG task not found: " + taskId);
+            }
             try {
-                task = dkgTasks.get(taskId);
-                if (task == null) {
-                    throw new RuntimeException("DKG task not found: " + taskId);
-                }
-
                 databaseService.initShareDatabase(nodeId);
-
-                if (forceSingleNodeMode) {
-                    throw new RuntimeException("Single node mode is not allowed");
-                }
-
-                logger.info("Waiting for network ready...");
-                nodeService.waitForNetworkReady().join();
-
-                int networkSize = nodeService.getNodes().size() + 1;
-                if (networkSize < nodesCount) {
-                    throw new RuntimeException("Not enough nodes in network. Expected: " + nodesCount + ", found: " + networkSize);
-                }
-                logger.info("Network ready with {} nodes", networkSize);
-
-                try {
-                    Thread.sleep(Constants.DKG_INIT_WAIT_MS);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                }
-
-                task.coefficients = generateRandomPolynomial(Constants.THRESHOLD - 1);
-                task.maskingCoefficients = generateMaskingPolynomial(Constants.THRESHOLD - 1);
-
-                task.verificationPoints = generateVerificationPoints(task.coefficients);
-                task.maskingVerificationPoints = generateVerificationPoints(task.maskingCoefficients);
-
-                Map<String, Object> commitmentData = new HashMap<>();
-                commitmentData.put("taskId", taskId);
-                List<String> encodedVerificationPoints = new ArrayList<>();
-                for (ECPoint point : task.verificationPoints) {
-                    encodedVerificationPoints.add(Base64.getEncoder().encodeToString(point.getEncoded(false)));
-                }
-                List<String> encodedMaskingVerificationPoints = new ArrayList<>();
-                for (ECPoint point : task.maskingVerificationPoints) {
-                    encodedMaskingVerificationPoints.add(Base64.getEncoder().encodeToString(point.getEncoded(false)));
-                }
-                commitmentData.put("verificationPoints", encodedVerificationPoints);
-                commitmentData.put("maskingVerificationPoints", encodedMaskingVerificationPoints);
-                boolean commitmentBroadcastSuccess = false;
-                for (int attempt = 1; attempt <= Constants.DKG_BROADCAST_RETRY_COUNT; attempt++) {
-                    try {
-                        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, commitmentData)).join();
-                        logger.info("Broadcasted verification points for task: {} (attempt {}/{})", taskId, attempt, Constants.DKG_BROADCAST_RETRY_COUNT);
-                        commitmentBroadcastSuccess = true;
-                        break;
-                    } catch (Exception e) {
-                        logger.warn("Failed to broadcast COMMITMENT (attempt {}/{}): {}", attempt, Constants.DKG_BROADCAST_RETRY_COUNT, e.getMessage());
-                        if (attempt < Constants.DKG_BROADCAST_RETRY_COUNT) {
-                            Thread.sleep(Constants.DKG_BROADCAST_RETRY_INTERVAL_MS);
-                        }
-                    }
-                }
-
-                if (!commitmentBroadcastSuccess) {
-                    throw new RuntimeException("Failed to broadcast COMMITMENT after " + Constants.DKG_BROADCAST_RETRY_COUNT + " attempts");
-                }
-
-                logger.info("Node {} waiting for commitments for task: {}", nodeId, taskId);
-                if (!task.commitmentsReceivedLatch.await(Constants.DKG_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    throw new Exception("Timeout waiting for commitments");
-                }
-                logger.info("Node {} received all commitments for task: {}", nodeId, taskId);
-
-                for (Integer senderId : task.receivedCommitments.keySet()) {
-                    List<ECPoint> commitments = task.receivedCommitments.get(senderId);
-                    List<ECPoint> maskingCommitments = task.receivedMaskingCommitments.get(senderId);
-                    if (!verifyCommitments(commitments, false) || !verifyCommitments(maskingCommitments, true)) {
-                        throw new Exception("Invalid commitments received from node " + senderId);
-                    }
-                    logger.info("Successfully verified commitments from node {} for task: {}", senderId, taskId);
-                }
-
-                List<CompletableFuture<Void>> sendFutures = new ArrayList<>();
-                for (NodeService.NodeInfo nodeInfo : nodeService.getNodes()) {
-                    if (nodeInfo.id != nodeId) {
-                        BigInteger actualShare = evaluatePolynomial(task.coefficients, BigInteger.valueOf(nodeInfo.id));
-                        BigInteger maskingShare = evaluatePolynomial(task.maskingCoefficients, BigInteger.valueOf(nodeInfo.id));
-                        BigInteger combinedShare = actualShare.add(maskingShare).mod(getCurveOrder());
-
-                        Map<String, Object> shareData = new HashMap<>();
-                        shareData.put("taskId", taskId);
-                        shareData.put("share", combinedShare);
-                        CompletableFuture<Void> future = nodeService.sendMessage(nodeInfo.id, new NodeService.Message(nodeId, MessageType.GENNARO_SHARE, shareData))
-                                .exceptionally(ex -> {
-                                    logger.error("Failed to send share to node {}: {}", nodeInfo.id, ex.getMessage());
-                                    throw new RuntimeException(ex);
-                                });
-                        sendFutures.add(future);
-                    }
-                }
-                CompletableFuture.allOf(sendFutures.toArray(new CompletableFuture[0])).join();
-                logger.info("Sent shares to all nodes for task: {}", taskId);
-
-                logger.info("Node {} waiting for shares for task: {}", nodeId, taskId);
-                if (!task.sharesReceivedLatch.await(Constants.DKG_SHARE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                    throw new Exception("Timeout waiting for shares");
-                }
-                logger.info("Node {} received all shares for task: {}", nodeId, taskId);
-
-                for (Integer senderId : task.receivedShares.keySet()) {
-                    BigInteger share = task.receivedShares.get(senderId);
-                    List<ECPoint> commitments = task.receivedCommitments.get(senderId);
-                    List<ECPoint> maskingCommitments = task.receivedMaskingCommitments.get(senderId);
-                    if (commitments == null || maskingCommitments == null || !verifyGennaroShare(share, nodeId, commitments, maskingCommitments)) {
-                        throw new Exception("Invalid share received from node " + senderId);
-                    }
-                }
-                logger.info("Verified all received shares for task: {}", taskId);
-
-                BigInteger curveOrder = getCurveOrder();
-                task.finalKeyShare = BigInteger.ZERO;
-                for (BigInteger share : task.receivedShares.values()) {
-                    task.finalKeyShare = task.finalKeyShare.add(share).mod(curveOrder);
-                }
-                BigInteger selfActualShare = evaluatePolynomial(task.coefficients, BigInteger.valueOf(nodeId));
-                BigInteger selfMaskingShare = evaluatePolynomial(task.maskingCoefficients, BigInteger.valueOf(nodeId));
-                task.finalKeyShare = task.finalKeyShare.add(selfActualShare.add(selfMaskingShare)).mod(curveOrder);
-                logger.info("Calculated final key share for task: {}", taskId);
-
-                generateAndBroadcastPublicKeyPart(taskId).join();
-
-                int maxWaitTime = 60;
-                int waitTime = 0;
-                while (task.groupPublicKey == null && waitTime < maxWaitTime) {
-                    Thread.sleep(1000);
-                    waitTime++;
-                }
-
-                if (task.groupPublicKey == null) {
-                    throw new Exception("Timeout waiting for group public key generation");
-                }
-                logger.info("Group public key generated for task: {}", taskId);
-
-                String shareHex = HexUtils.toHex(task.finalKeyShare);
-                KeyShare keyShare = new KeyShare(nodeId, shareHex, task.groupPublicKey, task.taskId);
-                saveKeyShareToDatabase(keyShare);
-
-                logger.info("Gennaro DKG process completed successfully for task: {}", taskId);
-                logger.info("Group public key: {}", task.groupPublicKey);
-                task.complete();
-                return keyShare;
             } catch (Exception e) {
-                e.printStackTrace();
-                if (task != null) {
-                    task.fail();
-                }
                 throw new RuntimeException(e);
             }
-        }, ThreadPoolUtil.getComputationThreadPool());
+            if (forceSingleNodeMode) {
+                throw new RuntimeException("Single node mode is not allowed");
+            }
+            return task;
+        }, ThreadPoolUtil.getComputationThreadPool())
+                .thenCompose(task -> waitForNetworkReadyWithRetry(60, 5).thenApply(v -> task))
+                .thenCompose(task -> {
+                    int networkSize = nodeService.getNodes().size() + 1;
+                    if (networkSize < nodesCount) {
+                        throw new RuntimeException("Not enough nodes in network. Expected: " + nodesCount + ", found: " + networkSize);
+                    }
+                    logger.info("Network ready with {} nodes", networkSize);
+                    return delayMs(Constants.DKG_INIT_WAIT_MS).thenApply(v -> task);
+                })
+                .thenCompose(task -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        task.coefficients = generateRandomPolynomial(Constants.THRESHOLD - 1);
+                        task.maskingCoefficients = generateMaskingPolynomial(Constants.THRESHOLD - 1);
+                        task.verificationPoints = generateVerificationPoints(task.coefficients);
+                        task.maskingVerificationPoints = generateVerificationPoints(task.maskingCoefficients);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+
+                    Map<String, Object> commitmentData = new HashMap<>();
+                    commitmentData.put("taskId", taskId);
+                    List<String> encodedVerificationPoints = new ArrayList<>();
+                    for (ECPoint point : task.verificationPoints) {
+                        encodedVerificationPoints.add(Base64.getEncoder().encodeToString(point.getEncoded(false)));
+                    }
+                    List<String> encodedMaskingVerificationPoints = new ArrayList<>();
+                    for (ECPoint point : task.maskingVerificationPoints) {
+                        encodedMaskingVerificationPoints.add(Base64.getEncoder().encodeToString(point.getEncoded(false)));
+                    }
+                    commitmentData.put("verificationPoints", encodedVerificationPoints);
+                    commitmentData.put("maskingVerificationPoints", encodedMaskingVerificationPoints);
+                    return new CommitmentContext(task, commitmentData);
+                }, ThreadPoolUtil.getComputationThreadPool()))
+                .thenCompose(ctx -> retryAsync(
+                        () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, ctx.commitmentData)),
+                        Constants.DKG_BROADCAST_RETRY_COUNT,
+                        Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                        "Broadcast GENNARO_COMMITMENT")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForLatchAsync(ctx.task.commitmentsReceivedLatch, Constants.DKG_COMMITMENT_TIMEOUT_SECONDS, "commitments")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    try {
+                        for (Integer senderId : ctx.task.receivedCommitments.keySet()) {
+                            List<ECPoint> commitments = ctx.task.receivedCommitments.get(senderId);
+                            List<ECPoint> maskingCommitments = ctx.task.receivedMaskingCommitments.get(senderId);
+                            if (!verifyCommitments(commitments, false) || !verifyCommitments(maskingCommitments, true)) {
+                                throw new RuntimeException("Invalid commitments received from node " + senderId);
+                            }
+                            logger.info("Successfully verified commitments from node {} for task: {}", senderId, taskId);
+                        }
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }, ThreadPoolUtil.getComputationThreadPool()).thenApply(v -> ctx))
+                .thenCompose(ctx -> {
+                    List<CompletableFuture<Void>> sendFutures = new ArrayList<>();
+                    for (NodeService.NodeInfo nodeInfo : nodeService.getNodes()) {
+                        if (nodeInfo.id != nodeId) {
+                            BigInteger actualShare;
+                            BigInteger maskingShare;
+                            BigInteger combinedShare;
+                            try {
+                                actualShare = evaluatePolynomial(ctx.task.coefficients, BigInteger.valueOf(nodeInfo.id));
+                                maskingShare = evaluatePolynomial(ctx.task.maskingCoefficients, BigInteger.valueOf(nodeInfo.id));
+                                combinedShare = actualShare.add(maskingShare).mod(getCurveOrder());
+                            } catch (Exception e) {
+                                throw new RuntimeException(e);
+                            }
+
+                            Map<String, Object> shareData = new HashMap<>();
+                            shareData.put("taskId", taskId);
+                            shareData.put("share", combinedShare);
+                            CompletableFuture<Void> future = nodeService.sendMessage(nodeInfo.id, new NodeService.Message(nodeId, MessageType.GENNARO_SHARE, shareData))
+                                    .exceptionally(ex -> {
+                                        logger.error("Failed to send share to node {}: {}", nodeInfo.id, ex.getMessage());
+                                        throw new RuntimeException(ex);
+                                    });
+                            sendFutures.add(future);
+                        }
+                    }
+                    return CompletableFuture.allOf(sendFutures.toArray(new CompletableFuture[0]))
+                            .thenApply(v -> ctx);
+                })
+                .thenCompose(ctx -> waitForLatchAsync(ctx.task.sharesReceivedLatch, Constants.DKG_SHARE_TIMEOUT_SECONDS, "shares")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    try {
+                        for (Integer senderId : ctx.task.receivedShares.keySet()) {
+                            BigInteger share = ctx.task.receivedShares.get(senderId);
+                            List<ECPoint> commitments = ctx.task.receivedCommitments.get(senderId);
+                            List<ECPoint> maskingCommitments = ctx.task.receivedMaskingCommitments.get(senderId);
+                            if (commitments == null || maskingCommitments == null || !verifyGennaroShare(share, nodeId, commitments, maskingCommitments)) {
+                                throw new RuntimeException("Invalid share received from node " + senderId);
+                            }
+                        }
+                        logger.info("Verified all received shares for task: {}", taskId);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }, ThreadPoolUtil.getComputationThreadPool()).thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    try {
+                        BigInteger curveOrder = getCurveOrder();
+                        ctx.task.finalKeyShare = BigInteger.ZERO;
+                        for (BigInteger share : ctx.task.receivedShares.values()) {
+                            ctx.task.finalKeyShare = ctx.task.finalKeyShare.add(share).mod(curveOrder);
+                        }
+                        BigInteger selfActualShare = evaluatePolynomial(ctx.task.coefficients, BigInteger.valueOf(nodeId));
+                        BigInteger selfMaskingShare = evaluatePolynomial(ctx.task.maskingCoefficients, BigInteger.valueOf(nodeId));
+                        ctx.task.finalKeyShare = ctx.task.finalKeyShare.add(selfActualShare.add(selfMaskingShare)).mod(curveOrder);
+                        logger.info("Calculated final key share for task: {}", taskId);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }, ThreadPoolUtil.getComputationThreadPool()).thenApply(v -> ctx))
+                .thenCompose(ctx -> generateAndBroadcastPublicKeyPart(taskId).thenApply(v -> ctx))
+                .thenCompose(ctx -> waitForConditionAsync(() -> ctx.task.groupPublicKey != null,
+                        TimeUnit.SECONDS.toMillis(60), "group public key", 200)
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        String shareHex = HexUtils.toHex(ctx.task.finalKeyShare);
+                        KeyShare keyShare = new KeyShare(nodeId, shareHex, ctx.task.groupPublicKey, ctx.task.taskId);
+                        saveKeyShareToDatabase(keyShare);
+                        logger.info("Gennaro DKG process completed successfully for task: {}", taskId);
+                        logger.info("Group public key: {}", ctx.task.groupPublicKey);
+                        ctx.task.complete();
+                        return keyShare;
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }, ThreadPoolUtil.getComputationThreadPool()))
+                .exceptionally(ex -> {
+                    GennaroDkgTask task = dkgTasks.get(taskId);
+                    if (task != null) {
+                        task.fail();
+                    }
+                    throw new CompletionException(ex);
+                });
     }
 
     private CompletableFuture<Void> generateAndBroadcastPublicKeyPart(String taskId) {
@@ -376,17 +341,12 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             publicKeyData.put("publicKeyPart", publicKeyPart);
 
             return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData))
+                    .thenRun(() -> logger.info("Broadcasted public key contribution for task: {}", taskId))
+                    .thenCompose(v -> waitForLatchAsync(task.publicKeyContributionsReceivedLatch, 60, "public key contributions"))
                     .thenRun(() -> {
-                        logger.info("Broadcasted public key contribution for task: {}", taskId);
-
                         try {
-                            if (!task.publicKeyContributionsReceivedLatch.await(60, TimeUnit.SECONDS)) {
-                                throw new Exception("Timeout waiting for public key contributions");
-                            }
-
                             generateGroupPublicKey(task);
                         } catch (Exception e) {
-                            logger.error("Error in public key generation process: {}", e.getMessage());
                             throw new RuntimeException(e);
                         }
                     })
@@ -516,6 +476,123 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         }
 
         return verificationPoints;
+    }
+
+    private CompletableFuture<GennaroDkgTask> waitForTask(String taskId, int attempts, long intervalMs) {
+        CompletableFuture<GennaroDkgTask> future = new CompletableFuture<>();
+        AtomicInteger remaining = new AtomicInteger(attempts);
+        ScheduledFuture<?> tick = scheduler.scheduleAtFixedRate(() -> {
+            GennaroDkgTask task = dkgTasks.get(taskId);
+            if (task != null) {
+                future.complete(task);
+                return;
+            }
+            if (remaining.decrementAndGet() <= 0) {
+                future.completeExceptionally(new RuntimeException("DKG task not found: " + taskId));
+            }
+        }, 0, intervalMs, TimeUnit.MILLISECONDS);
+        future.whenComplete((v, ex) -> tick.cancel(false));
+        return future;
+    }
+
+    private CompletableFuture<Void> delayMs(long ms) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        scheduler.schedule(() -> future.complete(null), ms, TimeUnit.MILLISECONDS);
+        return future;
+    }
+
+    private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds);
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        ScheduledFuture<?> tick = scheduler.scheduleAtFixedRate(() -> {
+            if (latch.getCount() == 0) {
+                future.complete(null);
+                return;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                future.completeExceptionally(new RuntimeException("Timeout waiting for " + label));
+            }
+        }, 0, 50, TimeUnit.MILLISECONDS);
+        future.whenComplete((v, ex) -> tick.cancel(false));
+        return future;
+    }
+
+    private CompletableFuture<Void> waitForConditionAsync(BooleanSupplier condition, long timeoutMs, String label, long pollMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        ScheduledFuture<?> tick = scheduler.scheduleAtFixedRate(() -> {
+            if (condition.getAsBoolean()) {
+                future.complete(null);
+                return;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                future.completeExceptionally(new RuntimeException("Timeout waiting for " + label));
+            }
+        }, 0, pollMs, TimeUnit.MILLISECONDS);
+        future.whenComplete((v, ex) -> tick.cancel(false));
+        return future;
+    }
+
+    private CompletableFuture<Void> waitForNetworkReadyWithRetry(int maxWaitSeconds, int stepSeconds) {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(maxWaitSeconds);
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        Runnable attempt = new Runnable() {
+            @Override
+            public void run() {
+                nodeService.waitForNetworkReady()
+                        .orTimeout(stepSeconds, TimeUnit.SECONDS)
+                        .thenRun(() -> future.complete(null))
+                        .exceptionally(ex -> {
+                            if (System.currentTimeMillis() >= deadline) {
+                                future.completeExceptionally(ex);
+                            } else {
+                                delayMs(TimeUnit.SECONDS.toMillis(stepSeconds)).thenRun(this);
+                            }
+                            return null;
+                        });
+            }
+        };
+        attempt.run();
+        return future;
+    }
+
+    private CompletableFuture<Void> retryAsync(Supplier<CompletableFuture<Void>> action,
+                                               int attempts,
+                                               long delayMs,
+                                               String label) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        Runnable runAttempt = new Runnable() {
+            int remaining = attempts;
+
+            @Override
+            public void run() {
+                action.get().whenComplete((v, ex) -> {
+                    if (ex == null) {
+                        future.complete(null);
+                        return;
+                    }
+                    remaining--;
+                    if (remaining <= 0) {
+                        future.completeExceptionally(new RuntimeException(label + " failed", ex));
+                        return;
+                    }
+                    logger.warn("{} failed (remaining={}), retrying: {}", label, remaining, ex.getMessage());
+                    delayMs(delayMs).thenRun(this);
+                });
+            }
+        };
+        runAttempt.run();
+        return future;
+    }
+
+    private static final class CommitmentContext {
+        final GennaroDkgTask task;
+        final Map<String, Object> commitmentData;
+
+        private CommitmentContext(GennaroDkgTask task, Map<String, Object> commitmentData) {
+            this.task = task;
+            this.commitmentData = commitmentData;
+        }
     }
 
     private boolean verifyGennaroShare(BigInteger share, int x, List<ECPoint> verificationPoints, List<ECPoint> maskingVerificationPoints) throws Exception {
@@ -687,12 +764,12 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             if (existingTask == null) {
                 logger.info("Created DKG task with id: {} from DKG_INIT", taskId);
                 if (newTask.start()) {
-                    try {
-                        nodeService.waitForNetworkReady().join();
-                    } catch (Exception e) {
-                        logger.warn("Network not ready before DKG_INIT, proceeding anyway: {}", e.getMessage());
-                    }
-                    startDkgProcessInternal(taskId);
+                    waitForNetworkReadyWithRetry(60, 5)
+                            .exceptionally(ex -> {
+                                logger.warn("Network not ready before DKG_INIT, proceeding anyway: {}", ex.getMessage());
+                                return null;
+                            })
+                            .thenRun(() -> startDkgProcessInternal(taskId));
                 }
             } else {
                 logger.info("DKG task with id: {} already exists, skipping initialization", taskId);
@@ -701,23 +778,23 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     }
 
     private void startDkgProcessInternal(String taskId) {
-        CompletableFuture.runAsync(() -> {
-            try {
-                generateDistributedKey(taskId).join();
-                GennaroDkgTask task = dkgTasks.get(taskId);
-                if (task != null) {
-                    task.complete();
-                    logger.info("DKG process completed for task: {}", taskId);
-                }
-            } catch (Exception e) {
-                GennaroDkgTask task = dkgTasks.get(taskId);
-                if (task != null) {
-                    task.errorMessage = e.getMessage();
-                    task.fail();
-                }
-                logger.error("Error in DKG process for task {}: {}", taskId, e.getMessage(), e);
-            }
-        }, dkgExecutorService);
+        generateDistributedKey(taskId)
+                .thenRun(() -> {
+                    GennaroDkgTask task = dkgTasks.get(taskId);
+                    if (task != null) {
+                        task.complete();
+                        logger.info("DKG process completed for task: {}", taskId);
+                    }
+                })
+                .exceptionally(ex -> {
+                    GennaroDkgTask task = dkgTasks.get(taskId);
+                    if (task != null) {
+                        task.errorMessage = ex.getMessage();
+                        task.fail();
+                    }
+                    logger.error("Error in DKG process for task {}: {}", taskId, ex.getMessage(), ex);
+                    return null;
+                });
     }
 
     private List<ECPoint> decodeVerificationPoints(List<String> encodedPoints) {

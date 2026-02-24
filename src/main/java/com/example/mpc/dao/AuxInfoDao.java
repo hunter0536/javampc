@@ -60,40 +60,42 @@ public class AuxInfoDao {
     }
 
     public CompletableFuture<AuxInfo> loadLatest(int nodeId) {
-        return CompletableFuture.supplyAsync(() -> {
-            Connection conn = null;
-            PreparedStatement pstmt = null;
-            try {
-                conn = databaseService.getShareConnection(nodeId);
-                pstmt = conn.prepareStatement(SELECT_LATEST_SQL);
-                pstmt.setInt(1, nodeId);
-                var rs = pstmt.executeQuery();
-                if (rs.next()) {
-                    AuxInfo info = new AuxInfo();
-                    info.setId(rs.getLong("id"));
-                    info.setNodeId(rs.getInt("node_id"));
-                    info.setTaskId(rs.getString("task_id"));
-                    info.setPaillierP(rs.getString("paillier_p"));
-                    info.setPaillierQ(rs.getString("paillier_q"));
-                    info.setPaillierN(rs.getString("paillier_n"));
-                    info.setPaillierG(rs.getString("paillier_g"));
-                    info.setPaillierBitLength(rs.getInt("paillier_bit_length"));
-                    info.setPedersenHatN(rs.getString("pedersen_hat_n"));
-                    info.setPedersenS(rs.getString("pedersen_s"));
-                    info.setPedersenT(rs.getString("pedersen_t"));
-                    return info;
-                }
-                return null;
-            } catch (Exception e) {
-                logger.error("Error loading aux info: {}", e.getMessage());
-                throw new RuntimeException(e);
-            } finally {
-                closeStatement(pstmt);
-                if (conn != null) {
-                    databaseService.releaseShareConnection(conn, nodeId);
-                }
+        return CompletableFuture.supplyAsync(() -> loadLatestSync(nodeId), ThreadPoolUtil.getIoThreadPool());
+    }
+
+    public AuxInfo loadLatestSync(int nodeId) {
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        try {
+            conn = databaseService.getShareConnection(nodeId);
+            pstmt = conn.prepareStatement(SELECT_LATEST_SQL);
+            pstmt.setInt(1, nodeId);
+            var rs = pstmt.executeQuery();
+            if (rs.next()) {
+                AuxInfo info = new AuxInfo();
+                info.setId(rs.getLong("id"));
+                info.setNodeId(rs.getInt("node_id"));
+                info.setTaskId(rs.getString("task_id"));
+                info.setPaillierP(rs.getString("paillier_p"));
+                info.setPaillierQ(rs.getString("paillier_q"));
+                info.setPaillierN(rs.getString("paillier_n"));
+                info.setPaillierG(rs.getString("paillier_g"));
+                info.setPaillierBitLength(rs.getInt("paillier_bit_length"));
+                info.setPedersenHatN(rs.getString("pedersen_hat_n"));
+                info.setPedersenS(rs.getString("pedersen_s"));
+                info.setPedersenT(rs.getString("pedersen_t"));
+                return info;
             }
-        }, ThreadPoolUtil.getIoThreadPool());
+            return null;
+        } catch (Exception e) {
+            logger.error("Error loading aux info: {}", e.getMessage());
+            throw new RuntimeException(e);
+        } finally {
+            closeStatement(pstmt);
+            if (conn != null) {
+                databaseService.releaseShareConnection(conn, nodeId);
+            }
+        }
     }
 
     private void closeStatement(PreparedStatement stmt) {

@@ -57,46 +57,48 @@ public class KeyShareDao {
     }
 
     public CompletableFuture<KeyShare> findByGroupPublicKey(int shareIndex, String groupPublicKey) {
-        return CompletableFuture.supplyAsync(() -> {
-            Connection conn = null;
-            PreparedStatement pstmt = null;
-            try {
-                logger.info("Loading key share for group public key: {}", groupPublicKey);
-                logger.info("Share index: {}", shareIndex);
+        return CompletableFuture.supplyAsync(() -> findByGroupPublicKeySync(shareIndex, groupPublicKey), ThreadPoolUtil.getIoThreadPool());
+    }
 
-                conn = databaseService.getShareConnection(shareIndex);
-                pstmt = conn.prepareStatement(SELECT_BY_GROUP_KEY_SQL);
-                pstmt.setString(1, groupPublicKey);
-                var rs = pstmt.executeQuery();
+    public KeyShare findByGroupPublicKeySync(int shareIndex, String groupPublicKey) {
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        try {
+            logger.info("Loading key share for group public key: {}", groupPublicKey);
+            logger.info("Share index: {}", shareIndex);
 
-                if (rs.next()) {
-                    logger.info("Found key share in database!");
-                    KeyShare keyShare = new KeyShare();
-                    keyShare.setId(rs.getLong("id"));
-                    keyShare.setShareIndex(rs.getInt("share_index"));
-                    keyShare.setKeyShare(rs.getString("key_share"));
-                    keyShare.setGroupPublicKey(rs.getString("group_public_key"));
-                    keyShare.setDkgTaskId(rs.getString("dkg_task_id"));
-                    keyShare.setPublicShares(rs.getString("public_shares"));
-                    keyShare.setIndexMap(rs.getString("index_map"));
-                    keyShare.setChainCode(rs.getString("chain_code"));
-                    logger.info("Loaded key share: {}", keyShare);
-                    return keyShare;
-                } else {
-                    logger.info("No key share found for group public key: {}", groupPublicKey);
-                    return null;
-                }
-            } catch (Exception e) {
-                logger.error("Error loading key share: {}", e.getMessage());
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            } finally {
-                closeStatement(pstmt);
-                if (conn != null) {
-                    databaseService.releaseShareConnection(conn, shareIndex);
-                }
+            conn = databaseService.getShareConnection(shareIndex);
+            pstmt = conn.prepareStatement(SELECT_BY_GROUP_KEY_SQL);
+            pstmt.setString(1, groupPublicKey);
+            var rs = pstmt.executeQuery();
+
+            if (rs.next()) {
+                logger.info("Found key share in database!");
+                KeyShare keyShare = new KeyShare();
+                keyShare.setId(rs.getLong("id"));
+                keyShare.setShareIndex(rs.getInt("share_index"));
+                keyShare.setKeyShare(rs.getString("key_share"));
+                keyShare.setGroupPublicKey(rs.getString("group_public_key"));
+                keyShare.setDkgTaskId(rs.getString("dkg_task_id"));
+                keyShare.setPublicShares(rs.getString("public_shares"));
+                keyShare.setIndexMap(rs.getString("index_map"));
+                keyShare.setChainCode(rs.getString("chain_code"));
+                logger.info("Loaded key share: {}", keyShare);
+                return keyShare;
+            } else {
+                logger.info("No key share found for group public key: {}", groupPublicKey);
+                return null;
             }
-        }, ThreadPoolUtil.getIoThreadPool());
+        } catch (Exception e) {
+            logger.error("Error loading key share: {}", e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException(e);
+        } finally {
+            closeStatement(pstmt);
+            if (conn != null) {
+                databaseService.releaseShareConnection(conn, shareIndex);
+            }
+        }
     }
 
     private void closeStatement(PreparedStatement stmt) {
