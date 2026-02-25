@@ -294,8 +294,7 @@ public class CggmpController {
      */
     @PostMapping("/sign/start")
     public CompletableFuture<ApiResponse<SignatureTaskStartResponse>> sign(@RequestParam(required = true) String groupPublicKey,
-                                                                           @RequestParam(required = true) String message,
-                                                                           @RequestParam(required = false) String hdShift) {
+                                                                          @RequestParam(required = true) String message) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 if (groupPublicKey == null || groupPublicKey.isEmpty()) {
@@ -305,8 +304,7 @@ public class CggmpController {
                     return ApiResponse.badRequest("message cannot be null or empty");
                 }
 
-                java.math.BigInteger shift = parseHexBigIntegerOrNull(hdShift);
-                String signatureTaskId = cggmpSignatureService.createSignatureTaskWithGroupKey(groupPublicKey, message, shift);
+                String signatureTaskId = cggmpSignatureService.createSignatureTaskWithGroupKey(groupPublicKey, message);
 
                 cggmpSignatureService.startSignatureTask(signatureTaskId)
                         .exceptionally(ex -> {
