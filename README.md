@@ -11,12 +11,13 @@
 - ✅ **真正的 CGGMP DKG**：包含 Paillier 同态加密和 Pedersen 承诺的完整 CGGMP 实现
 - ✅ **3-of-5 门限方案**：将私钥分割成 5 个份额，至少需要 3 个份额才能签名
 - ✅ **Netty 高性能 P2P 网络**：使用 Netty 实现高性能 P2P 通信，支持异步非阻塞IO
+- ✅ **TCP 性能优化**：启用 TCP_NODELAY、1MB 缓冲区、PooledByteBufAllocator
 - ✅ **UDP 广播 + 静态配置**：支持 UDP 广播自动发现和静态节点配置两种方式
 - ✅ **异步通信**：使用 CompletableFuture 实现异步操作，提高系统性能和可伸缩性
 - ✅ **每个节点独立存储**：每个节点连接到自己的 SQLite 数据库存储密钥份额
 - ✅ **UUID 任务标识**：使用 UUID 作为任务唯一标识，支持异步跟踪 DKG 和签名过程
 - ✅ **统一的 RESTful 响应**：所有 API 返回统一格式的响应体
-- ✅ **专用线程池**：为不同类型的任务提供专用线程池，优化线程资源使用
+- ✅ **专用线程池**：为不同类型的任务提供专用线程池（CPU * 4），优化线程资源使用
 
 ## 技术栈
 
@@ -42,7 +43,6 @@ mpc/
 │   │   │           └── mpc/
 │   │   │               ├── cggmp/            # CGGMP 协议实现
 │   │   │               │   ├── CGGMP.java
-│   │   │               │   ├── CGGMPProtocol.java
 │   │   │               │   ├── Gg20Codec.java
 │   │   │               │   ├── PaillierEncryption.java
 │   │   │               │   └── PedersenCommitment.java
@@ -66,7 +66,9 @@ mpc/
 │   │   │               │   ├── CggmpController.java
 │   │   │               │   └── GennaroController.java
 │   │   │               ├── dao/              # 数据访问层
-│   │   │               │   └── KeyShareDao.java
+│   │   │               │   ├── KeyShareDao.java
+│   │   │               │   ├── ComplaintDao.java
+│   │   │               │   └── AuxInfoDao.java
 │   │   │               ├── enums/            # 枚举类
 │   │   │               │   ├── MessageType.java
 │   │   │               │   └── TaskStatus.java
@@ -109,6 +111,46 @@ mpc/
 └── settings.gradle
 ```
 
+## 性能优化
+
+### 已完成的优化
+
+1. **线程池优化**
+   - 核心线程数：CPU 核心数 * 2
+   - 最大线程数：CPU 核心数 * 4
+   - 任务队列：LinkedBlockingQueue
+
+2. **P2P 网络 TCP 优化**
+   - 启用 TCP_NODELAY（禁用 Nagle 算法）
+   - 接收/发送缓冲区：1MB
+   - 使用 PooledByteBufAllocator
+   - 写缓冲区水位：256KB - 1MB
+   - WorkerGroup 线程数：CPU * 2
+
+3. **重试机制优化**
+   - 广播重试间隔：500ms → 4000ms（指数退避）
+   - 减少不必要的重试日志
+
+4. **超时参数优化**
+   - 签名承诺超时：60 秒
+   - 签名分享超时：30 秒
+   - DKG 承诺超时：60 秒
+
+5. **移除冗余验证**
+   - 移除重复的 codec roundtrip 验证
+   - 减少不必要的计算开销
+
+### 性能测试结果
+
+| 阶段 | 耗时 |
+|------|------|
+| Presign R1 (Commitment) | ~1秒 |
+| Presign R2 (MtA Response + Proof) | ~2.7秒 |
+| Presign R3 (Accumulate) | ~4秒 |
+| **签名总耗时** | **约 4 秒** |
+
+相比优化前（~24秒），性能提升约 **6 倍**。
+
 ## 安装和运行
 
 ### 前提条件
@@ -126,30 +168,30 @@ mpc/
    ```
 
 3. **运行 5 个节点**
-   - 打开 5 个终端窗口，分别运行以下命令：
+   - 后台运行模式（推荐）：
+   ```bash
+   # 节点 1
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node1 > node1.log 2>&1 &
 
-   **终端 1（节点 1）**
+   # 节点 2
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node2 > node2.log 2>&1 &
+
+   # 节点 3
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node3 > node3.log 2>&1 &
+
+   # 节点 4
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node4 > node4.log 2>&1 &
+
+   # 节点 5
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node5 > node5.log 2>&1 &
+   ```
+
+   - 或使用前台模式（5 个终端窗口）：
    ```bash
    ./gradlew bootRunNode1
-   ```
-
-   **终端 2（节点 2）**
-   ```bash
    ./gradlew bootRunNode2
-   ```
-
-   **终端 3（节点 3）**
-   ```bash
    ./gradlew bootRunNode3
-   ```
-
-   **终端 4（节点 4）**
-   ```bash
    ./gradlew bootRunNode4
-   ```
-
-   **终端 5（节点 5）**
-   ```bash
    ./gradlew bootRunNode5
    ```
 
