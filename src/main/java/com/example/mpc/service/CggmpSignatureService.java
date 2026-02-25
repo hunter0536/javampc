@@ -2198,10 +2198,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public String createSignatureTaskWithGroupKey(String groupPublicKey, String message) {
-        return createSignatureTaskWithGroupKey(groupPublicKey, message, null);
-    }
+        if (!signatureInProgress.compareAndSet(false, true)) {
+            throw new RuntimeException("Signature process is already in progress");
+        }
 
-    public String createSignatureTaskWithGroupKey(String groupPublicKey, String message, BigInteger hdShift) {
         String fixedGroupPublicKey = null;
         try {
             fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
@@ -2211,16 +2211,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         String taskId = UUID.randomUUID().toString();
         Gg20SignatureTask task = new Gg20SignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId);
-        task.hdShift = hdShift;
         signatureTasks.put(taskId, task);
         return taskId;
     }
 
     public String createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants) {
-        return createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, message, initiatorId, participants, null);
-    }
+        if (!signatureInProgress.compareAndSet(false, true)) {
+            throw new RuntimeException("Signature process is already in progress");
+        }
 
-    public String createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants, BigInteger hdShift) {
         String fixedGroupPublicKey = null;
         try {
             fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
@@ -2229,7 +2228,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         Gg20SignatureTask task = new Gg20SignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount, threshold, initiatorId, participants);
-        task.hdShift = hdShift;
         signatureTasks.put(signatureTaskId, task);
         return signatureTaskId;
     }
@@ -2611,9 +2609,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                         if (task.messageHash == null) {
                             throw new RuntimeException("Missing message hash for online phase");
                         }
-                        if (!signatureInProgress.compareAndSet(false, true)) {
-                            throw new RuntimeException("Signature process is already in progress");
-                        }
 
                         BigInteger curveOrder = Secp256k1Curve.n();
                         if (task.presignature == null) {
@@ -2687,9 +2682,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         initData.put("message", task.message);
         initData.put("initiatorId", task.initiatorId);
         initData.put("participants", new ArrayList<>(task.participants));
-        if (task.hdShift != null) {
-            initData.put("hdShift", task.hdShift.toString(16));
-        }
         return retryAsync(
                 () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_OFFLINE_INIT, initData)),
                 Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
@@ -2925,10 +2917,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (!hdEnabled) {
             return BigInteger.ZERO;
         }
-        if (task == null || task.hdShift == null) {
-            return deriveShiftFromChainCode(task, q);
-        }
-        return task.hdShift.mod(q);
+        return deriveShiftFromChainCode(task, q);
     }
 
     private BigInteger deriveShiftFromChainCode(Gg20SignatureTask task, BigInteger q) {
@@ -5253,7 +5242,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             String signatureTaskId = (String) dataMap.get("signatureTaskId");
             String groupPublicKey = (String) dataMap.get("groupPublicKey");
             String msg = (String) dataMap.get("message");
-            String shiftHex = dataMap.get("hdShift") instanceof String s ? s : null;
             Integer initiatorId = null;
             Object initiatorValue = dataMap.get("initiatorId");
             if (initiatorValue instanceof Number) {
@@ -5273,8 +5261,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 if (!signatureTasks.containsKey(signatureTaskId)) {
                     int resolvedInitiatorId = initiatorId != null ? initiatorId : senderId;
                     Set<Integer> participantsSet = participants == null ? null : new LinkedHashSet<>(participants);
-                    BigInteger hdShift = parseHexBigIntegerOrNull(shiftHex);
-                    createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg, resolvedInitiatorId, participantsSet, hdShift);
+                    createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg, resolvedInitiatorId, participantsSet);
                     logger.info("Created CGGMP signature task from OFFLINE_INIT: {}", signatureTaskId);
                     CompletableFuture.runAsync(() -> {
                         Gg20SignatureTask task = signatureTasks.get(signatureTaskId);

@@ -21,7 +21,6 @@ public class Gg20SignatureTask {
     public final int threshold;
     public final int initiatorId;
     public final Set<Integer> participants;
-    public BigInteger hdShift;
 
     public byte[] messageHash;
     public ECPoint groupPublicKeyPoint;
