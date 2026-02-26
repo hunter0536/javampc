@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'idea'
     id 'org.springframework.boot' version '3.0.0'
     id 'io.spring.dependency-management' version '1.1.4'
 }
@@ -9,6 +10,14 @@ version = '0.0.1-SNAPSHOT'
 
 java {
     sourceCompatibility = '17'
+}
+
+// 配置 IDEA 输出目录，避免创建 bin 目录
+idea {
+    module {
+        outputDir = file('build/classes/java/main')
+        testOutputDir = file('build/classes/java/test')
+    }
 }
 
 repositories {
