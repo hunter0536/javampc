@@ -4,6 +4,7 @@ import com.example.mpc.constant.Constants;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.GennaroDkgService;
 import com.example.mpc.service.NodeService;
+import com.example.mpc.service.SimpleSignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,9 @@ public class ApplicationInitializer implements CommandLineRunner {
 
     @Autowired
     private CggmpSignatureService cggmpSignatureService;
+
+    @Autowired
+    private SimpleSignatureService simpleSignatureService;
 
     @Autowired
     private NodeService nodeService;
@@ -82,11 +86,19 @@ public class ApplicationInitializer implements CommandLineRunner {
     private void initializeLegacy() {
         logger.info("--- Initializing legacy services ---");
         try {
+            logger.info("Initializing Simple signature service...");
+            simpleSignatureService.init()
+                    .thenRun(() -> logger.info("Simple signature service initialized successfully"))
+                    .exceptionally(ex -> {
+                        logger.error("Failed to initialize Simple signature service", ex);
+                        return null;
+                    });
+
             logger.info("Initializing Gennaro DKG service...");
             gennaroDkgService.init()
                     .thenRun(() -> logger.info("Gennaro DKG service initialized successfully"))
                     .exceptionally(ex -> {
-                        logger.error("Failed to initialize legacy services", ex);
+                        logger.error("Failed to initialize Gennaro DKG service", ex);
                         return null;
                     });
 
