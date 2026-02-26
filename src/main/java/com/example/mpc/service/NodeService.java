@@ -4,6 +4,7 @@ import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.netty.NettyService;
 import com.example.mpc.common.util.ThreadPoolUtil;
+import io.netty.channel.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
@@ -328,16 +330,49 @@ public class NodeService {
                 nodes.put(peerId, nodeInfo);
 
                 if (nettyService != null) {
-                    nettyService.connectToNode(peerId, host, port)
-                            .exceptionally(ex -> {
-                                logger.error("Failed to connect to static peer {}: {}", trimmed, ex.getMessage());
-                                return null;
-                            });
+                    connectWithRetry(peerId, host, port, trimmed);
                 }
             } catch (Exception e) {
                 logger.warn("Invalid peer config: {}", trimmed);
             }
         }
+    }
+
+    private void connectWithRetry(int peerId, String host, int port, String peerDesc) {
+        AtomicInteger attempts = new AtomicInteger(0);
+        int maxAttempts = 10;
+        long retryDelayMs = 2000;
+
+        Runnable attemptConnect = new Runnable() {
+            @Override
+            public void run() {
+                if (nodes.get(peerId) == null) {
+                    logger.debug("Peer {} removed from nodes, stopping retry", peerId);
+                    return;
+                }
+
+                int attempt = attempts.incrementAndGet();
+                if (attempt > maxAttempts) {
+                    logger.warn("Max retry attempts reached for peer {}, giving up", peerDesc);
+                    return;
+                }
+
+                nettyService.connectToNode(peerId, host, port)
+                        .whenComplete((v, ex) -> {
+                            if (ex == null) {
+                                logger.info("Successfully connected to peer {} on attempt {}", peerDesc, attempt);
+                            } else if (attempt < maxAttempts) {
+                                logger.warn("Failed to connect to {} (attempt {}/{}): {}, scheduling retry in {}ms",
+                                        peerDesc, attempt, maxAttempts, ex.getMessage(), retryDelayMs);
+                                getRetryScheduler().schedule(this, retryDelayMs, TimeUnit.MILLISECONDS);
+                            } else {
+                                logger.error("Failed to connect to {} after {} attempts: {}", peerDesc, maxAttempts, ex.getMessage());
+                            }
+                        });
+            }
+        };
+
+        getRetryScheduler().execute(attemptConnect);
     }
 
     /**
@@ -353,22 +388,22 @@ public class NodeService {
 
                     // 不添加自己
                     if (nodeId != this.nodeId) {
+                        NodeInfo existingNode = nodes.get(nodeId);
+                        if (existingNode != null && nettyService != null) {
+                            Channel existingChannel = nettyService.getNodeChannel(nodeId);
+                            if (existingChannel != null && existingChannel.isActive()) {
+                                logger.debug("Already connected to discovered node {}, skipping", nodeId);
+                                return;
+                            }
+                        }
+
                         NodeInfo nodeInfo = new NodeInfo(nodeId, address.getHostAddress(), nodePort);
                         nodes.put(nodeId, nodeInfo);
                         logger.info("Discovered node: {} at {}:{}", nodeId, address.getHostAddress(), nodePort);
 
-                        // 自动连接到新发现的节点
+                        // 自动连接到新发现的节点（带重试）
                         if (nettyService != null) {
-                            submitTask(() -> {
-                                nettyService.connectToNode(nodeId, address.getHostAddress(), nodePort)
-                                        .whenComplete((v, ex) -> {
-                                            if (ex == null) {
-                                                logger.info("Connected to newly discovered node: {}", nodeId);
-                                            } else {
-                                                logger.error("Failed to connect to node {}: {}", nodeId, ex.getMessage());
-                                            }
-                                        });
-                            });
+                            connectWithRetry(nodeId, address.getHostAddress(), nodePort, "discovered-" + nodeId);
                         }
                     }
                 } catch (Exception e) {

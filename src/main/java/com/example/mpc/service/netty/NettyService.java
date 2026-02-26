@@ -120,6 +120,12 @@ public class NettyService {
      * 连接到其他节点
      */
     public CompletableFuture<Void> connectToNode(int nodeId, String host, int port) {
+        Channel existingChannel = nodeChannels.get(nodeId);
+        if (existingChannel != null && existingChannel.isActive()) {
+            logger.debug("Already connected to node {} at {}:{}, skipping", nodeId, host, port);
+            return CompletableFuture.completedFuture(null);
+        }
+
         CompletableFuture<Void> future = new CompletableFuture<>();
 
         try {

@@ -9,5 +9,18 @@ node:
 discovery:
   port: 8889
 
+# 日志配置
+logging:
+  file:
+    name: logs/node2.log
+  level:
+    com.example.mpc: debug
+
+# CGGMP投诉日志
+app:
+  cggmp:
+    complaint:
+      logPath: logs/complaints-node2.jsonl
+
 nodes:
   peers: 1@127.0.0.1:9001,3@127.0.0.1:9003,4@127.0.0.1:9004,5@127.0.0.1:9005

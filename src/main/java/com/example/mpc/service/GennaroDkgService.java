@@ -135,7 +135,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                                 Map<String, Object> initData = new HashMap<>();
                                 initData.put("taskId", taskId);
                                 return retryAsync(
-                                        () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_DKG_INIT, initData)),
+                                        () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_DKG_INIT, initData)),
                                         Constants.DKG_BROADCAST_RETRY_COUNT,
                                         Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
                                         "Broadcast GENNARO_DKG_INIT");
@@ -216,12 +216,12 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     return new CommitmentContext(task, commitmentData);
                 }, ThreadPoolUtil.getComputationThreadPool()))
                 .thenCompose(ctx -> retryAsync(
-                        () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, ctx.commitmentData)),
+                        () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, ctx.commitmentData)),
                         Constants.DKG_BROADCAST_RETRY_COUNT,
                         Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
                         "Broadcast GENNARO_COMMITMENT")
                         .thenApply(v -> ctx))
-                .thenCompose(ctx -> waitForLatchAsync(ctx.task.commitmentsReceivedLatch, Constants.DKG_COMMITMENT_TIMEOUT_SECONDS, "commitments")
+                .thenCompose(ctx -> waitForLatchAsync(ctx.task.commitmentsReceivedLatch, Constants.DKG_COMMITMENT_TIMEOUT_SECONDS, "commitments", ctx.task)
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
                     try {
@@ -266,7 +266,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     return CompletableFuture.allOf(sendFutures.toArray(new CompletableFuture[0]))
                             .thenApply(v -> ctx);
                 })
-                .thenCompose(ctx -> waitForLatchAsync(ctx.task.sharesReceivedLatch, Constants.DKG_SHARE_TIMEOUT_SECONDS, "shares")
+                .thenCompose(ctx -> waitForLatchAsync(ctx.task.sharesReceivedLatch, Constants.DKG_SHARE_TIMEOUT_SECONDS, "shares", ctx.task)
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
                     try {
@@ -340,9 +340,13 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             publicKeyData.put("taskId", taskId);
             publicKeyData.put("publicKeyPart", publicKeyPart);
 
-            return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData))
+            return retryAsync(
+                    () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
+                    Constants.DKG_BROADCAST_RETRY_COUNT,
+                    Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                    "Broadcast GENNARO_PUBLIC_KEY_PART")
                     .thenRun(() -> logger.info("Broadcasted public key contribution for task: {}", taskId))
-                    .thenCompose(v -> waitForLatchAsync(task.publicKeyContributionsReceivedLatch, 60, "public key contributions"))
+                    .thenCompose(v -> waitForLatchAsync(task.publicKeyContributionsReceivedLatch, 60, "public key contributions", task))
                     .thenRun(() -> {
                         try {
                             generateGroupPublicKey(task);
@@ -501,15 +505,44 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         return future;
     }
 
-    private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
+    private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label, GennaroDkgTask task) {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds);
         CompletableFuture<Void> future = new CompletableFuture<>();
+
+        if (task != null) {
+            if ("commitments".equals(label)) {
+                task.commitmentsFuture = future;
+            } else if ("shares".equals(label)) {
+                task.sharesFuture = future;
+            } else if ("public key contributions".equals(label)) {
+                task.publicKeyFuture = future;
+            }
+        }
+
         ScheduledFuture<?> tick = scheduler.scheduleAtFixedRate(() -> {
             if (latch.getCount() == 0) {
+                if (task != null) {
+                    if ("commitments".equals(label)) {
+                        task.commitmentsFuture = null;
+                    } else if ("shares".equals(label)) {
+                        task.sharesFuture = null;
+                    } else if ("public key contributions".equals(label)) {
+                        task.publicKeyFuture = null;
+                    }
+                }
                 future.complete(null);
                 return;
             }
             if (System.currentTimeMillis() >= deadline) {
+                if (task != null) {
+                    if ("commitments".equals(label)) {
+                        task.commitmentsFuture = null;
+                    } else if ("shares".equals(label)) {
+                        task.sharesFuture = null;
+                    } else if ("public key contributions".equals(label)) {
+                        task.publicKeyFuture = null;
+                    }
+                }
                 future.completeExceptionally(new RuntimeException("Timeout waiting for " + label));
             }
         }, 0, 50, TimeUnit.MILLISECONDS);
@@ -588,6 +621,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     private static final class CommitmentContext {
         final GennaroDkgTask task;
         final Map<String, Object> commitmentData;
+        CompletableFuture<Void> future;
 
         private CommitmentContext(GennaroDkgTask task, Map<String, Object> commitmentData) {
             this.task = task;
@@ -711,6 +745,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             }
             if (firstCommitment) {
                 task.commitmentsReceivedLatch.countDown();
+                checkCommitmentCondition(task);
             }
             logger.info("Received commitment from node {} for task: {}", senderId, taskId);
         }
@@ -729,6 +764,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             boolean firstShare = task.receivedShares.putIfAbsent(senderId, share) == null;
             if (firstShare) {
                 task.sharesReceivedLatch.countDown();
+                checkShareCondition(task);
             }
             logger.info("Received share from node {} for task: {}", senderId, taskId);
         }
@@ -829,6 +865,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         boolean firstContribution = task.receivedPublicKeyContributions.putIfAbsent(senderId, publicKeyContribution) == null;
         if (firstContribution) {
             task.publicKeyContributionsReceivedLatch.countDown();
+            checkPublicKeyCondition(task);
         }
         logger.info("Received public key contribution from node {} for task: {}", senderId, taskId);
 
@@ -884,7 +921,11 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         publicKeyData.put("taskId", taskId);
         publicKeyData.put("groupPublicKey", groupPublicKey);
 
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData))
+        return retryAsync(
+                () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
+                Constants.DKG_BROADCAST_RETRY_COUNT,
+                Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                "Broadcast GENNARO_GROUP_PUBLIC_KEY")
                 .exceptionally(ex -> {
                     logger.error("Failed to broadcast group public key: {}", ex.getMessage());
                     return null;
@@ -896,6 +937,30 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         if (task != null && task.groupPublicKey == null) {
             task.groupPublicKey = groupPublicKey;
             logger.info("Received group public key from node {} for task: {}", senderId, taskId);
+        }
+    }
+
+    private void checkCommitmentCondition(GennaroDkgTask task) {
+        if (task.commitmentsFuture != null && task.receivedCommitments.size() >= task.nodesCount - 1) {
+            logger.debug("Event-driven: commitments condition met for task {}", task.taskId);
+            task.commitmentsFuture.complete(null);
+            task.commitmentsFuture = null;
+        }
+    }
+
+    private void checkShareCondition(GennaroDkgTask task) {
+        if (task.sharesFuture != null && task.receivedShares.size() >= task.nodesCount - 1) {
+            logger.debug("Event-driven: shares condition met for task {}", task.taskId);
+            task.sharesFuture.complete(null);
+            task.sharesFuture = null;
+        }
+    }
+
+    private void checkPublicKeyCondition(GennaroDkgTask task) {
+        if (task.publicKeyFuture != null && task.receivedPublicKeyContributions.size() >= task.nodesCount - 1) {
+            logger.debug("Event-driven: public key condition met for task {}", task.taskId);
+            task.publicKeyFuture.complete(null);
+            task.publicKeyFuture = null;
         }
     }
 }

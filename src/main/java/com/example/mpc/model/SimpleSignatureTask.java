@@ -5,6 +5,7 @@ import org.bouncycastle.math.ec.ECPoint;
 import java.math.BigInteger;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -16,6 +17,8 @@ public class SimpleSignatureTask {
     public final String message;
     public final Set<Integer> participants;
     public final int initiatorId;
+    public final int threshold;
+    public final int nodesCount;
     public final long createTime;
     public final long messageTimestamp;
 
@@ -31,6 +34,9 @@ public class SimpleSignatureTask {
     public BigInteger s;
     public BigInteger rValue;
     public boolean verified = false;
+
+    public volatile CompletableFuture<Void> offlineFuture;
+    public volatile CompletableFuture<Void> sigmaFuture;
 
     public final AtomicReference<Phase> phase = new AtomicReference<>(Phase.INIT);
     public final AtomicInteger round = new AtomicInteger(0);
@@ -53,8 +59,36 @@ public class SimpleSignatureTask {
         this.message = message;
         this.participants = participants;
         this.initiatorId = initiatorId;
+        this.threshold = participants.size();
+        this.nodesCount = participants.size();
         this.createTime = System.currentTimeMillis();
         this.messageTimestamp = System.currentTimeMillis();
+    }
+
+    public SimpleSignatureTask(String taskId, String groupPublicKey, String message,
+                                int nodesCount, int threshold, int initiatorId) {
+        this.taskId = taskId;
+        this.groupPublicKey = groupPublicKey;
+        this.message = message;
+        this.nodesCount = nodesCount;
+        this.threshold = Math.min(Math.max(1, threshold), nodesCount);
+        this.initiatorId = initiatorId;
+        this.participants = selectParticipants(initiatorId, nodesCount, this.threshold);
+        this.createTime = System.currentTimeMillis();
+        this.messageTimestamp = System.currentTimeMillis();
+    }
+
+    private static Set<Integer> selectParticipants(int initiatorId, int nodesCount, int threshold) {
+        java.util.LinkedHashSet<Integer> result = new java.util.LinkedHashSet<>();
+        if (initiatorId >= 1 && initiatorId <= nodesCount) {
+            result.add(initiatorId);
+        }
+        for (int i = 1; i <= nodesCount && result.size() < threshold; i++) {
+            if (i != initiatorId) {
+                result.add(i);
+            }
+        }
+        return java.util.Collections.unmodifiableSet(result);
     }
 
     public boolean setPhase(Phase expected, Phase update) {

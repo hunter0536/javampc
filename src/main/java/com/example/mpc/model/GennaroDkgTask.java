@@ -5,6 +5,7 @@ import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
@@ -23,6 +24,11 @@ public class GennaroDkgTask {
     public final CountDownLatch commitmentsReceivedLatch;
     public final CountDownLatch sharesReceivedLatch;
     public final CountDownLatch publicKeyContributionsReceivedLatch;
+
+    public volatile CompletableFuture<Void> commitmentsFuture;
+    public volatile CompletableFuture<Void> sharesFuture;
+    public volatile CompletableFuture<Void> publicKeyFuture;
+
     public BigInteger finalKeyShare;
     public String groupPublicKey;
     public volatile String errorMessage;

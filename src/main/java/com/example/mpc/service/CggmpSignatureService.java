@@ -124,6 +124,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     @Value("${app.cggmp.aux.autoCheckIntervalSeconds:60}")
     private long auxAutoCheckIntervalSeconds;
 
+    @Value("${app.cggmp.complaint.logPath:logs/complaints.jsonl}")
+    private String complaintLogPath;
+
     @Value("${mpc.dkg.echoEnabled:true}")
     private boolean dkgEchoEnabled;
     @Value("${mpc.dkg.useRbc:true}")
@@ -6264,15 +6267,17 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     private void logComplaintToFile(String taskId, int senderId, Integer offenderId, String reason, Object evidence) {
         try {
-            try {
-                String evidenceJson = evidence == null ? null : encodeObjectAsJson(evidence);
-                complaintDao.save(System.currentTimeMillis(), taskId, senderId, offenderId, reason, evidenceJson);
-            } catch (Exception e) {
-                logger.warn("Failed to persist complaint: {}", e.getMessage());
+            String evidenceJson = evidence == null ? null : encodeObjectAsJson(evidence);
+            complaintDao.save(System.currentTimeMillis(), taskId, senderId, offenderId, reason, evidenceJson);
+        } catch (Exception e) {
+            logger.warn("Failed to persist complaint: {}", e.getMessage());
+        }
+        try {
+            java.nio.file.Path complaintFile = java.nio.file.Paths.get(complaintLogPath);
+            java.nio.file.Path dir = complaintFile.getParent();
+            if (dir != null) {
+                java.nio.file.Files.createDirectories(dir);
             }
-            java.nio.file.Path dir = java.nio.file.Paths.get("logs");
-            java.nio.file.Files.createDirectories(dir);
-            java.nio.file.Path file = dir.resolve("complaints.jsonl");
             StringBuilder sb = new StringBuilder();
             sb.append('{');
             sb.append("\"ts\":").append(System.currentTimeMillis()).append(',');
@@ -6285,7 +6290,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             }
             sb.append('}');
             String line = sb.append(System.lineSeparator()).toString();
-            java.nio.file.Files.writeString(file, line, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            java.nio.file.Files.writeString(complaintFile, line, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
         } catch (Exception e) {
             logger.warn("Failed to log complaint to file: {}", e.getMessage());
         }

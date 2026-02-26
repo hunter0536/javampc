@@ -39,8 +39,6 @@ nodes:
 logging:
   level:
     com.example.mpc: debug # 应用日志级别
-    com.example.mpc.service.NodeService: warn # NodeService 日志级别
-    com.example.mpc.service.netty: warn # Netty 日志级别
 
 # 应用初始化配置
 app:
@@ -51,6 +49,8 @@ app:
       enabled: true  # 是否启用旧的 DKG 服务
   cggmp:
     hdEnabled: false # HD 开关：同时控制 DKG 生成 chain code 与签名使用 shift
+    complaint:
+      logPath: logs/complaints.jsonl # 投诉记录日志文件路径
     proof:
       kappa: 64   # Πdec/Πaff-g* 的挑战位长度（临时降低以排查卡顿）
       epsBits: 16 # Πdec/Πaff-g* 取值范围扩展位数
