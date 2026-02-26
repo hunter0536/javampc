@@ -16,6 +16,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PreDestroy;
+
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -45,7 +47,26 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     private final SecureRandom secureRandom = new SecureRandom();
     private final AtomicBoolean initialized = new AtomicBoolean(false);
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
-    private final ExecutorService signatureExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService signatureExecutor = Executors.newCachedThreadPool();
+
+    @PreDestroy
+    public void shutdown() {
+        logger.info("Shutting down SimpleSignatureService executors");
+        cleanupExecutor.shutdown();
+        signatureExecutor.shutdown();
+        try {
+            if (!cleanupExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                cleanupExecutor.shutdownNow();
+            }
+            if (!signatureExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+                signatureExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            cleanupExecutor.shutdownNow();
+            signatureExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     public CompletableFuture<Void> init() {
         if (initialized.compareAndSet(false, true)) {
@@ -78,10 +99,20 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     }
 
     public String startSignature(String groupPublicKey, String message, Set<Integer> participants) {
+        if (groupPublicKey == null || groupPublicKey.isEmpty()) {
+            throw new IllegalArgumentException("groupPublicKey cannot be null or empty");
+        }
+        if (message == null || message.isEmpty()) {
+            throw new IllegalArgumentException("message cannot be null or empty");
+        }
+        if (message.length() > 65536) {
+            throw new IllegalArgumentException("message too long (max 65536 characters)");
+        }
+
         String taskId = UUID.randomUUID().toString();
 
         if (participants == null || participants.isEmpty()) {
-            participants = new HashSet<>();
+            participants = ConcurrentHashMap.newKeySet();
             Map<Integer, NodeService.NodeInfo> nodes = nodeService.getNodesSnapshot();
             for (Integer nodeId : nodes.keySet()) {
                 participants.add(nodeId);
@@ -131,8 +162,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
 
     private void runSignature(SimpleSignatureTask task) {
         try {
-            task.start();
-
             runOfflinePhase(task);
 
             runOnlinePhase(task);
@@ -158,28 +187,31 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
             logger.info("Node {} generated k_i={}, gamma_i={}, broadcasting R and Gamma",
                     nodeId, task.k_i.toString(16), task.gamma_i.toString(16));
 
+            task.setPhase(SimpleSignatureTask.Phase.INIT, SimpleSignatureTask.Phase.OFFLINE_WAITING);
+
             broadcastOfflineData(task);
 
             waitForOfflinePhase(task);
 
             task.R = sumPoints(task.RShares, curveOrder);
-            task.Gamma = Gamma;
+            task.Gamma = sumPoints(task.GammaShares, curveOrder);
 
             logger.info("Node {} completed offline phase: R={}, Gamma={}",
                     nodeId, task.R.getAffineXCoord().toBigInteger().toString(16),
                     Gamma.getAffineXCoord().toBigInteger().toString(16));
 
-            task.offlineCompleted = true;
+            task.setPhase(SimpleSignatureTask.Phase.OFFLINE_WAITING, SimpleSignatureTask.Phase.OFFLINE_COMPLETED);
 
         } catch (Exception e) {
             logger.error("Offline phase failed for task {}: {}", task.taskId, e.getMessage());
+            task.setPhase(SimpleSignatureTask.Phase.OFFLINE_WAITING, SimpleSignatureTask.Phase.FAILED);
             throw new RuntimeException("Offline phase failed: " + e.getMessage(), e);
         }
     }
 
     private void runOnlinePhase(SimpleSignatureTask task) {
         try {
-            if (!task.offlineCompleted) {
+            if (task.getPhase() != SimpleSignatureTask.Phase.OFFLINE_COMPLETED) {
                 throw new RuntimeException("Offline phase not completed");
             }
 
@@ -210,6 +242,8 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
             logger.info("Node {} computed sigma_i={}, broadcasting", nodeId, sigma_i.toString(16));
 
             broadcastSigmaShare(task, sigma_i);
+
+            task.setPhase(SimpleSignatureTask.Phase.OFFLINE_COMPLETED, SimpleSignatureTask.Phase.ONLINE_WAITING);
 
             waitForSigmaShares(task);
 
@@ -253,7 +287,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         data.put("Gamma", HexUtils.bytesToHex(task.Gamma.getEncoded(true)));
 
         NodeService.Message msg = new NodeService.Message(nodeId, MessageType.SIMPLE_SIGN_OFFLINE, data);
-        nodeService.broadcastMessage(msg);
+        nodeService.broadcastReliable(msg);
         logger.info("Broadcasted offline data (R, Gamma) for task {}", task.taskId);
     }
 
@@ -265,7 +299,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         data.put("sigma", sigma.toString(16));
 
         NodeService.Message msg = new NodeService.Message(nodeId, MessageType.SIMPLE_SIGN_SIGMA, data);
-        nodeService.broadcastMessage(msg);
+        nodeService.broadcastReliable(msg);
         logger.info("Broadcasted sigma share for task {}", task.taskId);
     }
 
@@ -293,19 +327,35 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         String GammaHex = map.get("Gamma");
 
         SimpleSignatureTask task = tasks.get(taskId);
+        if (task != null) {
+            if (task.isExpired(300000)) {
+                logger.warn("Ignoring offline data for expired task {}", taskId);
+                return;
+            }
+            if (task.getPhase() == SimpleSignatureTask.Phase.OFFLINE_COMPLETED ||
+                task.getPhase() == SimpleSignatureTask.Phase.ONLINE_WAITING ||
+                task.getPhase() == SimpleSignatureTask.Phase.COMPLETED) {
+                logger.warn("Ignoring offline data for task {} in phase {}", taskId, task.getPhase());
+                return;
+            }
+        }
+
         if (task == null) {
             if (groupPublicKey == null || message == null) {
                 logger.warn("Task {} not found and no groupPublicKey/message in message from node {}", taskId, senderId);
                 return;
             }
             logger.info("Creating task {} on node {} upon receiving offline data", taskId, nodeId);
-            SimpleSignatureTask newTask = new SimpleSignatureTask(taskId, groupPublicKey, message, new HashSet<>(), senderId);
-            tasks.put(taskId, newTask);
+            Set<Integer> participants = ConcurrentHashMap.newKeySet();
+            participants.add(senderId);
+            SimpleSignatureTask newTask = new SimpleSignatureTask(taskId, groupPublicKey, message, participants, senderId);
+            SimpleSignatureTask existingTask = tasks.putIfAbsent(taskId, newTask);
+            task = existingTask != null ? existingTask : newTask;
 
-            final SimpleSignatureTask taskToRun = newTask;
-            signatureExecutor.submit(() -> runOfflinePhase(taskToRun));
-
-            task = newTask;
+            if (existingTask == null) {
+                final SimpleSignatureTask taskToRun = newTask;
+                signatureExecutor.submit(() -> runOfflinePhase(taskToRun));
+            }
         }
 
         ECPoint R = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(RHex)).normalize();
@@ -329,6 +379,22 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         CountDownLatch latch = new CountDownLatch(required);
         offlineLatches.put(task.taskId, latch);
         try {
+            while (!latch.await(100, TimeUnit.MILLISECONDS)) {
+                int current = task.participants.size();
+                if (current > required) {
+                    required = current;
+                    CountDownLatch newLatch = new CountDownLatch(required);
+                    offlineLatches.put(task.taskId, newLatch);
+                    for (int i = 0; i < task.RShares.size(); i++) {
+                        newLatch.countDown();
+                    }
+                    latch = newLatch;
+                }
+                if (task.getPhase() == SimpleSignatureTask.Phase.OFFLINE_COMPLETED ||
+                    task.getPhase() == SimpleSignatureTask.Phase.FAILED) {
+                    break;
+                }
+            }
             if (!latch.await(60, TimeUnit.SECONDS)) {
                 logger.warn("Timeout waiting for offline data, proceeding with available: {}", task.RShares.size());
             }
@@ -352,6 +418,22 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         CountDownLatch latch = new CountDownLatch(required);
         sigmaLatches.put(task.taskId, latch);
         try {
+            while (!latch.await(100, TimeUnit.MILLISECONDS)) {
+                int current = task.participants.size();
+                if (current > required) {
+                    required = current;
+                    CountDownLatch newLatch = new CountDownLatch(required);
+                    sigmaLatches.put(task.taskId, newLatch);
+                    for (int i = 0; i < task.sigmaShares.size(); i++) {
+                        newLatch.countDown();
+                    }
+                    latch = newLatch;
+                }
+                if (task.getPhase() == SimpleSignatureTask.Phase.COMPLETED ||
+                    task.getPhase() == SimpleSignatureTask.Phase.FAILED) {
+                    break;
+                }
+            }
             if (!latch.await(60, TimeUnit.SECONDS)) {
                 logger.warn("Timeout waiting for sigma shares, proceeding with available: {}", task.sigmaShares.size());
             }
@@ -379,14 +461,34 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         String sigmaHex = map.get("sigma");
 
         SimpleSignatureTask task = tasks.get(taskId);
+        if (task != null) {
+            if (task.isExpired(300000)) {
+                logger.warn("Ignoring sigma share for expired task {}", taskId);
+                return;
+            }
+            if (task.getPhase() == SimpleSignatureTask.Phase.ONLINE_WAITING ||
+                task.getPhase() == SimpleSignatureTask.Phase.COMPLETED) {
+                logger.debug("Ignoring sigma share for task {} in phase {}", taskId, task.getPhase());
+                return;
+            }
+        }
+
         if (task == null) {
             if (groupPublicKey == null || message == null) {
                 logger.warn("Task {} not found and no groupPublicKey/message in sigma share from node {}", taskId, senderId);
                 return;
             }
             logger.info("Creating task {} on node {} upon receiving sigma share", taskId, nodeId);
-            task = new SimpleSignatureTask(taskId, groupPublicKey, message, new HashSet<>(), senderId);
-            tasks.put(taskId, task);
+            Set<Integer> participants = ConcurrentHashMap.newKeySet();
+            participants.add(senderId);
+            SimpleSignatureTask newTask = new SimpleSignatureTask(taskId, groupPublicKey, message, participants, senderId);
+            SimpleSignatureTask existingTask = tasks.putIfAbsent(taskId, newTask);
+            final SimpleSignatureTask taskToRun = existingTask != null ? existingTask : newTask;
+            task = taskToRun;
+
+            if (existingTask == null) {
+                signatureExecutor.submit(() -> runOfflinePhase(taskToRun));
+            }
         }
 
         BigInteger sigma = new BigInteger(sigmaHex, 16);

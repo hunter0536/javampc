@@ -12,7 +12,7 @@ java {
     sourceCompatibility = '17'
 }
 
-// 配置 IDEA 输出目录，避免创建 bin 目录
+// 配置 IDEA 输出目录
 idea {
     module {
         outputDir = file('build/classes/java/main')

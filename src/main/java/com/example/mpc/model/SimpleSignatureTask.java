@@ -6,6 +6,7 @@ import java.math.BigInteger;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SimpleSignatureTask {
@@ -15,6 +16,8 @@ public class SimpleSignatureTask {
     public final String message;
     public final Set<Integer> participants;
     public final int initiatorId;
+    public final long createTime;
+    public final long messageTimestamp;
 
     public BigInteger k_i;
     public BigInteger gamma_i;
@@ -29,16 +32,14 @@ public class SimpleSignatureTask {
     public BigInteger rValue;
     public boolean verified = false;
 
-    public boolean offlineCompleted = false;
+    public final AtomicReference<Phase> phase = new AtomicReference<>(Phase.INIT);
+    public final AtomicInteger round = new AtomicInteger(0);
 
-    public final AtomicReference<State> state = new AtomicReference<>(State.PENDING);
-
-    public final long createTime;
-
-    public enum State {
-        PENDING,
-        K_GENERATED,
-        SIGMA_COMPUTED,
+    public enum Phase {
+        INIT,
+        OFFLINE_WAITING,
+        OFFLINE_COMPLETED,
+        ONLINE_WAITING,
         COMPLETED,
         FAILED
     }
@@ -53,35 +54,45 @@ public class SimpleSignatureTask {
         this.participants = participants;
         this.initiatorId = initiatorId;
         this.createTime = System.currentTimeMillis();
+        this.messageTimestamp = System.currentTimeMillis();
     }
 
-    public boolean start() {
-        return state.compareAndSet(State.PENDING, State.K_GENERATED);
+    public boolean setPhase(Phase expected, Phase update) {
+        return phase.compareAndSet(expected, update);
+    }
+
+    public Phase getPhase() {
+        return phase.get();
     }
 
     public void complete(BigInteger s) {
         this.s = s;
-        state.set(State.COMPLETED);
+        phase.set(Phase.COMPLETED);
     }
 
     public void fail(String error) {
         this.errorMessage = error;
-        state.set(State.FAILED);
+        phase.set(Phase.FAILED);
     }
 
     public boolean isCompleted() {
-        return state.get() == State.COMPLETED;
+        return phase.get() == Phase.COMPLETED;
     }
 
     public boolean isFailed() {
-        return state.get() == State.FAILED;
+        return phase.get() == Phase.FAILED;
     }
 
     public boolean isInProgress() {
-        return state.get() == State.K_GENERATED || state.get() == State.SIGMA_COMPUTED;
+        Phase current = phase.get();
+        return current == Phase.INIT || current == Phase.OFFLINE_WAITING || current == Phase.ONLINE_WAITING;
     }
 
     public long getCreateTime() {
         return createTime;
+    }
+
+    public boolean isExpired(long maxAgeMs) {
+        return System.currentTimeMillis() - createTime > maxAgeMs;
     }
 }
