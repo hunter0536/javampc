@@ -1644,14 +1644,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return Secp256k1Curve.decodePoint(encoded);
     }
 
-    private Object maybeCompressDkgPayload(MessageType type, Object data) {
-        return data;
-    }
-
-    private Object maybeDecompressDkgPayload(MessageType type, byte[] bytes) {
-        return null;
-    }
-
     private boolean validatePaillierPublicKey(PaillierEncryption.PublicKey publicKey) {
         if (publicKey == null || publicKey.n == null || publicKey.nSquared == null || publicKey.g == null) {
             return false;
@@ -1701,12 +1693,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Executor executor = ThreadPoolUtil.getSingleThreadPool();        return CompletableFuture.runAsync(() -> {
             try {
                 Object data = message.data;
-                if (data instanceof byte[] bytes) {
-                    Object decoded = maybeDecompressDkgPayload(message.type, bytes);
-                    if (decoded != null) {
-                        data = decoded;
-                    }
-                }
                 logger.info("=== CGGMP processing: type={} ===", message.type);
                 switch (message.type) {                    case GG20_SIGN_INIT:
                         handleCggmpSignOfflineInit(senderId, data);
@@ -2210,7 +2196,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         String deltaHex = (String) dataMap.get("delta");
         String deltaPointHex = (String) dataMap.get("Delta");
         String sPointHex = (String) dataMap.get("S");
-        Map<?, ?> logProofMap = (Map<?, ?>) dataMap.get("logProof");
         if (signatureTaskId == null || senderValue == null || deltaHex == null || deltaPointHex == null || sPointHex == null) {
             return;
         }
@@ -2576,7 +2561,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<Integer, PiAffGProof> proofs = new HashMap<>();
         Map<Integer, BigInteger> D = new HashMap<>();
         Map<Integer, BigInteger> F = new HashMap<>();
-        BigInteger curveOrder = Secp256k1Curve.n();
         PaillierEncryption.PublicKey senderPk = task.paillier.getPublicKeyInfo();
         for (int peerId : task.participants) {
             if (peerId == nodeId) {
@@ -2628,7 +2612,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<Integer, PiAffGProof> proofs = new HashMap<>();
         Map<Integer, BigInteger> Dhat = new HashMap<>();
         Map<Integer, BigInteger> Fhat = new HashMap<>();
-        BigInteger curveOrder = Secp256k1Curve.n();
         PaillierEncryption.PublicKey senderPk = task.paillier.getPublicKeyInfo();
         for (int peerId : task.participants) {
             if (peerId == nodeId) {
