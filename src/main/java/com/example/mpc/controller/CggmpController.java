@@ -10,6 +10,7 @@ import com.example.mpc.common.response.RefreshTaskStatusResponse;
 import com.example.mpc.common.response.SignatureTaskStartResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.response.SignatureResultResponse;
+import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpSignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,9 @@ public class CggmpController {
 
     @Autowired
     private CggmpSignatureService cggmpSignatureService;
+
+    @Autowired
+    private CggmpAuxService cggmpAuxService;
 
     /**
      * 使用CGGMP协议生成分布式密钥并返回UUID
@@ -63,8 +67,8 @@ public class CggmpController {
     public CompletableFuture<ApiResponse<AuxTaskStartResponse>> startAux() {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                String taskId = cggmpSignatureService.createAuxTask();
-                cggmpSignatureService.startAuxProcess(taskId)
+                String taskId = cggmpAuxService.createAuxTask();
+                cggmpAuxService.startAuxProcess(taskId)
                         .exceptionally(ex -> {
                             logger.error("Async CGGMP AUX process failed for task {}: {}", taskId, ex.getMessage(), ex);
                             return null;
@@ -88,7 +92,7 @@ public class CggmpController {
                 if (taskId == null || taskId.isEmpty()) {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }
-                AuxTaskStatusResponse status = cggmpSignatureService.getAuxTaskStatus(taskId);
+                AuxTaskStatusResponse status = cggmpAuxService.getAuxTaskStatus(taskId);
                 return ApiResponse.success(status);
             } catch (Exception e) {
                 logger.error("Failed to get aux task status", e);

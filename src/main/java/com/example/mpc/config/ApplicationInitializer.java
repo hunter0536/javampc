@@ -1,6 +1,7 @@
 package com.example.mpc.config;
 
 import com.example.mpc.constant.Constants;
+import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.GennaroDkgService;
 import com.example.mpc.service.NodeService;
@@ -22,6 +23,9 @@ public class ApplicationInitializer implements CommandLineRunner {
 
     @Autowired
     private CggmpSignatureService cggmpSignatureService;
+
+    @Autowired
+    private CggmpAuxService cggmpAuxService;
 
     @Autowired
     private SimpleSignatureService simpleSignatureService;
@@ -68,14 +72,22 @@ public class ApplicationInitializer implements CommandLineRunner {
         logger.info("--- Initializing CGGMP services ---");
         try {
             cggmpSignatureService.initialize();
-            logger.info("Initializing CGGMP signature service...");
-            cggmpSignatureService.init(Constants.NODES_COUNT)
+            cggmpAuxService.init(Constants.NODES_COUNT);
+            cggmpAuxService.init(Constants.NODES_COUNT)
                     .thenRun(() -> {
-                        cggmpSignatureService.ensureAuxProvisionedAfterNetworkReady();
-                        logger.info("CGGMP services initialized successfully");
+                        logger.info("Initializing CGGMP signature service...");
+                        cggmpSignatureService.init(Constants.NODES_COUNT)
+                                .thenRun(() -> {
+                                    cggmpAuxService.ensureAuxProvisionedAfterNetworkReady();
+                                    logger.info("CGGMP services initialized successfully");
+                                })
+                                .exceptionally(ex -> {
+                                    logger.error("Failed to initialize CGGMP signature service", ex);
+                                    return null;
+                                });
                     })
                     .exceptionally(ex -> {
-                        logger.error("Failed to initialize CGGMP services", ex);
+                        logger.error("Failed to initialize CGGMP AUX service", ex);
                         return null;
                     });
         } catch (Exception e) {
