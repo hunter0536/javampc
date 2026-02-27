@@ -3,6 +3,7 @@ package com.example.mpc.config;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpSignatureService;
+import com.example.mpc.service.DatabaseService;
 import com.example.mpc.service.GennaroDkgService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.SimpleSignatureService;
@@ -16,6 +17,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class ApplicationInitializer implements CommandLineRunner {
     private static final Logger logger = LoggerFactory.getLogger(ApplicationInitializer.class);
+
+    @Autowired
+    private DatabaseService databaseService;
 
     @Autowired
     private GennaroDkgService gennaroDkgService;
@@ -47,6 +51,8 @@ public class ApplicationInitializer implements CommandLineRunner {
         logger.info("=".repeat(60));
         logger.info("Initializing application for node {}", nodeId);
         logger.info("=".repeat(60));
+
+        initializeDatabase();
 
         if (enableCggmp) {
             initializeCggmp();
@@ -92,6 +98,16 @@ public class ApplicationInitializer implements CommandLineRunner {
                     });
         } catch (Exception e) {
             logger.error("Failed to initialize CGGMP services", e);
+        }
+    }
+
+    private void initializeDatabase() {
+        logger.info("--- Initializing database ---");
+        try {
+            databaseService.initShareDatabase(nodeId);
+            logger.info("Database initialized successfully for node {}", nodeId);
+        } catch (Exception e) {
+            logger.error("Failed to initialize database: {}", e.getMessage(), e);
         }
     }
 

@@ -172,11 +172,6 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             if (task == null) {
                 throw new RuntimeException("DKG task not found: " + taskId);
             }
-            try {
-                databaseService.initShareDatabase(nodeId);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
             if (forceSingleNodeMode) {
                 throw new RuntimeException("Single node mode is not allowed");
             }

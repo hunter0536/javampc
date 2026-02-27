@@ -744,14 +744,12 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
         }
-        Object senderValue = dataMap.get("senderId");
         Object hasAuxValue = dataMap.get("hasAux");
-        if (senderValue == null || hasAuxValue == null) {
+        if (hasAuxValue == null) {
             return;
         }
-        int senderNodeId = ((Number) senderValue).intValue();
         boolean hasAux = Boolean.TRUE.equals(hasAuxValue);
-        auxStatus.put(senderNodeId, hasAux);
+        auxStatus.put(senderId, hasAux);
     }
 
     private void saveAuxInfo(CggmpAuxTask task) {
