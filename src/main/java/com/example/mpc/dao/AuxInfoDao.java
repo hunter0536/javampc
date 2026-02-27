@@ -20,6 +20,7 @@ public class AuxInfoDao {
     private static final String INSERT_SQL = "INSERT INTO aux_info (node_id, task_id, paillier_p, paillier_q, paillier_n, paillier_g, paillier_bit_length, pedersen_hat_n, pedersen_s, pedersen_t) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     private static final String SELECT_LAST_ID_SQL = "SELECT last_insert_rowid()";
     private static final String SELECT_LATEST_SQL = "SELECT id, node_id, task_id, paillier_p, paillier_q, paillier_n, paillier_g, paillier_bit_length, pedersen_hat_n, pedersen_s, pedersen_t FROM aux_info WHERE node_id = ? ORDER BY id DESC LIMIT 1";
+    private static final String SELECT_BY_TASK_SQL = "SELECT id FROM aux_info WHERE node_id = ? AND task_id = ? LIMIT 1";
 
     @Autowired
     private DatabaseService databaseService;
@@ -53,6 +54,53 @@ public class AuxInfoDao {
         } finally {
             closeStatement(selectStmt);
             closeStatement(insertStmt);
+            if (conn != null) {
+                databaseService.releaseShareConnection(conn, info.getNodeId());
+            }
+        }
+    }
+
+    public boolean saveIfAbsentByTask(AuxInfo info) throws SQLException {
+        Connection conn = null;
+        PreparedStatement selectByTask = null;
+        PreparedStatement insertStmt = null;
+        PreparedStatement selectStmt = null;
+        try {
+            conn = databaseService.getShareConnection(info.getNodeId());
+            selectByTask = conn.prepareStatement(SELECT_BY_TASK_SQL);
+            selectByTask.setInt(1, info.getNodeId());
+            selectByTask.setString(2, info.getTaskId());
+            var rs = selectByTask.executeQuery();
+            if (rs.next()) {
+                info.setId(rs.getLong(1));
+                return false;
+            }
+
+            insertStmt = conn.prepareStatement(INSERT_SQL);
+            selectStmt = conn.prepareStatement(SELECT_LAST_ID_SQL);
+
+            int index = 1;
+            insertStmt.setInt(index++, info.getNodeId());
+            insertStmt.setString(index++, info.getTaskId());
+            insertStmt.setString(index++, info.getPaillierP());
+            insertStmt.setString(index++, info.getPaillierQ());
+            insertStmt.setString(index++, info.getPaillierN());
+            insertStmt.setString(index++, info.getPaillierG());
+            insertStmt.setInt(index++, info.getPaillierBitLength() == null ? 0 : info.getPaillierBitLength());
+            insertStmt.setString(index++, info.getPedersenHatN());
+            insertStmt.setString(index++, info.getPedersenS());
+            insertStmt.setString(index, info.getPedersenT());
+            insertStmt.executeUpdate();
+
+            var rs2 = selectStmt.executeQuery();
+            if (rs2.next()) {
+                info.setId(rs2.getLong(1));
+            }
+            return true;
+        } finally {
+            closeStatement(selectStmt);
+            closeStatement(insertStmt);
+            closeStatement(selectByTask);
             if (conn != null) {
                 databaseService.releaseShareConnection(conn, info.getNodeId());
             }

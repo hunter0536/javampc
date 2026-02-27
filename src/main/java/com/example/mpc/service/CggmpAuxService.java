@@ -857,14 +857,19 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             info.setPedersenHatN(task.hatN.toString(16));
             info.setPedersenS(task.s.toString(16));
             info.setPedersenT(task.t.toString(16));
-            auxInfoDao.save(info);
+            boolean inserted = auxInfoDao.saveIfAbsentByTask(info);
             auxPaillier = task.paillier;
             auxHatN = task.hatN;
             auxS = task.s;
             auxT = task.t;
-            logger.info("Saved CGGMP AUX info for task: {}", task.taskId);
+            if (inserted) {
+                logger.info("Saved CGGMP AUX info for task: {}", task.taskId);
+            } else {
+                logger.info("CGGMP AUX info already persisted for task: {}", task.taskId);
+            }
         } catch (Exception e) {
             logger.error("Failed to save CGGMP AUX info", e);
+            throw new RuntimeException(e);
         }
     }
 
