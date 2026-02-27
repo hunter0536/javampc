@@ -714,10 +714,11 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         }
         String taskId = (String) dataMap.get("taskId");
         Object senderValue = dataMap.get("senderId");
+        Object pkObj = dataMap.get("paillierPublicKey");
         String hatNStr = (String) dataMap.get("hatN");
         String sStr = (String) dataMap.get("s");
         String tStr = (String) dataMap.get("t");
-        if (taskId == null || senderValue == null || hatNStr == null || sStr == null || tStr == null) {
+        if (taskId == null || senderValue == null || pkObj == null || hatNStr == null || sStr == null || tStr == null) {
             return;
         }
         int senderIdVal = senderValue instanceof Number n ? n.intValue() : senderId;
@@ -725,6 +726,13 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         if (task == null || !task.status.get().isRunning()) {
             enqueuePending(taskId, new PendingMsg(senderId, data, MessageType.CGGMP_AUX_R2));
             return;
+        }
+        if (pkObj instanceof Map<?, ?> pkMap) {
+            task.peerPaillierKeys.put(senderIdVal, CggmpDkgCodec.decodePaillierPublicKey(pkMap));
+        }
+        Object prmObj = dataMap.get("prmProof");
+        if (prmObj instanceof Map<?, ?> prmMap) {
+            task.peerPrmProofs.put(senderIdVal, CggmpDkgCodec.decodePiPrmProof(prmMap));
         }
         task.peerHatN.put(senderIdVal, new BigInteger(hatNStr, 16));
         task.peerS.put(senderIdVal, new BigInteger(sStr, 16));
