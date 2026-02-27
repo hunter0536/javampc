@@ -12,6 +12,7 @@ import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDkgService;
+import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.CggmpSignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +35,9 @@ public class CggmpController {
 
     @Autowired
     private CggmpAuxService cggmpAuxService;
+
+    @Autowired
+    private CggmpRefreshService cggmpRefreshService;
 
     /**
      * 使用CGGMP协议生成分布式密钥并返回UUID
@@ -402,8 +406,8 @@ public class CggmpController {
                 if (groupPublicKey == null || groupPublicKey.isEmpty()) {
                     return ApiResponse.badRequest("groupPublicKey cannot be null or empty");
                 }
-                String taskId = cggmpSignatureService.createRefreshTask(groupPublicKey);
-                cggmpSignatureService.startRefreshTask(taskId)
+                String taskId = cggmpRefreshService.createRefreshTask(groupPublicKey);
+                cggmpRefreshService.startRefreshTask(taskId)
                         .exceptionally(ex -> {
                             logger.error("Async CGGMP refresh failed for task {}: {}", taskId, ex.getMessage(), ex);
                             return null;
@@ -430,7 +434,7 @@ public class CggmpController {
                 if (taskId == null || taskId.isEmpty()) {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }
-                RefreshTaskStatusResponse status = cggmpSignatureService.getRefreshTaskStatus(taskId);
+                RefreshTaskStatusResponse status = cggmpRefreshService.getRefreshTaskStatus(taskId);
                 return ApiResponse.success(status);
             } catch (Exception e) {
                 logger.error("Failed to get refresh task status", e);

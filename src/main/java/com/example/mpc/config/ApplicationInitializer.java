@@ -3,6 +3,7 @@ package com.example.mpc.config;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDkgService;
+import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.DatabaseService;
 import com.example.mpc.service.GennaroDkgService;
@@ -34,6 +35,9 @@ public class ApplicationInitializer implements CommandLineRunner {
 
     @Autowired
     private CggmpDkgService cggmpDkgService;
+
+    @Autowired
+    private CggmpRefreshService cggmpRefreshService;
 
     @Autowired
     private SimpleSignatureService simpleSignatureService;
@@ -89,6 +93,13 @@ public class ApplicationInitializer implements CommandLineRunner {
                                 .thenRun(() -> logger.info("CGGMP DKG service initialized successfully"))
                                 .exceptionally(ex -> {
                                     logger.error("Failed to initialize CGGMP DKG service", ex);
+                                    return null;
+                                });
+                        logger.info("Initializing CGGMP refresh service...");
+                        cggmpRefreshService.init(Constants.NODES_COUNT)
+                                .thenRun(() -> logger.info("CGGMP refresh service initialized successfully"))
+                                .exceptionally(ex -> {
+                                    logger.error("Failed to initialize CGGMP refresh service", ex);
                                     return null;
                                 });
                         logger.info("Initializing CGGMP signature service...");
