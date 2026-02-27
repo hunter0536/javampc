@@ -11,6 +11,7 @@ import com.example.mpc.common.response.SignatureTaskStartResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.service.CggmpAuxService;
+import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpSignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +30,9 @@ public class CggmpController {
     private CggmpSignatureService cggmpSignatureService;
 
     @Autowired
+    private CggmpDkgService cggmpDkgService;
+
+    @Autowired
     private CggmpAuxService cggmpAuxService;
 
     /**
@@ -40,10 +44,10 @@ public class CggmpController {
     public CompletableFuture<ApiResponse<DkgTaskStartResponse>> generateKey() {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                String taskId = cggmpSignatureService.createDkgTask();
+                String taskId = cggmpDkgService.createDkgTask();
                 logger.info("Created CGGMP DKG task {}", taskId);
 
-                cggmpSignatureService.startDkgProcess(taskId)
+                cggmpDkgService.startDkgProcess(taskId)
                         .thenAccept(result -> logger.info("DKG process completed for task {}", taskId))
                         .exceptionally(ex -> {
                             logger.error("Async CGGMP DKG process failed for task {}: {}", taskId, ex.getMessage(), ex);
@@ -257,7 +261,7 @@ public class CggmpController {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }
 
-                DkgTaskStatusResponse status = cggmpSignatureService.getTaskStatus(taskId);
+                DkgTaskStatusResponse status = cggmpDkgService.getTaskStatus(taskId);
                 return ApiResponse.success(status);
             } catch (Exception e) {
                 logger.error("Failed to get task status", e);
@@ -280,7 +284,7 @@ public class CggmpController {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }
 
-                String publicKey = cggmpSignatureService.getGroupPublicKey(taskId);
+                String publicKey = cggmpDkgService.getGroupPublicKey(taskId);
                 return ApiResponse.success(publicKey);
             } catch (Exception e) {
                 logger.error("Failed to get group public key", e);
