@@ -93,6 +93,8 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     private final ScheduledExecutorService dkgScheduler = Executors.newSingleThreadScheduledExecutor();
 
     private final Map<String, CggmpDkgTask> dkgTasks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ConcurrentHashMap<Integer, Map<String, Object>>> pendingRound1ByTask =
+            new ConcurrentHashMap<>();
 
     static {
         Security.addProvider(new BouncyCastleProvider());
@@ -125,6 +127,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         String executionId = UUID.randomUUID().toString();
         CggmpDkgTask task = createDkgTaskInternal(taskId, executionId, nodesCount, threshold, null, nodeId);
         dkgTasks.put(taskId, task);
+        drainPendingRound1(task);
         logger.info("Created CGGMP DKG task: {}", taskId);
         return taskId;
     }
@@ -598,10 +601,12 @@ public class CggmpDkgService implements NodeService.MessageHandler {
 
             if (existingTask != null) {
                 logger.info("DKG task {} already exists, skipping creation", taskId);
+                drainPendingRound1(existingTask);
                 return;
             }
 
             logger.info("Created DKG task {} on node {}", taskId, nodeId);
+            drainPendingRound1(task);
 
             startDkgProcessInternal(taskId, false);
         }
@@ -636,6 +641,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         }
         CggmpDkgTask task = dkgTasks.get(taskId);
         if (task == null) {
+            cachePendingRound1(taskId, senderNodeId, dataMap);
             return;
         }
         if (!executionId.equals(task.executionId)) {
@@ -1322,6 +1328,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                 String newExecutionId = dataMap.get("executionId") instanceof String v ? v : UUID.randomUUID().toString();
                 CggmpDkgTask newTask = createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, participants, senderId);
                 dkgTasks.putIfAbsent(newTaskId, newTask);
+                drainPendingRound1(newTask);
                 startDkgProcessInternal(newTaskId, false);
             }
         }
@@ -1375,6 +1382,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         String newExecutionId = UUID.randomUUID().toString();
         CggmpDkgTask newTask = createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, newParticipants, task.initiatorId);
         dkgTasks.putIfAbsent(newTaskId, newTask);
+        drainPendingRound1(newTask);
         logger.warn("DKG exclusion: offender {} removed, restarting DKG task {}", offenderId, newTaskId);
         fireAndForget(broadcastDkgExclude(task, offenderId, reason, newTaskId, newParticipants, newExecutionId),
                 "CGGMP_DKG_EXCLUDE");
@@ -1474,6 +1482,38 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                     task.timeout();
                     throw new CompletionException(ex);
                 });
+    }
+
+    private void cachePendingRound1(String taskId, int senderId, Map<?, ?> dataMap) {
+        if (taskId == null) {
+            return;
+        }
+        ConcurrentHashMap<Integer, Map<String, Object>> pending =
+                pendingRound1ByTask.computeIfAbsent(taskId, ignored -> new ConcurrentHashMap<>());
+        Map<String, Object> normalized = new HashMap<>();
+        for (Map.Entry<?, ?> entry : dataMap.entrySet()) {
+            if (entry.getKey() instanceof String key) {
+                normalized.put(key, entry.getValue());
+            }
+        }
+        pending.put(senderId, normalized);
+        logger.debug("Cached DKG Round1 from node {} for task {} (waiting for task creation)", senderId, taskId);
+    }
+
+    private void drainPendingRound1(CggmpDkgTask task) {
+        ConcurrentHashMap<Integer, Map<String, Object>> pending = pendingRound1ByTask.remove(task.taskId);
+        if (pending == null || pending.isEmpty()) {
+            return;
+        }
+        logger.info("Replaying {} pending DKG Round1 messages for task {}", pending.size(), task.taskId);
+        for (Map.Entry<Integer, Map<String, Object>> entry : pending.entrySet()) {
+            try {
+                handleCggmpDkgRound1(entry.getKey(), entry.getValue());
+            } catch (Exception ex) {
+                logger.warn("Failed to replay pending DKG Round1 from node {} for task {}: {}",
+                        entry.getKey(), task.taskId, ex.getMessage());
+            }
+        }
     }
 
     private CompletableFuture<Void> delayMs(long delayMs) {

@@ -18,7 +18,7 @@ public class PaillierEncryption {
     private BigInteger q;
     private int bitLength;
 
-    private static final int KEY_SIZE = 3072;
+    private static final int KEY_SIZE = 1024;
     private final int keySize;
     private static final BigInteger TWO = BigInteger.valueOf(2);
 
