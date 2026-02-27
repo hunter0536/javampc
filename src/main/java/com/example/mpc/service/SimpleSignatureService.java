@@ -75,7 +75,13 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         if (initialized.compareAndSet(false, true)) {
             return nodeService.startP2PServer()
                     .thenRun(() -> {
-                        nodeService.registerMessageHandler(-1, this);
+                        nodeService.registerMessageHandler(EnumSet.of(
+                                MessageType.SIMPLE_SIGN_INIT,
+                                MessageType.SIMPLE_SIGN_OFFLINE,
+                                MessageType.SIMPLE_SIGN_SIGMA,
+                                MessageType.SIMPLE_SIGN_OFFLINE_REQUEST,
+                                MessageType.SIMPLE_SIGN_SIGMA_REQUEST
+                        ), this);
                         startTaskCleanup();
                         logger.info("Simple signature service initialized for node {}", nodeId);
                     });

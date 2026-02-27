@@ -78,7 +78,6 @@ public class ApplicationInitializer implements CommandLineRunner {
         logger.info("--- Initializing CGGMP services ---");
         try {
             cggmpSignatureService.initialize();
-            cggmpAuxService.init(Constants.NODES_COUNT);
             cggmpAuxService.init(Constants.NODES_COUNT)
                     .thenRun(() -> {
                         logger.info("Initializing CGGMP signature service...");

@@ -7,6 +7,16 @@ import java.security.SecureRandom;
 
 public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
     public static ZKSetup generate(int bitLength) {
+        InternalSetup setup = generateInternal(bitLength);
+        return new ZKSetup(setup.hatN, setup.h1, setup.h2);
+    }
+
+    public static ZKSetupWithLambda generateWithLambda(int bitLength) {
+        InternalSetup setup = generateInternal(bitLength);
+        return new ZKSetupWithLambda(new ZKSetup(setup.hatN, setup.h1, setup.h2), setup.lambda);
+    }
+
+    private static InternalSetup generateInternal(int bitLength) {
         SecureRandom rnd = new SecureRandom();
         BigInteger p = generateSafePrime(bitLength / 2, rnd);
         BigInteger q = generateSafePrime(bitLength / 2, rnd);
@@ -24,7 +34,36 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
         h1 = h1.modPow(BigInteger.TWO, hatN);
         h2 = h2.modPow(BigInteger.TWO, hatN);
 
-        return new ZKSetup(hatN, h1, h2);
+        BigInteger pMinus1 = p.subtract(BigInteger.ONE);
+        BigInteger qMinus1 = q.subtract(BigInteger.ONE);
+        BigInteger lambda = lcm(pMinus1, qMinus1);
+
+        return new InternalSetup(hatN, h1, h2, lambda);
+    }
+
+    private static BigInteger lcm(BigInteger a, BigInteger b) {
+        return a.divide(a.gcd(b)).multiply(b);
+    }
+
+    private record InternalSetup(BigInteger hatN, BigInteger h1, BigInteger h2, BigInteger lambda) {
+    }
+
+    public static final class ZKSetupWithLambda {
+        private final ZKSetup zk;
+        private final BigInteger lambda;
+
+        public ZKSetupWithLambda(ZKSetup zk, BigInteger lambda) {
+            this.zk = zk;
+            this.lambda = lambda;
+        }
+
+        public ZKSetup zk() {
+            return zk;
+        }
+
+        public BigInteger lambda() {
+            return lambda;
+        }
     }
 
     private static BigInteger sampleUnit(BigInteger hatN, SecureRandom rnd) {

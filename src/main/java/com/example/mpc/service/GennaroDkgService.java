@@ -106,7 +106,12 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     public CompletableFuture<Void> init() {
         return nodeService.startP2PServer()
                 .thenRun(() -> {
-                    nodeService.registerMessageHandler(-1, this);
+                    nodeService.registerMessageHandler(EnumSet.of(
+                            MessageType.GENNARO_COMMITMENT,
+                            MessageType.GENNARO_SHARE,
+                            MessageType.GENNARO_PUBLIC_KEY_PART,
+                            MessageType.GENNARO_DKG_INIT
+                    ), this);
                     logger.info("Gennaro DKG service initialized successfully for node {}", nodeId);
                 })
                 .exceptionally(ex -> {

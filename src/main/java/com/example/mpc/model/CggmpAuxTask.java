@@ -14,7 +14,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class CggmpAuxTask {
-    public static final long DEFAULT_TIMEOUT_MS = Constants.DKG_TASK_TIMEOUT_MS;
+    public static final long DEFAULT_TIMEOUT_MS = Constants.AUX_TASK_TIMEOUT_MS;
 
     public final String taskId;
     public final String executionId;

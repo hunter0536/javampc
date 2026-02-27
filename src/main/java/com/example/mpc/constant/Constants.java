@@ -61,6 +61,11 @@ public class Constants {
      * 整个 DKG 任务的最长执行时间
      */
     public static long DKG_TASK_TIMEOUT_MS = 120000;
+    /**
+     * AUX 任务默认超时时间（毫秒）
+     * AUX 过程包含 Paillier 生成，通常远慢于 DKG
+     */
+    public static long AUX_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 
     // ==================== DKG 协议重试参数 ====================
 

@@ -30,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -48,7 +49,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class CggmpAuxService implements NodeService.MessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpAuxService.class);
     private final SecureRandom secureRandom = new SecureRandom();
-    private static final ExecutorService auxExecutorService = ThreadPoolUtil.getComputationThreadPool();
+    private static final ExecutorService auxExecutorService = ThreadPoolUtil.getAuxThreadPool();
     private static final BiPrimeProofValidator BI_PRIME_VALIDATOR = new BiPrimeProofValidator();
 
     @Autowired
@@ -70,12 +71,37 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     private long auxAutoCheckIntervalSeconds;
 
     private final Map<String, CggmpAuxTask> auxTasks = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Integer, Boolean> auxStatus = new ConcurrentHashMap<>();
+    private static final class AuxStatus {
+        final boolean hasAux;
+        final long tsMs;
+
+        AuxStatus(boolean hasAux, long tsMs) {
+            this.hasAux = hasAux;
+            this.tsMs = tsMs;
+        }
+    }
+
+    private final ConcurrentHashMap<Integer, AuxStatus> auxStatus = new ConcurrentHashMap<>();
     private final AtomicBoolean auxAutoTriggered = new AtomicBoolean(false);
     private final AtomicBoolean auxAutoCheckRunning = new AtomicBoolean(false);
 
     private final int nodesCount = Constants.NODES_COUNT;
     private java.util.concurrent.ScheduledExecutorService auxScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+
+    private static final class PendingMsg {
+        final int senderId;
+        final Object data;
+        final MessageType type;
+
+        PendingMsg(int senderId, Object data, MessageType type) {
+            this.senderId = senderId;
+            this.data = data;
+            this.type = type;
+        }
+    }
+
+    private final ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<PendingMsg>> pendingAuxMessages =
+            new ConcurrentHashMap<>();
 
     private volatile PaillierEncryption auxPaillier;
     private volatile BigInteger auxHatN;
@@ -85,7 +111,14 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     public CompletableFuture<Void> init(int nodesCount) {
         return nodeService.startP2PServer()
                 .thenRun(() -> {
-                    nodeService.registerMessageHandler(-1, this);
+                    nodeService.registerMessageHandler(EnumSet.of(
+                            MessageType.CGGMP_AUX_INIT,
+                            MessageType.CGGMP_AUX_R1,
+                            MessageType.CGGMP_AUX_R1_ECHO,
+                            MessageType.CGGMP_AUX_R2,
+                            MessageType.CGGMP_AUX_R3,
+                            MessageType.CGGMP_AUX_STATUS
+                    ), this);
                     logger.info("CGGMP AUX service initialized successfully for node {} with {} total nodes", nodeId, nodesCount);
                 })
                 .exceptionally(ex -> {
@@ -120,7 +153,6 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         try {
             int leaderId = resolveAuxAutoLeaderId();
 
-            auxStatus.clear();
             boolean hasAux = loadLatestAuxInfo(nodeId) != null;
             broadcastAuxStatus(hasAux);
 
@@ -139,13 +171,14 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             asyncStarted = true;
             waitForAuxStatusAsync()
                     .thenRun(() -> {
+                        long nowMs = System.currentTimeMillis();
                         List<Integer> missing = new ArrayList<>();
                         List<Integer> noAux = new ArrayList<>();
                         for (int id = 1; id <= nodesCount; id++) {
-                            Boolean present = auxStatus.get(id);
-                            if (present == null) {
+                            AuxStatus status = auxStatus.get(id);
+                            if (status == null || nowMs - status.tsMs > Constants.AUX_STATUS_WAIT_MS) {
                                 missing.add(id);
-                            } else if (!present) {
+                            } else if (!status.hasAux) {
                                 noAux.add(id);
                             }
                         }
@@ -201,12 +234,28 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     }
 
     private boolean hasActiveAuxTask() {
+        pruneStaleAuxTasks();
         for (CggmpAuxTask task : auxTasks.values()) {
             if (task != null && task.status.get() == com.example.mpc.enums.TaskStatus.IN_PROGRESS) {
                 return true;
             }
         }
         return false;
+    }
+
+    private void pruneStaleAuxTasks() {
+        for (var it = auxTasks.entrySet().iterator(); it.hasNext(); ) {
+            var entry = it.next();
+            CggmpAuxTask task = entry.getValue();
+            if (task == null) continue;
+            if (task.status.get() == com.example.mpc.enums.TaskStatus.IN_PROGRESS && task.isTimeout()) {
+                task.fail("AUX task timeout");
+                task.lastErrorEvidence = buildAuxEvidence(task);
+                logger.warn("AUX task timed out and will be cleared: taskId={}, executionId={}",
+                        task.taskId, task.executionId);
+                it.remove();
+            }
+        }
     }
 
     private AuxInfo loadLatestAuxInfo(int nodeIdVal) {
@@ -229,7 +278,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     }
 
     private void broadcastAuxStatus(boolean hasAux) {
-        auxStatus.put(nodeId, hasAux);
+        auxStatus.put(nodeId, new AuxStatus(hasAux, System.currentTimeMillis()));
         Map<String, Object> msg = new HashMap<>();
         msg.put("senderId", nodeId);
         msg.put("hasAux", hasAux);
@@ -280,6 +329,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         if (!task.start()) {
             return CompletableFuture.completedFuture(null);
         }
+        drainPending(taskId);
 
         CompletableFuture<Void> flow = nodeService.waitForNetworkReady()
                 .thenCompose(v -> {
@@ -333,7 +383,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         });
     }
 
-    private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
+    private CompletableFuture<Void> waitForLatchAsync(CggmpAuxTask task, CountDownLatch latch, long timeoutSeconds, String label) {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds);
         CompletableFuture<Void> future = new CompletableFuture<>();
         ScheduledFuture<?> tick = auxScheduler.scheduleAtFixedRate(() -> {
@@ -342,11 +392,28 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                 return;
             }
             if (System.currentTimeMillis() >= deadline) {
-                future.completeExceptionally(new RuntimeException("Timeout waiting for " + label));
+                task.lastErrorEvidence = buildAuxEvidence(task);
+                future.completeExceptionally(new RuntimeException("Timeout waiting for " + label + " (taskId=" + task.taskId + ")"));
             }
         }, 0, 50, TimeUnit.MILLISECONDS);
         future.whenComplete((v, ex) -> tick.cancel(false));
         return future;
+    }
+
+    private java.util.Map<String, Object> buildAuxEvidence(CggmpAuxTask task) {
+        java.util.Map<String, Object> ev = new java.util.HashMap<>();
+        ev.put("taskId", task.taskId);
+        ev.put("executionId", task.executionId);
+        ev.put("participants", task.participants);
+        ev.put("commitReceived", task.commitHashes.size());
+        ev.put("echoReceived", task.echoReceived.size());
+        ev.put("revealReceived", task.peerHatN.size());
+        ev.put("proofsReceived", task.peerModProofs.size());
+        ev.put("commitLatch", task.commitLatch.getCount());
+        ev.put("echoLatch", task.echoLatch.getCount());
+        ev.put("revealLatch", task.revealLatch.getCount());
+        ev.put("proofLatch", task.proofLatch.getCount());
+        return ev;
     }
 
     private static byte[] randomBytes(int len) {
@@ -355,41 +422,22 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         return out;
     }
 
-    private BigInteger[] generateRefreshPedersen(int bitLength) {
-        BigInteger p;
-        BigInteger q;
-        do {
-            p = BigInteger.probablePrime(bitLength / 2, secureRandom);
-            q = BigInteger.probablePrime(bitLength / 2, secureRandom);
-        } while (p.equals(q) || !p.isProbablePrime(10) || !q.isProbablePrime(10));
-
-        BigInteger N = p.multiply(q);
-        BigInteger Lambda = p.subtract(BigInteger.ONE).multiply(q.subtract(BigInteger.ONE));
-        BigInteger s;
-        do {
-            s = new BigInteger(bitLength, secureRandom);
-        } while (s.compareTo(N) >= 0);
-
-        BigInteger t = s.modPow(BigInteger.TWO, N);
-        BigInteger hatN = s.modPow(BigInteger.TWO, N);
-
-        return new BigInteger[]{hatN, s, t, Lambda};
-    }
-
     private CompletableFuture<Void> runAuxProtocolAsync(CggmpAuxTask task) {
         final long auxStartNs = System.nanoTime();
+        logger.debug("AUX protocol starting: taskId={}, executionId={}", task.taskId, task.executionId);
         return CompletableFuture.supplyAsync(() -> {
+            logger.debug("AUX protocol running: taskId={}, executionId={}", task.taskId, task.executionId);
             long paillierStart = System.nanoTime();
             PaillierEncryption paillier = new PaillierEncryption(auxPaillierBits);
             logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, auxPaillierBits);
             task.paillier = paillier;
             long pedStart = System.nanoTime();
-            BigInteger[] ped = generateRefreshPedersen(paillier.getPublicKeyInfo().bitLength);
+            ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength);
             logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength);
-            task.hatN = ped[0];
-            task.s = ped[1];
-            task.t = ped[2];
-            task.pedersenLambda = ped[3];
+            task.hatN = ped.zk().hatN();
+            task.s = ped.zk().h1();
+            task.t = ped.zk().h2();
+            task.pedersenLambda = ped.lambda();
 
             byte[] rho_i = randomBytes(32);
             byte[] u_i = randomBytes(32);
@@ -415,7 +463,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                     "CGGMP_AUX_R1_RBC");
             return new AuxContext(task, paillier, prmProof, rho_i, u_i);
         }, auxExecutorService)
-                .thenCompose(ctx -> waitForLatchAsync(task.commitLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1")
+                .thenCompose(ctx -> waitForLatchAsync(task, task.commitLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1")
                         .exceptionally(ex -> {
                             fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1, Map.of(
                                     "taskId", task.taskId,
@@ -436,7 +484,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                     fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
                             "CGGMP_AUX_R1_ECHO");
                 }, auxExecutorService).thenApply(v -> ctx))
-                .thenCompose(ctx -> waitForLatchAsync(task.echoLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1 echo")
+                .thenCompose(ctx -> waitForLatchAsync(task, task.echoLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1 echo")
                         .exceptionally(ex -> {
                             String echo = computeAuxEchoHash(task);
                             if (echo != null) {
@@ -466,7 +514,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                     fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R2, r2)),
                             "CGGMP_AUX_R2");
                 }, auxExecutorService).thenApply(v -> ctx))
-                .thenCompose(ctx -> waitForLatchAsync(task.revealLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R2")
+                .thenCompose(ctx -> waitForLatchAsync(task, task.revealLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R2")
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
                     byte[] rho = xorAuxRho(task);
@@ -498,7 +546,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                     fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R3, r3)),
                             "CGGMP_AUX_R3");
                 }, auxExecutorService).thenApply(v -> ctx))
-                .thenCompose(ctx -> waitForLatchAsync(task.proofLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R3")
+                .thenCompose(ctx -> waitForLatchAsync(task, task.proofLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R3")
                         .thenApply(v -> ctx))
                 .thenRunAsync(() -> {
                     saveAuxInfo(task);
@@ -568,6 +616,8 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                 participants.add(n.intValue());
             }
         }
+        logger.debug("AUX INIT received: taskId={}, executionId={}, initiatorId={}, senderId={}, participants={}",
+                taskId, executionId, initiatorId, senderId, participants);
         if (participants.isEmpty()) {
             return;
         }
@@ -578,8 +628,11 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         if (!task.start()) {
             return;
         }
+        drainPending(taskId);
         try {
             nodeService.waitForNetworkReady()
+                    .thenRun(() -> logger.debug("AUX INIT network ready: taskId={}, executionId={}",
+                            task.taskId, task.executionId))
                     .thenCompose(v -> runAuxProtocolAsync(task))
                     .whenComplete((v, ex) -> {
                         if (ex == null) {
@@ -609,6 +662,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         int senderIdVal = senderValue instanceof Number n ? n.intValue() : senderId;
         CggmpAuxTask task = auxTasks.get(taskId);
         if (task == null || !task.status.get().isRunning()) {
+            enqueuePending(taskId, new PendingMsg(senderId, data, MessageType.CGGMP_AUX_R1));
             return;
         }
         task.commitHashes.put(senderIdVal, vCommit);
@@ -632,6 +686,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         }
         CggmpAuxTask task = auxTasks.get(taskId);
         if (task == null) {
+            enqueuePending(taskId, new PendingMsg(senderId, data, MessageType.CGGMP_AUX_R1_ECHO));
             return;
         }
         if (!executionId.equals(task.executionId)) {
@@ -668,6 +723,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         int senderIdVal = senderValue instanceof Number n ? n.intValue() : senderId;
         CggmpAuxTask task = auxTasks.get(taskId);
         if (task == null || !task.status.get().isRunning()) {
+            enqueuePending(taskId, new PendingMsg(senderId, data, MessageType.CGGMP_AUX_R2));
             return;
         }
         task.peerHatN.put(senderIdVal, new BigInteger(hatNStr, 16));
@@ -693,8 +749,8 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             return;
         }
         CggmpAuxTask task = auxTasks.get(taskId);
-        if (task == null) {
-            logger.warn("AUX R3 ignored: task not found (taskId={}, senderId={})", taskId, senderNodeId);
+        if (task == null || !task.status.get().isRunning()) {
+            enqueuePending(taskId, new PendingMsg(senderId, data, MessageType.CGGMP_AUX_R3));
             return;
         }
         if (!executionId.equals(task.executionId)) {
@@ -749,7 +805,36 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             return;
         }
         boolean hasAux = Boolean.TRUE.equals(hasAuxValue);
-        auxStatus.put(senderId, hasAux);
+        long ts = System.currentTimeMillis();
+        Object tsValue = dataMap.get("ts");
+        if (tsValue instanceof Number n) {
+            ts = n.longValue();
+        }
+        auxStatus.put(senderId, new AuxStatus(hasAux, ts));
+    }
+
+    private void enqueuePending(String taskId, PendingMsg msg) {
+        if (taskId == null) return;
+        pendingAuxMessages.computeIfAbsent(taskId, id -> new java.util.concurrent.ConcurrentLinkedQueue<>()).add(msg);
+    }
+
+    private void drainPending(String taskId) {
+        java.util.concurrent.ConcurrentLinkedQueue<PendingMsg> q = pendingAuxMessages.get(taskId);
+        if (q == null || q.isEmpty()) {
+            return;
+        }
+        PendingMsg msg;
+        while ((msg = q.poll()) != null) {
+            switch (msg.type) {
+                case CGGMP_AUX_R1 -> handleCggmpAuxR1(msg.senderId, msg.data);
+                case CGGMP_AUX_R1_ECHO -> handleCggmpAuxR1Echo(msg.senderId, msg.data);
+                case CGGMP_AUX_R2 -> handleCggmpAuxR2(msg.senderId, msg.data);
+                case CGGMP_AUX_R3 -> handleCggmpAuxR3(msg.senderId, msg.data);
+                default -> {
+                }
+            }
+        }
+        pendingAuxMessages.remove(taskId, q);
     }
 
     private void saveAuxInfo(CggmpAuxTask task) {

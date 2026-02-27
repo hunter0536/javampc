@@ -99,6 +99,7 @@ public class NodeService {
     private final ConcurrentHashMap<Integer, NodeInfo> nodes = new ConcurrentHashMap<>();
     private final AtomicBoolean discoveryRunning = new AtomicBoolean(false);
     private final ConcurrentHashMap<Integer, java.util.concurrent.CopyOnWriteArrayList<MessageHandler>> messageHandlers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<MessageType, java.util.concurrent.CopyOnWriteArrayList<MessageHandler>> messageTypeHandlers = new ConcurrentHashMap<>();
     private ScheduledExecutorService discoveryScheduler;
     private ScheduledExecutorService retryScheduler = Executors.newSingleThreadScheduledExecutor();
     private final ConcurrentHashMap<String, java.util.Set<Integer>> reliablePending = new ConcurrentHashMap<>();
@@ -733,6 +734,10 @@ public class NodeService {
 
     private CompletableFuture<Void> dispatchToHandlers(int senderId, Message message) {
         var combinedHandlers = new java.util.LinkedHashSet<MessageHandler>();
+        var typeHandlers = messageTypeHandlers.get(message.type);
+        if (typeHandlers != null) {
+            combinedHandlers.addAll(typeHandlers);
+        }
         var senderHandlers = messageHandlers.get(message.senderId);
         if (senderHandlers != null) {
             combinedHandlers.addAll(senderHandlers);
@@ -742,7 +747,8 @@ public class NodeService {
             combinedHandlers.addAll(globalHandlers);
         }
         if (combinedHandlers.isEmpty()) {
-            logger.warn("No handlers registered for message from node {} (keys={})", message.senderId, messageHandlers.keySet());
+            logger.warn("No handlers registered for message type {} from node {} (keys={}, typeKeys={})",
+                    message.type, message.senderId, messageHandlers.keySet(), messageTypeHandlers.keySet());
             return CompletableFuture.completedFuture(null);
         }
         List<CompletableFuture<Void>> futures = new ArrayList<>();
@@ -764,6 +770,29 @@ public class NodeService {
      */
     public void registerMessageHandler(int nodeId, MessageHandler handler) {
         messageHandlers.computeIfAbsent(nodeId, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(handler);
+    }
+
+    /**
+     * 注册消息处理器（按消息类型）
+     *
+     * @param type    消息类型
+     * @param handler 消息处理器
+     */
+    public void registerMessageHandler(MessageType type, MessageHandler handler) {
+        messageTypeHandlers.computeIfAbsent(type, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(handler);
+    }
+
+    /**
+     * 注册消息处理器（多个消息类型）
+     *
+     * @param types   消息类型集合
+     * @param handler 消息处理器
+     */
+    public void registerMessageHandler(java.util.Set<MessageType> types, MessageHandler handler) {
+        if (types == null || types.isEmpty()) return;
+        for (MessageType type : types) {
+            registerMessageHandler(type, handler);
+        }
     }
 
     /**
@@ -817,6 +846,10 @@ public class NodeService {
                 return;
             }
             try {
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Network ready check: discoveredPeers={}, requiredPeers={}",
+                            nodes.size(), Math.max(0, nodesCount - 1));
+                }
                 if (nodes.size() < nodesCount - 1) {
                     logger.info("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
                     return;
