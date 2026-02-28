@@ -911,7 +911,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
 
         Map<Integer, PiSchProof> schProofs = task.round2SchProofs.get(senderNodeId);
         if (schProofs == null) {
-            schProofs = decodeSchProofMap(schMap);
+            schProofs = CggmpCodecUtils.decodeSchProofMap(schMap);
             task.round2SchProofs.putIfAbsent(senderNodeId, schProofs);
         }
         if (schProofs.size() != threshold) {
@@ -1541,13 +1541,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     }
 
 
-    private Map<String, Object> encodeSchProofMap(Map<Integer, PiSchProof> map) {
-        Map<String, Object> out = new HashMap<>();
-        for (Map.Entry<Integer, PiSchProof> e : map.entrySet()) {
-            out.put(String.valueOf(e.getKey()), CggmpCodecUtils.encodePiSchProof(e.getValue()));
-        }
-        return out;
-    }
 
     private Map<String, Object> encodeSchProof(PiSchProof proof) {
         return CggmpCodecUtils.encodePiSchProof(proof);
@@ -1555,15 +1548,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
 
     private PiSchProof decodeSchProof(Map<?, ?> map) {
         return CggmpCodecUtils.decodePiSchProof(map);
-    }
-
-    private Map<Integer, PiSchProof> decodeSchProofMap(Map<?, ?> map) {
-        Map<Integer, PiSchProof> out = new HashMap<>();
-        for (Map.Entry<?, ?> e : map.entrySet()) {
-            int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, CggmpCodecUtils.decodePiSchProof((Map<?, ?>) e.getValue()));
-        }
-        return out;
     }
 
     private static byte[] buildDkgContext(String taskId, String executionId, byte[] rid, int senderId, String label) {

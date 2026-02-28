@@ -843,13 +843,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return out;
     }
 
-    private Map<String, Object> encodeSchProofMap(Map<Integer, PiSchProof> map) {
-        Map<String, Object> out = new HashMap<>();
-        for (Map.Entry<Integer, PiSchProof> e : map.entrySet()) {
-            out.put(String.valueOf(e.getKey()), CggmpCodecUtils.encodePiSchProof(e.getValue()));
-        }
-        return out;
-    }
 
     private Map<String, Object> encodeSchProof(PiSchProof proof) {
         return CggmpCodecUtils.encodePiSchProof(proof);
@@ -857,15 +850,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     private PiSchProof decodeSchProof(Map<?, ?> map) {
         return CggmpCodecUtils.decodePiSchProof(map);
-    }
-
-    private Map<Integer, PiSchProof> decodeSchProofMap(Map<?, ?> map) {
-        Map<Integer, PiSchProof> out = new HashMap<>();
-        for (Map.Entry<?, ?> e : map.entrySet()) {
-            int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, CggmpCodecUtils.decodePiSchProof((Map<?, ?>) e.getValue()));
-        }
-        return out;
     }
 
     private ECPoint sumPresignGamma(Gg20SignatureTask task) {

@@ -352,7 +352,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         data.put("taskId", task.taskId);
         data.put("senderId", nodeId);
         data.put("C", JsonUtils.encodeBigIntegerMap(r3.C));
-        data.put("schProofs", encodeSchProofMap(r3.schProofs));
+        data.put("schProofs", CggmpCodecUtils.encodeSchProofMap(r3.schProofs));
         data.put("biPrimeProof", CggmpCodecUtils.encodeBiPrimeProof(r3.biPrimeProof));
         data.put("factorProof", CggmpCodecUtils.encodeNoSmallFactorProof(r3.factorProof));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_REFRESH_R3, data));
@@ -549,7 +549,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                 return;
             }
             Map<Integer, BigInteger> C = JsonUtils.decodeBigIntegerMap(cMap);
-            Map<Integer, PiSchProof> schProofs = decodeSchProofMap(schMap);
+            Map<Integer, PiSchProof> schProofs = CggmpCodecUtils.decodeSchProofMap(schMap);
             BiPrimeBlumProof biPrime = CggmpCodecUtils.decodeBiPrimeProof(biPrimeMap);
             NoSmallFactorProof factor = CggmpCodecUtils.decodeNoSmallFactorProof(factorMap);
 
@@ -1156,22 +1156,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         md.update((byte) (length & 0xFF));
     }
 
-    private Map<String, Object> encodeSchProofMap(Map<Integer, PiSchProof> map) {
-        Map<String, Object> out = new HashMap<>();
-        for (Map.Entry<Integer, PiSchProof> e : map.entrySet()) {
-            out.put(String.valueOf(e.getKey()), CggmpCodecUtils.encodePiSchProof(e.getValue()));
-        }
-        return out;
-    }
-
-    private Map<Integer, PiSchProof> decodeSchProofMap(Map<?, ?> map) {
-        Map<Integer, PiSchProof> out = new HashMap<>();
-        for (Map.Entry<?, ?> e : map.entrySet()) {
-            int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, CggmpCodecUtils.decodePiSchProof((Map<?, ?>) e.getValue()));
-        }
-        return out;
-    }
 
     private ECPoint sumPoints(Map<Integer, ECPoint> points) {
         ECPoint sum = Secp256k1Curve.G().getCurve().getInfinity();

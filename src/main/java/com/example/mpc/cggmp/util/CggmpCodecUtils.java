@@ -379,4 +379,21 @@ public final class CggmpCodecUtils {
     private static ECPoint fromHexPoint(String hex) {
         return Secp256k1Curve.decodePoint(HexUtils.hexToBytes(hex));
     }
+
+    public static Map<String, Object> encodeSchProofMap(Map<Integer, PiSchProof> map) {
+        Map<String, Object> out = new HashMap<>();
+        for (Map.Entry<Integer, PiSchProof> e : map.entrySet()) {
+            out.put(String.valueOf(e.getKey()), encodePiSchProof(e.getValue()));
+        }
+        return out;
+    }
+
+    public static Map<Integer, PiSchProof> decodeSchProofMap(Map<?, ?> map) {
+        Map<Integer, PiSchProof> out = new HashMap<>();
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            int key = Integer.parseInt(String.valueOf(e.getKey()));
+            out.put(key, decodePiSchProof((Map<?, ?>) e.getValue()));
+        }
+        return out;
+    }
 }
