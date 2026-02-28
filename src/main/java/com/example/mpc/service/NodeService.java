@@ -205,7 +205,7 @@ public class NodeService {
 
             try {
                 // 启动Netty服务器
-                nettyService = new NettyService(nodeId, nodePort, messageHandlers, sharedSecret,
+                nettyService = new NettyService(nodeId, nodePort, sharedSecret,
                         sslEnabled, sslCertPath, sslKeyPath, sslTrustCertPath, this::handleAck,
                         (sender, msg) -> {
                             try {
@@ -254,7 +254,7 @@ public class NodeService {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     socket.receive(packet);
                     String message = new String(packet.getData(), 0, packet.getLength());
-                    handleDiscoveryMessage(message, packet.getAddress(), packet.getPort());
+                    handleDiscoveryMessage(message, packet.getAddress());
                 }
             } catch (Exception e) {
                 if (discoveryRunning.get()) {
@@ -384,7 +384,7 @@ public class NodeService {
     /**
      * 处理发现消息
      */
-    private void handleDiscoveryMessage(String message, InetAddress address, int port) {
+    private void handleDiscoveryMessage(String message, InetAddress address) {
         if (message.startsWith("DISCOVER_NODE:")) {
             String[] parts = message.split(":");
             if (parts.length == 3) {

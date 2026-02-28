@@ -3,6 +3,7 @@ plugins {
     id 'idea'
     id 'org.springframework.boot' version '3.0.0'
     id 'io.spring.dependency-management' version '1.1.4'
+    id 'pmd'
 }
 
 group = 'com.example'
@@ -39,6 +40,13 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+pmd {
+    toolVersion = '6.55.0'
+    rulesMinimumPriority = 5
+    ruleSets = []
+    ruleSetFiles = files('config/pmd/ruleset.xml')
 }
 
 // 为每个节点创建构建任务

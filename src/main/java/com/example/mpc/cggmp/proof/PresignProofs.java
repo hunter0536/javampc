@@ -72,27 +72,21 @@ public final class PresignProofs {
     private static final int RANGE_EPS_BITS = 16;
 
     public static PiAffGProof createAffGProof(ECPoint g,
-                                              ECPoint X,
                                               BigInteger N0,
                                               BigInteger N1,
                                               BigInteger C,
-                                              BigInteger D,
-                                              BigInteger Y,
                                               BigInteger x,
                                               BigInteger y,
                                               BigInteger rho,
                                               BigInteger mu,
                                               byte[] context) {
-        return createAffGProof(g, X, N0, N1, C, D, Y, x, y, rho, mu, DEFAULT_KAPPA, RANGE_EPS_BITS, context);
+        return createAffGProof(g, N0, N1, C, x, y, rho, mu, DEFAULT_KAPPA, RANGE_EPS_BITS, context);
     }
 
     public static PiAffGProof createAffGProof(ECPoint g,
-                                              ECPoint X,
                                               BigInteger N0,
                                               BigInteger N1,
                                               BigInteger C,
-                                              BigInteger D,
-                                              BigInteger Y,
                                               BigInteger x,
                                               BigInteger y,
                                               BigInteger rho,
@@ -100,16 +94,13 @@ public final class PresignProofs {
                                               int kappa,
                                               int epsBits,
                                               byte[] context) {
-        return createAffGProofInternal(g, X, N0, N1, C, D, Y, x, y, rho, mu, false, kappa, epsBits, context);
+        return createAffGProofInternal(g, N0, N1, C, x, y, rho, mu, false, kappa, epsBits, context);
     }
 
     public static PiAffGProof createAffGProofNegY(ECPoint g,
-                                                  ECPoint X,
                                                   BigInteger N0,
                                                   BigInteger N1,
                                                   BigInteger C,
-                                                  BigInteger D,
-                                                  BigInteger Y,
                                                   BigInteger x,
                                                   BigInteger y,
                                                   BigInteger rho,
@@ -117,16 +108,13 @@ public final class PresignProofs {
                                                   int kappa,
                                                   int epsBits,
                                                   byte[] context) {
-        return createAffGProofInternal(g, X, N0, N1, C, D, Y, x, y, rho, mu, true, kappa, epsBits, context);
+        return createAffGProofInternal(g, N0, N1, C, x, y, rho, mu, true, kappa, epsBits, context);
     }
 
     private static PiAffGProof createAffGProofInternal(ECPoint g,
-                                                       ECPoint X,
                                                        BigInteger N0,
                                                        BigInteger N1,
                                                        BigInteger C,
-                                                       BigInteger D,
-                                                       BigInteger Y,
                                                        BigInteger x,
                                                        BigInteger y,
                                                        BigInteger rho,

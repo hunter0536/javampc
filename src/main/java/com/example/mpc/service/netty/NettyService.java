@@ -37,7 +37,6 @@ public class NettyService {
 
     private final int nodeId;
     private final int port;
-    private final Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers;
     private final java.util.function.BiConsumer<Integer, String> ackHandler;
     private final java.util.function.BiFunction<Integer, NodeService.Message, CompletableFuture<Void>> inboundHandler;
     private final String sharedSecret;
@@ -56,7 +55,6 @@ public class NettyService {
 
     public NettyService(int nodeId,
                         int port,
-                        Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers,
                         String sharedSecret,
                         boolean sslEnabled,
                         String certPath,
@@ -66,7 +64,6 @@ public class NettyService {
                         java.util.function.BiFunction<Integer, NodeService.Message, CompletableFuture<Void>> inboundHandler) {
         this.nodeId = nodeId;
         this.port = port;
-        this.messageHandlers = messageHandlers;
         this.sharedSecret = sharedSecret;
         this.sslEnabled = sslEnabled;
         this.certPath = certPath;
@@ -99,7 +96,7 @@ public class NettyService {
                             }
                             pipeline.addLast(new ObjectEncoder());
                             pipeline.addLast(new ObjectDecoder(Integer.MAX_VALUE, ClassResolvers.cacheDisabled(null)));
-                            pipeline.addLast(new ServerHandler(NettyService.this, messageHandlers, sharedSecret, sslEnabled));
+                            pipeline.addLast(new ServerHandler(NettyService.this, sharedSecret, sslEnabled));
                         }
                     })
                     .option(ChannelOption.SO_BACKLOG, 128)

@@ -243,18 +243,6 @@ public class CggmpController {
         return out.toString();
     }
 
-    private static java.math.BigInteger parseHexBigIntegerOrNull(String hex) {
-        if (hex == null || hex.isBlank()) {
-            return null;
-        }
-        try {
-            String cleaned = hex.startsWith("0x") || hex.startsWith("0X") ? hex.substring(2) : hex;
-            return new java.math.BigInteger(cleaned, 16);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
     /**
      * 根据UUID查询对应的CGGMP协议DKG任务是否执行完成
      *

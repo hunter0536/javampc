@@ -6,22 +6,17 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Map;
-
 public class ServerHandler extends SimpleChannelInboundHandler<Object> {
     private static final Logger logger = LoggerFactory.getLogger(ServerHandler.class);
 
     private final NettyService nettyService;
-    private final Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers;
     private final String sharedSecret;
     private final boolean sslEnabled;
 
     public ServerHandler(NettyService nettyService,
-                         Map<Integer, ? extends java.util.List<NodeService.MessageHandler>> messageHandlers,
                          String sharedSecret,
                          boolean sslEnabled) {
         this.nettyService = nettyService;
-        this.messageHandlers = messageHandlers;
         this.sharedSecret = sharedSecret;
         this.sslEnabled = sslEnabled;
     }

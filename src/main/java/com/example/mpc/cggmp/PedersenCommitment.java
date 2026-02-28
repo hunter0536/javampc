@@ -3,8 +3,6 @@ package com.example.mpc.cggmp;
 import org.bouncycastle.jce.interfaces.ECPublicKey;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.math.ec.ECPoint;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.security.KeyPair;
@@ -14,8 +12,6 @@ import java.security.Security;
 import java.security.spec.ECGenParameterSpec;
 
 public class PedersenCommitment {
-    private static final Logger logger = LoggerFactory.getLogger(PedersenCommitment.class);
-
     private ECPoint G;
     private ECPoint H;
     private BigInteger curveOrder;

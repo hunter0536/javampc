@@ -1,14 +1,9 @@
 package com.example.mpc.cggmp;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.math.BigInteger;
 import java.security.SecureRandom;
 
 public class PaillierEncryption {
-    private static final Logger logger = LoggerFactory.getLogger(PaillierEncryption.class);
-
     private BigInteger n;
     private BigInteger nSquared;
     private BigInteger g;
@@ -20,7 +15,6 @@ public class PaillierEncryption {
 
     private static final int KEY_SIZE = 1024;
     private final int keySize;
-    private static final BigInteger TWO = BigInteger.valueOf(2);
 
     public PaillierEncryption() {
         this(KEY_SIZE);

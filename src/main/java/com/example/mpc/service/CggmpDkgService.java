@@ -1034,7 +1034,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             task.lastComplaintOffenderId = offenderId;
             task.lastComplaintEvidence = new HashMap<>();
             task.lastComplaintEvidence.putAll((Map<String, Object>) ev);
-            if (!validateDkgComplaintEvidence(task, reason, ev)) {
+            if (!validateDkgComplaintEvidence(reason)) {
                 logger.warn("Invalid DKG complaint evidence from node {}", senderId);
                 if (nodeId == task.initiatorId) {
                     attemptExcludeAndRestartDkg(task, senderId, "Invalid complaint evidence");
@@ -1053,7 +1053,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         }
     }
 
-    private boolean validateDkgComplaintEvidence(CggmpDkgTask task, String reason, Map<?, ?> evidence) {
+    private boolean validateDkgComplaintEvidence(String reason) {
         try {
             if (reason == null) {
                 return false;
@@ -1309,10 +1309,16 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     }
 
     private Object maybeCompressDkgPayload(MessageType type, Object data) {
+        if (type == null) {
+            return data;
+        }
         return data;
     }
 
     private Object maybeDecompressDkgPayload(MessageType type, byte[] bytes) {
+        if (type == null || bytes == null || bytes.length == 0) {
+            return null;
+        }
         return null;
     }
 

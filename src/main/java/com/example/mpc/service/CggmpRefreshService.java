@@ -988,49 +988,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         }
     }
 
-    private String encodeObjectAsJson(Object value) {
-        if (value == null) {
-            return "null";
-        }
-        if (value instanceof Map<?, ?> map) {
-            StringBuilder sb = new StringBuilder();
-            sb.append("{");
-            boolean first = true;
-            java.util.List<String> keys = new java.util.ArrayList<>();
-            for (Object k : map.keySet()) {
-                keys.add(String.valueOf(k));
-            }
-            java.util.Collections.sort(keys);
-            for (String k : keys) {
-                if (!first) sb.append(",");
-                first = false;
-                sb.append("\"").append(JsonUtils.escapeJson(k)).append("\":");
-                sb.append(encodeObjectAsJson(map.get(k)));
-            }
-            sb.append("}");
-            return sb.toString();
-        }
-        if (value instanceof Iterable<?> it) {
-            StringBuilder sb = new StringBuilder();
-            sb.append("[");
-            boolean first = true;
-            for (Object o : it) {
-                if (!first) sb.append(",");
-                first = false;
-                sb.append(encodeObjectAsJson(o));
-            }
-            sb.append("]");
-            return sb.toString();
-        }
-        if (value instanceof String s) {
-            return "\"" + JsonUtils.escapeJson(s) + "\"";
-        }
-        if (value instanceof Number || value instanceof Boolean) {
-            return String.valueOf(value);
-        }
-        return "\"" + JsonUtils.escapeJson(String.valueOf(value)) + "\"";
-    }
-
     private void attemptExcludeAndRestartRefresh(CggmpRefreshTask task, int offenderId, String reason) {
         if (!task.participants.contains(offenderId)) {
             task.fail("Refresh complaint (offender not participant): " + reason);
@@ -1166,6 +1123,9 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
 
 
     private Object maybeDecompressDkgPayload(MessageType type, byte[] bytes) {
+        if (type == null || bytes == null || bytes.length == 0) {
+            return null;
+        }
         return null;
     }
 
