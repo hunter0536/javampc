@@ -14,6 +14,7 @@ import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.sign.Secp256k1Curve;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.JsonUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.KeyShareDao;
@@ -994,7 +995,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
 
     private void logComplaintToFile(String taskId, int senderId, Integer offenderId, String reason, Object evidence) {
         try {
-            String evidenceJson = evidence == null ? null : encodeObjectAsJson(evidence);
+            String evidenceJson = evidence == null ? null : JsonUtils.encodeAsJson(evidence);
             complaintDao.save(System.currentTimeMillis(), taskId, senderId, offenderId, reason, evidenceJson);
         } catch (Exception e) {
             logger.warn("Failed to persist complaint: {}", e.getMessage());
@@ -1008,12 +1009,12 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             StringBuilder sb = new StringBuilder();
             sb.append('{');
             sb.append("\"ts\":").append(System.currentTimeMillis()).append(',');
-            sb.append("\"taskId\":\"").append(escapeJson(taskId)).append("\",");
+            sb.append("\"taskId\":\"").append(JsonUtils.escapeJson(taskId)).append("\",");
             sb.append("\"senderId\":").append(senderId).append(',');
             sb.append("\"offenderId\":").append(offenderId == null ? "null" : offenderId).append(',');
-            sb.append("\"reason\":\"").append(escapeJson(reason)).append("\"");
+            sb.append("\"reason\":\"").append(JsonUtils.escapeJson(reason)).append("\"");
             if (evidence != null) {
-                sb.append(",\"evidence\":").append(encodeObjectAsJson(evidence));
+                sb.append(",\"evidence\":").append(JsonUtils.encodeAsJson(evidence));
             }
             sb.append('}');
             String line = sb.append(System.lineSeparator()).toString();
@@ -1039,7 +1040,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             for (String k : keys) {
                 if (!first) sb.append(",");
                 first = false;
-                sb.append("\"").append(escapeJson(k)).append("\":");
+                sb.append("\"").append(JsonUtils.escapeJson(k)).append("\":");
                 sb.append(encodeObjectAsJson(map.get(k)));
             }
             sb.append("}");
@@ -1058,42 +1059,12 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             return sb.toString();
         }
         if (value instanceof String s) {
-            return "\"" + escapeJson(s) + "\"";
+            return "\"" + JsonUtils.escapeJson(s) + "\"";
         }
         if (value instanceof Number || value instanceof Boolean) {
             return String.valueOf(value);
         }
-        return "\"" + escapeJson(String.valueOf(value)) + "\"";
-    }
-
-    private String escapeJson(String value) {
-        if (value == null) {
-            return "";
-        }
-        StringBuilder out = new StringBuilder(value.length() + 16);
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '\\':
-                    out.append("\\\\");
-                    break;
-                case '"':
-                    out.append("\\\"");
-                    break;
-                case '\n':
-                    out.append("\\n");
-                    break;
-                case '\r':
-                    out.append("\\r");
-                    break;
-                case '\t':
-                    out.append("\\t");
-                    break;
-                default:
-                    out.append(c);
-            }
-        }
-        return out.toString();
+        return "\"" + JsonUtils.escapeJson(String.valueOf(value)) + "\"";
     }
 
     private void attemptExcludeAndRestartRefresh(CggmpRefreshTask task, int offenderId, String reason) {
