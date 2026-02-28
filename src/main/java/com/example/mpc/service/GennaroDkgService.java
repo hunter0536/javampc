@@ -2,6 +2,7 @@ package com.example.mpc.service;
 
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
@@ -139,8 +140,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                                 logger.info("Network ready, broadcasting DKG_INIT message");
                                 Map<String, Object> initData = new HashMap<>();
                                 initData.put("taskId", taskId);
-                                return retryAsync(
-                                        () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_DKG_INIT, initData)),
+                                return RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_DKG_INIT, initData)),
                                         Constants.DKG_BROADCAST_RETRY_COUNT,
                                         Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
                                         "Broadcast GENNARO_DKG_INIT");
@@ -215,8 +215,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     commitmentData.put("maskingVerificationPoints", encodedMaskingVerificationPoints);
                     return new CommitmentContext(task, commitmentData);
                 }, ThreadPoolUtil.getComputationThreadPool()))
-                .thenCompose(ctx -> retryAsync(
-                        () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, ctx.commitmentData)),
+                .thenCompose(ctx -> RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, ctx.commitmentData)),
                         Constants.DKG_BROADCAST_RETRY_COUNT,
                         Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
                         "Broadcast GENNARO_COMMITMENT")
@@ -340,8 +339,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             publicKeyData.put("taskId", taskId);
             publicKeyData.put("publicKeyPart", publicKeyPart);
 
-            return retryAsync(
-                    () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
+            return RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
                     Constants.DKG_BROADCAST_RETRY_COUNT,
                     Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
                     "Broadcast GENNARO_PUBLIC_KEY_PART")
@@ -589,34 +587,6 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         return future;
     }
 
-    private CompletableFuture<Void> retryAsync(Supplier<CompletableFuture<Void>> action,
-                                               int attempts,
-                                               long delayMs,
-                                               String label) {
-        CompletableFuture<Void> future = new CompletableFuture<>();
-        Runnable runAttempt = new Runnable() {
-            int remaining = attempts;
-
-            @Override
-            public void run() {
-                action.get().whenComplete((v, ex) -> {
-                    if (ex == null) {
-                        future.complete(null);
-                        return;
-                    }
-                    remaining--;
-                    if (remaining <= 0) {
-                        future.completeExceptionally(new RuntimeException(label + " failed", ex));
-                        return;
-                    }
-                    logger.warn("{} failed (remaining={}), retrying: {}", label, remaining, ex.getMessage());
-                    delayMs(delayMs).thenRun(this);
-                });
-            }
-        };
-        runAttempt.run();
-        return future;
-    }
 
     private static final class CommitmentContext {
         final GennaroDkgTask task;
@@ -920,8 +890,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         publicKeyData.put("taskId", taskId);
         publicKeyData.put("groupPublicKey", groupPublicKey);
 
-        return retryAsync(
-                () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
+        return RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
                 Constants.DKG_BROADCAST_RETRY_COUNT,
                 Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
                 "Broadcast GENNARO_GROUP_PUBLIC_KEY")

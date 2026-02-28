@@ -15,6 +15,7 @@ import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonUtils;
+import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.KeyShareDao;
@@ -144,34 +145,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private CompletableFuture<Void> retryAsync(java.util.function.Supplier<CompletableFuture<Void>> action,
-                                               int maxAttempts,
-                                               long delayMs,
-                                               String name) {
-        int attempts = Math.max(1, maxAttempts);
-        AtomicInteger counter = new AtomicInteger(0);
-        CompletableFuture<Void> result = new CompletableFuture<>();
-        Runnable runner = new Runnable() {
-            @Override
-            public void run() {
-                int attempt = counter.incrementAndGet();
-                action.get().whenComplete((v, ex) -> {
-                    if (ex == null) {
-                        result.complete(null);
-                        return;
-                    }
-                    if (attempt >= attempts) {
-                        result.completeExceptionally(ex);
-                        return;
-                    }
-                    logger.warn("{} failed (attempt {}/{}): {}", name, attempt, attempts, ex.getMessage());
-                    cggmpScheduler.schedule(this, Math.max(0, delayMs), TimeUnit.MILLISECONDS);
-                });
-            }
-        };
-        cggmpScheduler.execute(runner);
-        return result;
-    }
 
     private void fireAndForget(CompletableFuture<Void> future, String name) {
         future.whenComplete((v, ex) -> {
@@ -736,8 +709,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         initData.put("message", task.message);
         initData.put("initiatorId", task.initiatorId);
         initData.put("participants", new ArrayList<>(task.participants));
-        return retryAsync(
-                () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_OFFLINE_INIT, initData)),
+        return RetryUtils.retryAsync(cggmpScheduler, logger, () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_OFFLINE_INIT, initData)),
                 Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
                 Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
                 "CGGMP_SIGN_OFFLINE_INIT"
@@ -755,8 +727,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("messageHash", Base64.getEncoder().encodeToString(task.messageHash));
         data.put("initiatorId", task.initiatorId);
         data.put("participants", new ArrayList<>(task.participants));
-        return retryAsync(
-                () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_ONLINE_INIT, data)),
+        return RetryUtils.retryAsync(cggmpScheduler, logger, () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_ONLINE_INIT, data)),
                 Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
                 Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
                 "CGGMP_SIGN_ONLINE_INIT"
@@ -791,8 +762,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("encElgProofG", CggmpDkgCodec.encodePiEncElgProof(encElgG));
         data.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
         data.put("zkSetup", CggmpDkgCodec.encodeZkSetup(task.zkSetup));
-        return retryAsync(
-                () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R1, data)),
+        return RetryUtils.retryAsync(cggmpScheduler, logger, () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R1, data)),
                 Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
                 Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
                 "CGGMP_PRESIGN_R1"

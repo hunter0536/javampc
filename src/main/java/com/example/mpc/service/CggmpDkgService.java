@@ -15,6 +15,7 @@ import com.example.mpc.cggmp.sign.Secp256k1Curve;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonUtils;
+import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.AuxInfoDao;
@@ -183,8 +184,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                         return CompletableFuture.completedFuture(null);
                     }
                     return delayMs(Constants.DKG_INIT_WAIT_MS)
-                            .thenCompose(x -> retryAsync(
-                                    () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_INIT, initData)),
+                            .thenCompose(x -> RetryUtils.retryAsync(dkgScheduler, logger, () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_INIT, initData)),
                                     Constants.DKG_BROADCAST_RETRY_COUNT,
                                     Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
                                     "Broadcast CGGMP_DKG_INIT"));
@@ -1523,34 +1523,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         return future;
     }
 
-    private CompletableFuture<Void> retryAsync(java.util.function.Supplier<CompletableFuture<Void>> action,
-                                               int maxAttempts,
-                                               long delayMs,
-                                               String name) {
-        int attempts = Math.max(1, maxAttempts);
-        AtomicInteger counter = new AtomicInteger(0);
-        CompletableFuture<Void> result = new CompletableFuture<>();
-        Runnable runner = new Runnable() {
-            @Override
-            public void run() {
-                int attempt = counter.incrementAndGet();
-                action.get().whenComplete((v, ex) -> {
-                    if (ex == null) {
-                        result.complete(null);
-                        return;
-                    }
-                    if (attempt >= attempts) {
-                        result.completeExceptionally(ex);
-                        return;
-                    }
-                    logger.warn("{} failed (attempt {}/{}): {}", name, attempt, attempts, ex.getMessage());
-                    dkgScheduler.schedule(this, Math.max(0, delayMs), TimeUnit.MILLISECONDS);
-                });
-            }
-        };
-        dkgScheduler.execute(runner);
-        return result;
-    }
 
     private void fireAndForget(CompletableFuture<Void> future, String name) {
         future.whenComplete((v, ex) -> {
