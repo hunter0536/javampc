@@ -3,6 +3,7 @@ package com.example.mpc.cggmp.mta;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.*;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
+import com.example.mpc.cggmp.zk.*;
 import com.example.mpc.cggmp.zk.ZKSetup;
 
 import java.math.BigInteger;
@@ -10,19 +11,41 @@ import java.security.SecureRandom;
 import java.util.Objects;
 
 public class MtAProtocol {
-    private final PaillierRangeProofGenerator rangeGenerator = new PaillierRangeProofGenerator();
-    private final PaillierRangeProofValidator rangeValidator = new PaillierRangeProofValidator();
-    private final BiPrimeProofGenerator biPrimeProofGenerator = new BiPrimeProofGenerator();
-    private final BiPrimeProofValidator biPrimeProofValidator = new BiPrimeProofValidator();
-    private final PaillierRespondentProofGenerator respondentProofGenerator = new PaillierRespondentProofGenerator();
-    private final PaillierRespondentProofValidator respondentProofValidator = new PaillierRespondentProofValidator();
+    private RangeProofGenerator rangeGenerator;
+    private RangeProofValidator rangeValidator;
+    private BiPrimeProofGenerator biPrimeProofGenerator;
+    private BiPrimeProofValidator biPrimeProofValidator;
+    private RespondentProofGenerator respondentProofGenerator;
+    private RespondentProofValidator respondentProofValidator;
 
     private final PaillierEncryption paillier;
     private final BigInteger q;
 
     public MtAProtocol(PaillierEncryption paillier, BigInteger q) {
+        this(paillier, q,
+                new PaillierRangeProofGenerator(),
+                new PaillierRangeProofValidator(),
+                new BiPrimeProofGenerator(),
+                new BiPrimeProofValidator(),
+                new PaillierRespondentProofGenerator(),
+                new PaillierRespondentProofValidator());
+    }
+
+    public MtAProtocol(PaillierEncryption paillier, BigInteger q,
+                       RangeProofGenerator rangeGenerator,
+                       RangeProofValidator rangeValidator,
+                       BiPrimeProofGenerator biPrimeProofGenerator,
+                       BiPrimeProofValidator biPrimeProofValidator,
+                       RespondentProofGenerator respondentProofGenerator,
+                       RespondentProofValidator respondentProofValidator) {
         this.paillier = paillier;
         this.q = Objects.requireNonNull(q, "q");
+        this.rangeGenerator = rangeGenerator;
+        this.rangeValidator = rangeValidator;
+        this.biPrimeProofGenerator = biPrimeProofGenerator;
+        this.biPrimeProofValidator = biPrimeProofValidator;
+        this.respondentProofGenerator = respondentProofGenerator;
+        this.respondentProofValidator = respondentProofValidator;
         if (paillier != null) {
             validatePaillierN(paillier.getPublicKeyInfo(), q);
         }

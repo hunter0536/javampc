@@ -3,12 +3,13 @@ package com.example.mpc.cggmp.proof;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.ZkBytes;
 import com.example.mpc.cggmp.util.ZkHash;
+import com.example.mpc.cggmp.zk.RespondentProofGenerator;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
 import java.util.Objects;
 
-public class PaillierRespondentProofGenerator {
+public class PaillierRespondentProofGenerator implements RespondentProofGenerator {
     public PaillierRespondentProof createProof(PaillierRespondentEncryptionWitness witness, byte[] context) {
         Objects.requireNonNull(witness, "witness");
 
