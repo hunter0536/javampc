@@ -623,7 +623,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         return task;
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpDkgRound1(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -662,7 +661,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpDkgRound2(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -721,7 +719,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         task.round2ReceivedLatch.countDown();
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpDkgRound2Broad(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;

@@ -597,7 +597,6 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         return CompletableFuture.completedFuture(null);
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpAuxInit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;

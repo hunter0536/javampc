@@ -443,7 +443,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         return CompletableFuture.completedFuture(null);
     }
 
-    @SuppressWarnings("unchecked")
     private void handleInitMessage(int senderId, Object data) {
         Map<String, Object> map = (Map<String, Object>) data;
         String taskId = (String) map.get("taskId");
@@ -512,7 +511,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleOfflineData(int senderId, Object data) {
         Map<String, String> map = (Map<String, String>) data;
         String taskId = map.get("taskId");
@@ -636,7 +634,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleSigmaShare(int senderId, Object data) {
         Map<String, String> map = (Map<String, String>) data;
         String taskId = map.get("taskId");
@@ -684,7 +681,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         checkSigmaCondition(task);
     }
 
-    @SuppressWarnings("unchecked")
     private void handleOfflineRequest(int senderId, Object data) {
         Map<String, String> map = (Map<String, String>) data;
         String taskId = map.get("taskId");
@@ -719,7 +715,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleSigmaRequest(int senderId, Object data) {
         Map<String, String> map = (Map<String, String>) data;
         String taskId = map.get("taskId");

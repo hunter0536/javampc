@@ -213,10 +213,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 safeOffset);
     }
 
-    @SuppressWarnings("unchecked")
-
-    // Legacy MtA-based DKG handlers removed in CGGMP21 DKG.
-
     private String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
@@ -1058,7 +1054,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private static void updateDigest(MessageDigest md, Object value) {
         if (value == null) {
             md.update((byte) 0);
@@ -2117,7 +2112,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         processPresignR2(task, senderId, dataMap);
     }
 
-    @SuppressWarnings("unchecked")
     private void processPresignR2(Gg20SignatureTask task, int senderId, Map<?, ?> dataMap) {
         String gammaHex = (String) dataMap.get("Gamma");
         if (gammaHex == null) {
@@ -2300,7 +2294,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         processPresignR3(task, senderId, dataMap);
     }
 
-    @SuppressWarnings("unchecked")
     private void processPresignR3(Gg20SignatureTask task, int senderId, Map<?, ?> dataMap) {
         String deltaHex = (String) dataMap.get("delta");
         String deltaPointHex = (String) dataMap.get("Delta");
@@ -3034,7 +3027,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_EXCLUDE, data));
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignGammaCommit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -3088,7 +3080,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignGammaOpen(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -3153,7 +3144,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignMtaKaInit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -3246,7 +3236,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignMtaKaResponse(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -3306,7 +3295,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignUShare(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -3348,7 +3336,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignUOpen(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -3373,7 +3360,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignUCommit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -3398,7 +3384,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignMtaStInit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -3491,7 +3476,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignMtaStResponse(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -3551,7 +3535,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCggmpSignSShare(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;

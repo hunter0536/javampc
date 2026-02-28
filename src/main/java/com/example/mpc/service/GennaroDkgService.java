@@ -710,7 +710,6 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         }, ThreadPoolUtil.getSingleThreadPool());
     }
 
-    @SuppressWarnings("unchecked")
     private void handleCommitmentMessage(int senderId, NodeService.Message message) throws Exception {
         if (!(message.data instanceof Map)) {
             return;
