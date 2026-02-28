@@ -217,7 +217,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             throw new RuntimeException("Signature process is already in progress");
         }
 
-        String fixedGroupPublicKey = null;
+        String fixedGroupPublicKey;
         fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         String taskId = UUID.randomUUID().toString();
@@ -232,7 +232,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             throw new RuntimeException("Signature process is already in progress");
         }
 
-        String fixedGroupPublicKey = null;
+        String fixedGroupPublicKey;
         fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         Gg20SignatureTask task = new Gg20SignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount, threshold, initiatorId, participants);
@@ -241,16 +241,16 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public CompletableFuture<Void> startSignatureTask(String taskId) {
-        return startSignatureTaskInternal(taskId, true);
+        return startSignatureTaskInternal(taskId);
     }
 
-    private CompletableFuture<Void> startSignatureTaskInternal(String taskId, boolean broadcastInit) {
+    private CompletableFuture<Void> startSignatureTaskInternal(String taskId) {
         Gg20SignatureTask task = signatureTasks.get(taskId);
         if (task == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Signature task not found: " + taskId));
         }
         logger.debug("Starting CGGMP signature task {} (broadcastInit={}, initiator={}, participants={})",
-                taskId, broadcastInit, task.initiatorId, task.participants);
+                taskId, true, task.initiatorId, task.participants);
 
         if (task.isInProgress() || task.isCompleted()) {
             return CompletableFuture.failedFuture(new RuntimeException("Signature task is already in progress or completed"));
@@ -277,15 +277,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return CompletableFuture.failedFuture(e);
         }
 
-        CompletableFuture<Void> flow = (broadcastInit ? broadcastOfflineInit(task) : CompletableFuture.completedFuture(null))
+        CompletableFuture<Void> flow = (broadcastOfflineInit(task))
                 .thenCompose(v -> runOfflinePhase(task))
-                .thenCompose(v -> {
-                    if (!broadcastInit) {
-                        return CompletableFuture.completedFuture(null);
-                    }
-                    return waitForLatchAsync(task.offlineReadyLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "offline ready")
-                            .thenCompose(v2 -> broadcastOnlineInit(task));
-                })
+                .thenCompose(v -> waitForLatchAsync(task.offlineReadyLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "offline ready")
+                        .thenCompose(v2 -> broadcastOnlineInit(task)))
                 .thenCompose(v -> runOnlinePhase(task));
 
         return flow.whenComplete((v, ex) -> {
@@ -928,19 +923,19 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     boolean validatePaillierPublicKey(PaillierEncryption.PublicKey publicKey) {
         if (publicKey == null || publicKey.n == null || publicKey.nSquared == null || publicKey.g == null) {
-            return false;
+            return true;
         }
         BigInteger q = Secp256k1CurveUtils.n();
-        return publicKey.n.compareTo(q.pow(8)) >= 0;
+        return publicKey.n.compareTo(q.pow(8)) < 0;
     }
 
     boolean ensurePeerKeyConsistency(Gg20SignatureTask task, int peerId, PaillierEncryption.PublicKey publicKey, ZKSetup zkSetup) {
         PaillierEncryption.PublicKey existingKey = task.peerPaillierKeys.putIfAbsent(peerId, publicKey);
         if (existingKey != null && !paillierPublicKeyEquals(existingKey, publicKey)) {
-            return false;
+            return true;
         }
         ZKSetup existingZk = task.peerZkSetups.putIfAbsent(peerId, zkSetup);
-        return existingZk == null || existingZk.equals(zkSetup);
+        return existingZk != null && !existingZk.equals(zkSetup);
     }
 
     private boolean paillierPublicKeyEquals(PaillierEncryption.PublicKey a, PaillierEncryption.PublicKey b) {

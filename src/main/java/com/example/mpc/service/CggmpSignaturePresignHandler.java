@@ -74,7 +74,7 @@ final class CggmpSignaturePresignHandler {
         PiEncElgProof encElgG = encElgGMap == null ? null : CggmpCodecUtils.decodePiEncElgProof(encElgGMap);
         PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
         ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
-        if (!svc.ensurePeerKeyConsistency(task, senderId, publicKey, zkSetup)) {
+        if (svc.ensurePeerKeyConsistency(task, senderId, publicKey, zkSetup)) {
             svc.fireAndForget(svc.broadcastComplaint(task, senderId, "Inconsistent Paillier key/zkSetup (presign R1)", Map.of("paillierPublicKey", pkMap, "zkSetup", zkMap)),
                     "CGGMP_PRESIGN_COMPLAINT");
             svc.failSignatureTask(task, "Inconsistent Paillier key/zkSetup (presign R1)");

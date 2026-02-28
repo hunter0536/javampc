@@ -277,7 +277,7 @@ final class CggmpSignatureOnlineHandler {
             PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
             ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
             MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
-            if (!svc.validatePaillierPublicKey(publicKey)) {
+            if (svc.validatePaillierPublicKey(publicKey)) {
                 svc.logger.warn("Invalid Paillier public key for KA from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
@@ -295,7 +295,7 @@ final class CggmpSignatureOnlineHandler {
                 svc.failSignatureTask(task, "Missing KA MtA initiator proofs");
                 return;
             }
-            if (!svc.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
+            if (svc.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
                 svc.logger.warn("Inconsistent Paillier key/zkSetup for KA from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
@@ -517,7 +517,7 @@ final class CggmpSignatureOnlineHandler {
             PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
             ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
             MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
-            if (!svc.validatePaillierPublicKey(publicKey)) {
+            if (svc.validatePaillierPublicKey(publicKey)) {
                 svc.logger.warn("Invalid Paillier public key for ST from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
@@ -535,7 +535,7 @@ final class CggmpSignatureOnlineHandler {
                 svc.failSignatureTask(task, "Missing ST MtA initiator proofs");
                 return;
             }
-            if (!svc.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
+            if (svc.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
                 svc.logger.warn("Inconsistent Paillier key/zkSetup for ST from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
