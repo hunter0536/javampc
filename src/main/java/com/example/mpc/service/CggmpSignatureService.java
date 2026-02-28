@@ -25,6 +25,7 @@ import com.example.mpc.model.CggmpAuxTask;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.model.KeyShare;
 import com.example.mpc.util.PresignUsageStore;
+import com.example.mpc.service.SignUtils;
 import org.bouncycastle.asn1.ASN1EncodableVector;
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.DERSequence;
@@ -186,11 +187,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 toTs,
                 safeLimit,
                 safeOffset);
-    }
-
-    private static byte[] buildMtaContext(String taskId, int senderId, int receiverId) {
-        String ctx = taskId + ":" + senderId + ":" + receiverId;
-        return ctx.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     public String createSignatureTaskWithGroupKey(String groupPublicKey, String message) {
@@ -411,7 +407,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 task.presignK.put(nodeId, K);
                 task.presignG.put(nodeId, G);
 
-                byte[] ctxR1K = buildPresignContext(task.taskId, nodeId, "R1K");
+                byte[] ctxR1K = SignUtils.buildPresignContext(task.taskId, nodeId, "R1K");
                 long t3 = System.nanoTime();
                 PiEncElgProof encElgK = PresignProofs.createEncElgProof(
                         task.paillier.getPublicKeyInfo(),
@@ -435,7 +431,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     logger.warn("Local PiEncElg proof (K) failed before broadcast, task {}: eq1={}, eq2={}, eq3={}, eq4={}, z1InRange={}",
                             task.taskId, localEncElgK.eq1(), localEncElgK.eq2(), localEncElgK.eq3(), localEncElgK.eq4(), localEncElgK.z1InRange());
                 }
-                byte[] ctxR1G = buildPresignContext(task.taskId, nodeId, "R1G");
+                byte[] ctxR1G = SignUtils.buildPresignContext(task.taskId, nodeId, "R1G");
                 long t5 = System.nanoTime();
                 PiEncElgProof encElgG = PresignProofs.createEncElgProof(
                         task.paillier.getPublicKeyInfo(),
@@ -509,8 +505,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                                 }
                                 BigInteger beta = randomNonZero(ctx.curveOrder);
                                 BigInteger betaHat = randomNonZero(ctx.curveOrder);
-                                PaillierEncryption.Encryption encNegBeta = pk.encryptWithRandomness(negateModN(beta, pk.n));
-                                PaillierEncryption.Encryption encNegBetaHat = pk.encryptWithRandomness(negateModN(betaHat, pk.n));
+                                PaillierEncryption.Encryption encNegBeta = pk.encryptWithRandomness(SignUtils.negateModN(beta, pk.n));
+                                PaillierEncryption.Encryption encNegBetaHat = pk.encryptWithRandomness(SignUtils.negateModN(betaHat, pk.n));
                                 BigInteger D_ji = pk.multiply(K_peer, ctx.gamma_i).multiply(encNegBeta.c).mod(pk.nSquared);
                                 BigInteger Dhat_ji = pk.multiply(K_peer, x_i).multiply(encNegBetaHat.c).mod(pk.nSquared);
                                 PaillierEncryption.Encryption encBeta = task.paillier.getPublicKeyInfo().encryptWithRandomness(beta);
@@ -519,11 +515,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                                 BigInteger Fhat_ji = encBetaHat.c;
                                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
                                         Secp256k1CurveUtils.G(), Gamma_i, pk.n, task.paillier.getPublicKeyInfo().n,
-                                        K_peer, D_ji, F_ji, ctx.gamma_i, beta, encNegBeta.r, encBeta.r, proofKappa, proofEpsBits, buildPresignContext(task.taskId, nodeId, "R2")
+                                        K_peer, D_ji, F_ji, ctx.gamma_i, beta, encNegBeta.r, encBeta.r, proofKappa, proofEpsBits, SignUtils.buildPresignContext(task.taskId, nodeId, "R2")
                                 );
                                 PiAffGProof proofHat = PresignProofs.createAffGProofNegY(
                                         Secp256k1CurveUtils.G(), X_i, pk.n, task.paillier.getPublicKeyInfo().n,
-                                        K_peer, Dhat_ji, Fhat_ji, x_i, betaHat, encNegBetaHat.r, encBetaHat.r, proofKappa, proofEpsBits, buildPresignContext(task.taskId, nodeId, "R2H")
+                                        K_peer, Dhat_ji, Fhat_ji, x_i, betaHat, encNegBetaHat.r, encBetaHat.r, proofKappa, proofEpsBits, SignUtils.buildPresignContext(task.taskId, nodeId, "R2H")
                                 );
                                 long peerMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - peerStartNs);
                                 return PeerR2Result.done(peerId, beta, betaHat, D_ji, Dhat_ji, F_ji, Fhat_ji,
@@ -588,7 +584,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                         if (Y_i_r2 == null || B1_r2 == null || B2_r2 == null || ctx.task.presignBScalar == null) {
                             throw new RuntimeException("Missing presign R1 commitments for PiLog proof");
                         }
-                        byte[] ctxR2 = buildPresignContext(ctx.task.taskId, nodeId, "R2");
+                        byte[] ctxR2 = SignUtils.buildPresignContext(ctx.task.taskId, nodeId, "R2");
                         PiLogProof logProof = PresignProofs.createLogProof(
                                 Secp256k1CurveUtils.G(),
                                 Secp256k1CurveUtils.G(),
@@ -862,12 +858,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
 
-    private static byte[] buildPresignContext(String taskId, int senderId, String round) {
-        String sid = buildSignSid(taskId);
-        String ctx = "PRESIGN:" + round + ":" + sid + ":" + senderId;
-        return ctx.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    }
-
     private BigInteger resolveSignShift(Gg20SignatureTask task, BigInteger q) {
         if (!hdEnabled) {
             return BigInteger.ZERO;
@@ -888,28 +878,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         } catch (Exception e) {
             logger.warn("Failed to derive HD shift for task {}: {}", task.taskId, e.getMessage());
             return BigInteger.ZERO;
-        }
-    }
-
-    private static BigInteger parseHexBigIntegerOrNull(String hex) {
-        if (hex == null || hex.isBlank()) {
-            return null;
-        }
-        try {
-            String cleaned = hex.startsWith("0x") || hex.startsWith("0X") ? hex.substring(2) : hex;
-            return new BigInteger(cleaned, 16);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static String computePayloadHashHex(Map<?, ?> data) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            updateDigest(md, data);
-            return HexUtils.bytesToHex(md.digest());
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to compute payload hash", e);
         }
     }
 
@@ -941,7 +909,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 entry.add(HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(B2)));
                 payloads.add(entry);
             }
-            return computeTaggedHashHex("PRESIGN_R1_ECHO", sid, payloads);
+            return SignUtils.computeTaggedHashHex("PRESIGN_R1_ECHO", sid, payloads);
         } catch (Exception e) {
             throw new RuntimeException("Failed to compute presign R1 echo hash", e);
         }
@@ -1002,10 +970,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         md.update((byte) ((length >>> 16) & 0xFF));
         md.update((byte) ((length >>> 8) & 0xFF));
         md.update((byte) (length & 0xFF));
-    }
-
-    private static String buildSid(String executionId, String taskId) {
-        return "CGGMP24:" + executionId + ":" + taskId;
     }
 
     private static String buildSignSid(String taskId) {
@@ -1368,46 +1332,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return out.replace("\\\"", "\"").replace("\\\\", "\\");
     }
 
-    private static BigInteger challenge(String tag, BigInteger q, byte[] context, Object... items) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            md.update(tag.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            if (context != null) {
-                md.update(context);
-            }
-            for (Object o : items) {
-                if (o == null) continue;
-                if (o instanceof BigInteger bi) {
-                    md.update(bi.toByteArray());
-                } else if (o instanceof ECPoint p) {
-                    md.update(Secp256k1CurveUtils.encodePoint(p));
-                } else {
-                    md.update(String.valueOf(o).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                }
-            }
-            BigInteger twoQ = q.shiftLeft(1);
-            BigInteger e = new BigInteger(1, md.digest()).mod(twoQ);
-            return e.compareTo(q) >= 0 ? e.subtract(twoQ) : e;
-        } catch (Exception e) {
-            throw new RuntimeException("Schnorr challenge failed", e);
-        }
-    }
-
-    private static byte[] randomBytes(int len) {
-        byte[] out = new byte[len];
-        new SecureRandom().nextBytes(out);
-        return out;
-    }
-
-    private static void updatePointMap(MessageDigest md, Map<Integer, ECPoint> map) {
-        List<Integer> keys = new ArrayList<>(map.keySet());
-        Collections.sort(keys);
-        for (int k : keys) {
-            md.update(BigInteger.valueOf(k).toByteArray());
-            md.update(Secp256k1CurveUtils.encodePoint(map.get(k)));
-        }
-    }
-
     private BigInteger lagrangeCoefficient(int i, Set<Integer> participants, BigInteger n) {
         BigInteger result = BigInteger.ONE;
         for (int j : participants) {
@@ -1437,7 +1361,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private CompletableFuture<Void> broadcastGammaCommitment(Gg20SignatureTask task, ECPoint commitment, BigInteger gammaValue, BigInteger blinding) {
-        byte[] ctx = buildSignContext(task.taskId, nodeId, task.messageHash, "GAMMA-COMMIT");
+        byte[] ctx = SignUtils.buildSignContext(task.taskId, nodeId, task.messageHash, "GAMMA-COMMIT");
         EcChaumPedersenProof proof = EcChaumPedersenProof.create(gammaValue, blinding, commitment, ctx);
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
@@ -1465,7 +1389,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (participantId == nodeId) {
                 continue;
             }
-            byte[] mtaContext = buildMtaContext(task.taskId + ":KA", nodeId, participantId);
+            byte[] mtaContext = SignUtils.buildMtaContext(task.taskId + ":KA", nodeId, participantId);
             MtAInitiatorMessage initiatorMessage = protocol.generateInitiatorMessage(task.k_i, task.zkSetup, mtaContext);
             task.mtaKaInitiatorMessages.put(participantId, initiatorMessage);
 
@@ -1488,7 +1412,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (participantId == nodeId) {
                 continue;
             }
-            byte[] mtaContext = buildMtaContext(task.taskId + ":ST", nodeId, participantId);
+            byte[] mtaContext = SignUtils.buildMtaContext(task.taskId + ":ST", nodeId, participantId);
             MtAInitiatorMessage initiatorMessage = protocol.generateInitiatorMessage(task.kInv_i, task.zkSetup, mtaContext);
             task.mtaStInitiatorMessages.put(participantId, initiatorMessage);
 
@@ -1567,7 +1491,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         int nLen = (Secp256k1CurveUtils.n().bitLength() + 7) / 8;
         byte[] uBytes = BigIntegerUtils.toUnsignedBytes(u, nLen);
         byte[] rBytes = BigIntegerUtils.toUnsignedBytes(r, nLen);
-        byte[] ctx = buildSignContext(taskId, senderId, messageHash, "U-COMMIT");
+        byte[] ctx = SignUtils.buildSignContext(taskId, senderId, messageHash, "U-COMMIT");
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             digest.update(ctx);
@@ -1865,7 +1789,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             failSignatureTask(task, "Inconsistent Paillier key/zkSetup (presign R1)");
             return;
         }
-        byte[] ctxK = buildPresignContext(task.taskId, senderId, "R1K");
+        byte[] ctxK = SignUtils.buildPresignContext(task.taskId, senderId, "R1K");
         PresignProofs.EncElgVerifyResult encElgKResult = PresignProofs.verifyEncElgProofDetailed(
                 encElgK, publicKey, zkSetup, Secp256k1CurveUtils.G(), A1, Y, A2, K, proofEpsBits, ctxK);
         if (!encElgKResult.ok()) {
@@ -1876,7 +1800,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             failSignatureTask(task, "Invalid PiEncElg proof (K)");
             return;
         }
-        byte[] ctxG = buildPresignContext(task.taskId, senderId, "R1G");
+        byte[] ctxG = SignUtils.buildPresignContext(task.taskId, senderId, "R1G");
         PresignProofs.EncElgVerifyResult encElgGResult = PresignProofs.verifyEncElgProofDetailed(
                 encElgG, publicKey, zkSetup, Secp256k1CurveUtils.G(), B1, Y, B2, G, proofEpsBits, ctxG);
         if (!encElgGResult.ok()) {
@@ -2038,7 +1962,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 dForNode == null ? null : dForNode.toString(16),
                 dhatForNode == null ? null : dhatForNode.toString(16));
         PiLogProof logProof = logProofMap == null ? null : CggmpCodecUtils.decodePiLogProof(logProofMap);
-        byte[] ctx = buildPresignContext(task.taskId, senderId, "R2");
+        byte[] ctx = SignUtils.buildPresignContext(task.taskId, senderId, "R2");
         ECPoint Y = task.presignY.get(senderId);
         ECPoint B1 = task.presignB1.get(senderId);
         ECPoint B2 = task.presignB2.get(senderId);
@@ -2110,7 +2034,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                         F_ji,
                         proofKappa,
                         proofEpsBits,
-                        buildPresignContext(task.taskId, senderId, "R2")
+                        SignUtils.buildPresignContext(task.taskId, senderId, "R2")
                 );
                 if (!affGResult.ok()) {
                     logger.warn("Invalid PiAffG proof from node {}: index={}, eq1={}, eq2={}, eq3={}, zInRange={}, zPrimeInRange={}",
@@ -2134,7 +2058,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                         Fhat_ji,
                         proofKappa,
                         proofEpsBits,
-                        buildPresignContext(task.taskId, senderId, "R2H")
+                        SignUtils.buildPresignContext(task.taskId, senderId, "R2H")
                 );
                 if (!affGHatResult.ok()) {
                     logger.warn("Invalid PiAffG proof (hat) from node {}: index={}, eq1={}, eq2={}, eq3={}, zInRange={}, zPrimeInRange={}",
@@ -2198,7 +2122,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         PiLogProof logProof = logProofMap == null ? null : CggmpCodecUtils.decodePiLogProof(logProofMap);
         ECPoint Delta = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(deltaPointHex));
         ECPoint S = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(sPointHex));
-        byte[] ctx = buildPresignContext(task.taskId, senderId, "R3");
+        byte[] ctx = SignUtils.buildPresignContext(task.taskId, senderId, "R3");
         if (task.presignR2Latch.getCount() > 0) {
             task.pendingPresignR3.put(senderId, new HashMap<String, Object>((Map<String, Object>) dataMap));
             return;
@@ -2350,7 +2274,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     rho,
                     proofKappa,
                     proofEpsBits,
-                    buildPresignContext(task.taskId, nodeId, "DEC")
+                    SignUtils.buildPresignContext(task.taskId, nodeId, "DEC")
             );
             Map<String, Object> ev = new HashMap<>();
             ev.put("piDecProof", CggmpCodecUtils.encodePiDecProof(proof));
@@ -2393,7 +2317,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     rho,
                     proofKappa,
                     proofEpsBits,
-                    buildPresignContext(task.taskId, nodeId, "DECH")
+                    SignUtils.buildPresignContext(task.taskId, nodeId, "DECH")
             );
             Map<String, Object> ev = new HashMap<>();
             ev.put("piDecProof", CggmpCodecUtils.encodePiDecProof(proof));
@@ -2473,7 +2397,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     D,
                     proofKappa,
                     proofEpsBits,
-                    buildPresignContext(task.taskId, senderId, ctxTag)
+                    SignUtils.buildPresignContext(task.taskId, senderId, ctxTag)
             );
             if (!ok) {
                 logger.warn("Invalid PiDec proof evidence from node {}", senderId);
@@ -2547,7 +2471,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (pk == null || K_peer == null || beta == null || rho == null || mu == null) {
                 continue;
             }
-            BigInteger encNegBeta = pk.encryptWithRandom(negateModN(beta, pk.n), rho);
+            BigInteger encNegBeta = pk.encryptWithRandom(SignUtils.negateModN(beta, pk.n), rho);
             BigInteger d = pk.multiply(K_peer, gamma_i).multiply(encNegBeta).mod(pk.nSquared);
             BigInteger f = senderPk.encryptWithRandom(beta, mu);
             PiAffGProof proof = PresignProofs.createAffGProofNegY(
@@ -2564,7 +2488,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     mu,
                     proofKappa,
                     proofEpsBits,
-                    buildPresignContext(task.taskId, nodeId, "AFFG")
+                    SignUtils.buildPresignContext(task.taskId, nodeId, "AFFG")
             );
             proofs.put(peerId, proof);
             D.put(peerId, d);
@@ -2598,7 +2522,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (pk == null || K_peer == null || betaHat == null || rhoHat == null || muHat == null) {
                 continue;
             }
-            BigInteger encNegBeta = pk.encryptWithRandom(negateModN(betaHat, pk.n), rhoHat);
+            BigInteger encNegBeta = pk.encryptWithRandom(SignUtils.negateModN(betaHat, pk.n), rhoHat);
             BigInteger d = pk.multiply(K_peer, x_i).multiply(encNegBeta).mod(pk.nSquared);
             BigInteger f = senderPk.encryptWithRandom(betaHat, muHat);
             PiAffGProof proof = PresignProofs.createAffGProofNegY(
@@ -2615,7 +2539,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     muHat,
                     proofKappa,
                     proofEpsBits,
-                    buildPresignContext(task.taskId, nodeId, "AFFGH")
+                    SignUtils.buildPresignContext(task.taskId, nodeId, "AFFGH")
             );
             proofs.put(peerId, proof);
             Dhat.put(peerId, d);
@@ -2676,7 +2600,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                         f,
                         proofKappa,
                         proofEpsBits,
-                        buildPresignContext(task.taskId, senderId, "AFFG")
+                        SignUtils.buildPresignContext(task.taskId, senderId, "AFFG")
                 ).ok();
                 if (!ok) {
                     return false;
@@ -2718,7 +2642,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                         f,
                         proofKappa,
                         proofEpsBits,
-                        buildPresignContext(task.taskId, senderId, "AFFGH")
+                        SignUtils.buildPresignContext(task.taskId, senderId, "AFFGH")
                 ).ok();
                 if (!ok) {
                     return false;
@@ -2913,7 +2837,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             BigInteger proofR = new BigInteger(proofRHex, 16);
             BigInteger proofS = new BigInteger(proofSHex, 16);
             EcChaumPedersenProof proof = new EcChaumPedersenProof(proofA, proofR, proofS);
-            byte[] ctx = buildSignContext(task.taskId, senderId, task.messageHash, "GAMMA-COMMIT");
+            byte[] ctx = SignUtils.buildSignContext(task.taskId, senderId, task.messageHash, "GAMMA-COMMIT");
             if (!CggmpIntegrityChecker.verifyGammaCommitment(proof, commitment, ctx)) {
                 logger.warn("Invalid gamma commitment proof from node {} for task {}", senderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
@@ -3062,7 +2986,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             }
 
             MtAProtocol protocol = new MtAProtocol(null, Secp256k1CurveUtils.n());
-            byte[] mtaContext = buildMtaContext(taskId + ":KA", initiatorId, receiverId);
+            byte[] mtaContext = SignUtils.buildMtaContext(taskId + ":KA", initiatorId, receiverId);
             if (!protocol.verifyInitiatorRangeProof(initiatorMessage, publicKey, zkSetup, mtaContext)
                     || !protocol.verifyInitiatorBiPrimeProof(initiatorMessage, publicKey, mtaContext)
                     || !protocol.verifyInitiatorFactorProof(initiatorMessage, publicKey, zkSetup, mtaContext)) {
@@ -3134,7 +3058,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 return;
             }
             MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
-            byte[] mtaContext = buildMtaContext(taskId + ":KA", initiatorId, responderId);
+            byte[] mtaContext = SignUtils.buildMtaContext(taskId + ":KA", initiatorId, responderId);
             if (!protocol.verifyRespondentProof(result, initiatorMessage.cA(), task.paillier.getPublicKeyInfo(), task.zkSetup, mtaContext)) {
                 logger.warn("Invalid KA MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
@@ -3302,7 +3226,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             }
 
             MtAProtocol protocol = new MtAProtocol(null, Secp256k1CurveUtils.n());
-            byte[] mtaContext = buildMtaContext(taskId + ":ST", initiatorId, receiverId);
+            byte[] mtaContext = SignUtils.buildMtaContext(taskId + ":ST", initiatorId, receiverId);
             if (!protocol.verifyInitiatorRangeProof(initiatorMessage, publicKey, zkSetup, mtaContext)
                     || !protocol.verifyInitiatorBiPrimeProof(initiatorMessage, publicKey, mtaContext)
                     || !protocol.verifyInitiatorFactorProof(initiatorMessage, publicKey, zkSetup, mtaContext)) {
@@ -3374,7 +3298,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 return;
             }
             MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
-            byte[] mtaContext = buildMtaContext(taskId + ":ST", initiatorId, responderId);
+            byte[] mtaContext = SignUtils.buildMtaContext(taskId + ":ST", initiatorId, responderId);
             if (!protocol.verifyRespondentProof(result, initiatorMessage.cA(), task.paillier.getPublicKeyInfo(), task.zkSetup, mtaContext)) {
                 logger.warn("Invalid ST MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
@@ -3769,8 +3693,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                                 missingR3Peers.add(peerId);
                                 continue;
                             }
-                            BigInteger alpha = decodeSigned(ctx.task.paillier.decrypt(D_ij), ctx.task.paillier.getPublicKeyInfo().n);
-                            BigInteger alphaHat = decodeSigned(ctx.task.paillier.decrypt(Dhat_ij), ctx.task.paillier.getPublicKeyInfo().n);
+                            BigInteger alpha = SignUtils.decodeSigned(ctx.task.paillier.decrypt(D_ij), ctx.task.paillier.getPublicKeyInfo().n);
+                            BigInteger alphaHat = SignUtils.decodeSigned(ctx.task.paillier.decrypt(Dhat_ij), ctx.task.paillier.getPublicKeyInfo().n);
                             BigInteger oldDelta = delta_i;
                             BigInteger oldChi = chi_i;
                             delta_i = delta_i.add(alpha).add(beta).mod(ctx.curveOrder);
@@ -3796,7 +3720,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                         ctx.task.presignDelta.put(nodeId, delta_i);
                         ctx.task.presignDeltaPoint.put(nodeId, Delta_i);
                         ctx.task.presignSPoint.put(nodeId, S_i);
-                        byte[] ctxR3 = buildPresignContext(ctx.task.taskId, nodeId, "R3");
+                        byte[] ctxR3 = SignUtils.buildPresignContext(ctx.task.taskId, nodeId, "R3");
                         ECPoint Y_i_r3 = ctx.task.presignY.get(nodeId);
                         ECPoint A1_r3 = ctx.task.presignA1.get(nodeId);
                         ECPoint A2_r3 = ctx.task.presignA2.get(nodeId);
