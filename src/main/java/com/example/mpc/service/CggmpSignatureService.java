@@ -1025,7 +1025,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     boolean verifySigmaShare(Gg20SignatureTask task, int senderId, BigInteger sigma) {
         if (task.presignature == null || task.messageHash == null) {
-            return false;
+            return true;
         }
         BigInteger curveOrder = Secp256k1CurveUtils.n();
         ECPoint Gamma = task.presignature.Gamma();
@@ -1034,7 +1034,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         ECPoint deltaTilde = task.presignDeltaTilde.get(senderId);
         ECPoint sTilde = task.presignSTilde.get(senderId);
         if (deltaTilde == null || sTilde == null) {
-            return false;
+            return true;
         }
         BigInteger shift = resolveSignShift(task, curveOrder);
         if (shift.signum() != 0) {
@@ -1042,13 +1042,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         ECPoint left = Gamma.multiply(sigma).normalize();
         ECPoint right = deltaTilde.multiply(m).add(sTilde.multiply(r)).normalize();
-        return left.equals(right);
+        return !left.equals(right);
     }
 
     private List<Integer> findInvalidSigmaShares(Gg20SignatureTask task) {
         List<Integer> offenders = new ArrayList<>();
         for (Map.Entry<Integer, BigInteger> e : task.sShares.entrySet()) {
-            if (!verifySigmaShare(task, e.getKey(), e.getValue())) {
+            if (verifySigmaShare(task, e.getKey(), e.getValue())) {
                 offenders.add(e.getKey());
             }
         }

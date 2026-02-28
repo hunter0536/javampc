@@ -78,7 +78,7 @@ final class CggmpSignatureOnlineHandler {
                 }, ThreadPoolUtil.getIoThreadPool()))
                 .thenCompose(ctx -> {
                     if (svc.nodeId == ctx.task().initiatorId) {
-                        if (!svc.verifySigmaShare(ctx.task(), svc.nodeId, ctx.sigma_i())) {
+                        if (svc.verifySigmaShare(ctx.task(), svc.nodeId, ctx.sigma_i())) {
                             svc.failSignatureTask(ctx.task(), "Local signature share verification failed");
                             svc.signatureInProgress.set(false);
                             svc.clearPresignAll(ctx.task());
@@ -658,7 +658,7 @@ final class CggmpSignatureOnlineHandler {
             return;
         }
         BigInteger sigma = new BigInteger(sHex, 16);
-        if (!svc.verifySigmaShare(task, senderId, sigma)) {
+        if (svc.verifySigmaShare(task, senderId, sigma)) {
             Map<String, Object> ev = new HashMap<>();
             ev.put("sigma", sHex);
             ev.put("r", task.r == null ? null : HexUtils.toHex(task.r));
