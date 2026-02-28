@@ -110,16 +110,4 @@ public final class JsonUtils {
         }
         return out;
     }
-
-    public static Map<String, String> encodeECPointMap(Map<Integer, ECPoint> map) {
-        return Secp256k1CurveUtils.encodeECPointMap(map);
-    }
-
-    public static Map<String, String> encodeECPointMapCompressed(Map<Integer, ECPoint> map) {
-        return Secp256k1CurveUtils.encodeECPointMapCompressed(map);
-    }
-
-    public static Map<Integer, ECPoint> decodeECPointMap(Map<?, ?> map) {
-        return Secp256k1CurveUtils.decodeECPointMap(map);
-    }
 }

@@ -338,9 +338,9 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         data.put("s", r2.s.toString(16));
         data.put("t", r2.t.toString(16));
         data.put("prmProof", CggmpCodecUtils.encodePiPrmProof(r2.prmProof));
-        data.put("Y", JsonUtils.encodeECPointMap(r2.Y));
-        data.put("X", JsonUtils.encodeECPointMap(r2.X));
-        data.put("A", JsonUtils.encodeECPointMap(r2.A));
+        data.put("Y", Secp256k1CurveUtils.encodeECPointMap(r2.Y));
+        data.put("X", Secp256k1CurveUtils.encodeECPointMap(r2.X));
+        data.put("A", Secp256k1CurveUtils.encodeECPointMap(r2.A));
         data.put("Xi", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(r2.Xi)));
         data.put("rid", Base64.getEncoder().encodeToString(r2.rid));
         data.put("u", Base64.getEncoder().encodeToString(r2.u));
@@ -472,9 +472,9 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             BigInteger s = new BigInteger(sHex, 16);
             BigInteger t = new BigInteger(tHex, 16);
             PiPrmProof prmProof = CggmpCodecUtils.decodePiPrmProof(prmMap);
-            Map<Integer, ECPoint> Y = JsonUtils.decodeECPointMap(yMap);
-            Map<Integer, ECPoint> X = JsonUtils.decodeECPointMap(xMap);
-            Map<Integer, ECPoint> A = JsonUtils.decodeECPointMap(aMap);
+            Map<Integer, ECPoint> Y = Secp256k1CurveUtils.decodeECPointMap(yMap);
+            Map<Integer, ECPoint> X = Secp256k1CurveUtils.decodeECPointMap(xMap);
+            Map<Integer, ECPoint> A = Secp256k1CurveUtils.decodeECPointMap(aMap);
             ECPoint Xi = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(xiHex));
             byte[] rid = Base64.getDecoder().decode(ridB64);
             byte[] u = Base64.getDecoder().decode(uB64);

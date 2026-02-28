@@ -252,7 +252,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             r1Open.put("executionId", task.executionId);
             r1Open.put("senderId", nodeId);
             r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
-            r1Open.put("S", JsonUtils.encodeECPointMapCompressed(S_i));
+            r1Open.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(S_i));
             r1Open.put("A", HexUtils.bytesToHex(A_i.getEncoded(true)));
             byte[] uCommit = randomBytes(32);
             r1Open.put("u", HexUtils.bytesToHex(uCommit));
@@ -401,7 +401,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             r1Open.put("executionId", task.executionId);
             r1Open.put("senderId", nodeId);
             r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
-            r1Open.put("S", JsonUtils.encodeECPointMapCompressed(S_i));
+            r1Open.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(S_i));
             r1Open.put("A", HexUtils.bytesToHex(A_i.getEncoded(true)));
             r1Open.put("u", HexUtils.bytesToHex(uCommit));
             if (chainCodePart != null) {
@@ -484,8 +484,8 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         data.put("taskId", task.taskId);
         data.put("executionId", task.executionId);
         data.put("nodeId", round1Output.nodeId);
-        data.put("Xjk", JsonUtils.encodeECPointMapCompressed(Xjk));
-        data.put("Ajk", JsonUtils.encodeECPointMapCompressed(Ajk));
+        data.put("Xjk", Secp256k1CurveUtils.encodeECPointMapCompressed(Xjk));
+        data.put("Ajk", Secp256k1CurveUtils.encodeECPointMapCompressed(Ajk));
         data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(round1Output.paillierKey));
         data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(round1Output.zkSetup));
         data.put("biPrimeProof", CggmpCodecUtils.encodeBiPrimeProof(round1Output.biPrimeProof));
@@ -543,7 +543,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         data.put("taskId", task.taskId);
         data.put("executionId", task.executionId);
         data.put("senderId", nodeId);
-        data.put("XkStar", JsonUtils.encodeECPointMapCompressed(XkStar));
+        data.put("XkStar", Secp256k1CurveUtils.encodeECPointMapCompressed(XkStar));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND3, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND3, data)));
     }
 
@@ -705,7 +705,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             evidence.put("senderId", senderNodeId);
             evidence.put("receiverId", receiverId);
             evidence.put("sigma", sigmaHex);
-            evidence.put("S", JsonUtils.encodeECPointMapCompressed(S));
+            evidence.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(S));
             fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Invalid share in DKG Round2", evidence),
                     "CGGMP_DKG_COMPLAINT");
             task.fail();
@@ -829,7 +829,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         Map<Integer, ECPoint> S;
         ECPoint A;
         try {
-            S = JsonUtils.decodeECPointMap(sMap);
+            S = Secp256k1CurveUtils.decodeECPointMap(sMap);
             A = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(aHex));
         } catch (Exception e) {
             Map<String, Object> evidence = new HashMap<>();
@@ -1012,7 +1012,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                             evidence.put("senderId", senderNodeIdFinal);
                             evidence.put("receiverId", receiverId);
                             evidence.put("sigma", yHexFinal);
-                            evidence.put("S", JsonUtils.encodeECPointMapCompressed(XjkFinal));
+                            evidence.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(XjkFinal));
                             fireAndForget(broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid share in DKG Round2", evidence),
                                     "CGGMP_DKG_COMPLAINT");
                             taskFinal.lastComplaintReason = "Invalid share in DKG Round2";
@@ -1230,7 +1230,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
 
     private Map<String, Object> buildDkgRound3Evidence(CggmpDkgTask task, int offenderId) {
         Map<String, Object> ev = new HashMap<>();
-        Map<String, String> xkStar = JsonUtils.encodeECPointMap(task.XkStar);
+        Map<String, String> xkStar = Secp256k1CurveUtils.encodeECPointMap(task.XkStar);
         ev.put("XkStar", xkStar);
         ev.put("rid", HexUtils.bytesToHex(task.rid == null ? new byte[0] : task.rid));
         return ev;
@@ -1664,7 +1664,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                                                byte[] u,
                                                byte[] chainCode) {
         String sid = buildSid(executionId, taskId);
-        Map<String, String> sMap = JsonUtils.encodeECPointMapCompressed(sVec);
+        Map<String, String> sMap = Secp256k1CurveUtils.encodeECPointMapCompressed(sVec);
         String aHex = HexUtils.bytesToHex(A.getEncoded(true));
         return computeTaggedHashHex("DKG_HASH_COM", sid, senderId, ridPart, sMap, aHex, u, chainCode);
     }
