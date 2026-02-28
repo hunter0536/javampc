@@ -3,12 +3,12 @@ package com.example.mpc.service;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.RetryUtils;
+import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.GennaroDkgTask;
 import com.example.mpc.model.KeyShare;
-import com.example.mpc.common.util.ThreadPoolUtil;
 import org.bouncycastle.jce.interfaces.ECPublicKey;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.math.ec.ECCurve;
@@ -20,13 +20,29 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
-import java.security.*;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.SecureRandom;
+import java.security.Security;
 import java.security.spec.ECGenParameterSpec;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
-import java.util.function.Supplier;
 
 @Service
 public class GennaroDkgService implements NodeService.MessageHandler {
@@ -173,15 +189,15 @@ public class GennaroDkgService implements NodeService.MessageHandler {
 
     public CompletableFuture<KeyShare> generateDistributedKey(String taskId, boolean forceSingleNodeMode) {
         return CompletableFuture.supplyAsync(() -> {
-            GennaroDkgTask task = dkgTasks.get(taskId);
-            if (task == null) {
-                throw new RuntimeException("DKG task not found: " + taskId);
-            }
-            if (forceSingleNodeMode) {
-                throw new RuntimeException("Single node mode is not allowed");
-            }
-            return task;
-        }, ThreadPoolUtil.getComputationThreadPool())
+                    GennaroDkgTask task = dkgTasks.get(taskId);
+                    if (task == null) {
+                        throw new RuntimeException("DKG task not found: " + taskId);
+                    }
+                    if (forceSingleNodeMode) {
+                        throw new RuntimeException("Single node mode is not allowed");
+                    }
+                    return task;
+                }, ThreadPoolUtil.getComputationThreadPool())
                 .thenCompose(task -> waitForNetworkReadyWithRetry(60, 5).thenApply(v -> task))
                 .thenCompose(task -> {
                     int networkSize = nodeService.getNodes().size() + 1;
@@ -216,9 +232,9 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     return new CommitmentContext(task, commitmentData);
                 }, ThreadPoolUtil.getComputationThreadPool()))
                 .thenCompose(ctx -> RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, ctx.commitmentData)),
-                        Constants.DKG_BROADCAST_RETRY_COUNT,
-                        Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
-                        "Broadcast GENNARO_COMMITMENT")
+                                Constants.DKG_BROADCAST_RETRY_COUNT,
+                                Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                                "Broadcast GENNARO_COMMITMENT")
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> waitForLatchAsync(ctx.task.commitmentsReceivedLatch, Constants.DKG_COMMITMENT_TIMEOUT_SECONDS, "commitments", ctx.task)
                         .thenApply(v -> ctx))
@@ -340,9 +356,9 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             publicKeyData.put("publicKeyPart", publicKeyPart);
 
             return RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
-                    Constants.DKG_BROADCAST_RETRY_COUNT,
-                    Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
-                    "Broadcast GENNARO_PUBLIC_KEY_PART")
+                            Constants.DKG_BROADCAST_RETRY_COUNT,
+                            Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                            "Broadcast GENNARO_PUBLIC_KEY_PART")
                     .thenRun(() -> logger.info("Broadcasted public key contribution for task: {}", taskId))
                     .thenCompose(v -> waitForLatchAsync(task.publicKeyContributionsReceivedLatch, 60, "public key contributions", task))
                     .thenRun(() -> {
@@ -891,9 +907,9 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         publicKeyData.put("groupPublicKey", groupPublicKey);
 
         return RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
-                Constants.DKG_BROADCAST_RETRY_COUNT,
-                Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
-                "Broadcast GENNARO_GROUP_PUBLIC_KEY")
+                        Constants.DKG_BROADCAST_RETRY_COUNT,
+                        Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                        "Broadcast GENNARO_GROUP_PUBLIC_KEY")
                 .exceptionally(ex -> {
                     logger.error("Failed to broadcast group public key: {}", ex.getMessage());
                     return null;

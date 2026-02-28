@@ -4,7 +4,6 @@ import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
 
 import java.math.BigInteger;
-import java.util.List;
 
 public final class BiPrimeProofValidator {
     public boolean verifyProof(BiPrimeBlumProof pr, PaillierEncryption.PublicKey pk, byte[] ctx) {

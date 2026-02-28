@@ -1,9 +1,7 @@
 package com.example.mpc.service;
 
 import com.example.mpc.cggmp.CGGMP;
-import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.PedersenCommitment;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofValidator;
 import com.example.mpc.cggmp.proof.NoSmallFactorProof;
@@ -11,6 +9,7 @@ import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
 import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
+import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
@@ -41,7 +40,6 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -55,7 +53,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class CggmpDkgService implements NodeService.MessageHandler {
@@ -373,58 +370,58 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     private CompletableFuture<Void> executeDkgRoundsNonThreshold(CggmpDkgTask task) {
         logger.info("Node {} executing CGGMP24 DKG Round 1 (n-of-n)", nodeId);
         return CompletableFuture.supplyAsync(() -> {
-            BigInteger q = Secp256k1CurveUtils.n();
-            ECPoint g = Secp256k1CurveUtils.G();
+                    BigInteger q = Secp256k1CurveUtils.n();
+                    ECPoint g = Secp256k1CurveUtils.G();
 
-            BigInteger x_i = randomScalar(q);
-            ECPoint X_i = g.multiply(x_i).normalize();
-            Map<Integer, ECPoint> S_i = new HashMap<>();
-            S_i.put(0, X_i);
-            task.Xjks.put(nodeId, new ConcurrentHashMap<>(S_i));
+                    BigInteger x_i = randomScalar(q);
+                    ECPoint X_i = g.multiply(x_i).normalize();
+                    Map<Integer, ECPoint> S_i = new HashMap<>();
+                    S_i.put(0, X_i);
+                    task.Xjks.put(nodeId, new ConcurrentHashMap<>(S_i));
 
-            BigInteger alpha = randomScalar(q);
-            ECPoint A_i = g.multiply(alpha).normalize();
-            task.Ajks.put(nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
-            task.schAlphas.put(0, alpha);
+                    BigInteger alpha = randomScalar(q);
+                    ECPoint A_i = g.multiply(alpha).normalize();
+                    task.Ajks.put(nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
+                    task.schAlphas.put(0, alpha);
 
-            byte[] ridPart = new byte[32];
-            secureRandom.nextBytes(ridPart);
-            task.ridParts.put(nodeId, ridPart);
-            byte[] chainCodePart = hdEnabled ? randomBytes(32) : null;
-            if (chainCodePart != null) {
-                task.chainCodeParts.put(nodeId, chainCodePart);
-            }
+                    byte[] ridPart = new byte[32];
+                    secureRandom.nextBytes(ridPart);
+                    task.ridParts.put(nodeId, ridPart);
+                    byte[] chainCodePart = hdEnabled ? randomBytes(32) : null;
+                    if (chainCodePart != null) {
+                        task.chainCodeParts.put(nodeId, chainCodePart);
+                    }
 
-            byte[] uCommit = randomBytes(32);
-            Map<String, Object> r1Open = new LinkedHashMap<>();
-            r1Open.put("taskId", task.taskId);
-            r1Open.put("executionId", task.executionId);
-            r1Open.put("senderId", nodeId);
-            r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
-            r1Open.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(S_i));
-            r1Open.put("A", HexUtils.bytesToHex(A_i.getEncoded(true)));
-            r1Open.put("u", HexUtils.bytesToHex(uCommit));
-            if (chainCodePart != null) {
-                r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
-            }
-            String vCommit = computeDkgCommitHash(task.executionId, task.taskId, nodeId, ridPart, S_i, A_i, uCommit, chainCodePart);
-            task.round1PayloadHashes.put(nodeId, vCommit);
-            Map<String, Object> r1Commit = new HashMap<>();
-            r1Commit.put("taskId", task.taskId);
-            r1Commit.put("executionId", task.executionId);
-            r1Commit.put("senderId", nodeId);
-            r1Commit.put("V", vCommit);
-            if (dkgUseRbc) {
-                fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
-                        "CGGMP_DKG_ROUND1_RBC");
-            } else {
-                fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
-                        "CGGMP_DKG_ROUND1");
-            }
+                    byte[] uCommit = randomBytes(32);
+                    Map<String, Object> r1Open = new LinkedHashMap<>();
+                    r1Open.put("taskId", task.taskId);
+                    r1Open.put("executionId", task.executionId);
+                    r1Open.put("senderId", nodeId);
+                    r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
+                    r1Open.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(S_i));
+                    r1Open.put("A", HexUtils.bytesToHex(A_i.getEncoded(true)));
+                    r1Open.put("u", HexUtils.bytesToHex(uCommit));
+                    if (chainCodePart != null) {
+                        r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
+                    }
+                    String vCommit = computeDkgCommitHash(task.executionId, task.taskId, nodeId, ridPart, S_i, A_i, uCommit, chainCodePart);
+                    task.round1PayloadHashes.put(nodeId, vCommit);
+                    Map<String, Object> r1Commit = new HashMap<>();
+                    r1Commit.put("taskId", task.taskId);
+                    r1Commit.put("executionId", task.executionId);
+                    r1Commit.put("senderId", nodeId);
+                    r1Commit.put("V", vCommit);
+                    if (dkgUseRbc) {
+                        fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                                "CGGMP_DKG_ROUND1_RBC");
+                    } else {
+                        fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                                "CGGMP_DKG_ROUND1");
+                    }
 
-            task.startRound1Waiting();
-            return new DkgNonThresholdContext(task, q, g, x_i, X_i, r1Open);
-        }, dkgExecutorService)
+                    task.startRound1Waiting();
+                    return new DkgNonThresholdContext(task, q, g, x_i, X_i, r1Open);
+                }, dkgExecutorService)
                 .thenCompose(ctx -> waitForDkgLatch(task, task.round1ReceivedLatch, "DKG Round 1 messages")
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> {
@@ -968,12 +965,12 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             byte[] rho = HexUtils.hexToBytes(cHexFinal);
             byte[] modCtx = buildDkgContext(taskFinal.taskId, taskFinal.executionId, taskFinal.rid, senderNodeIdFinal, "MOD");
             CompletableFuture<Boolean> verifyFuture = CompletableFuture.supplyAsync(
-                    () -> BI_PRIME_VALIDATOR.verifyProof(modProofFinal, pkFinal, modCtx), dkgExecutorService)
+                            () -> BI_PRIME_VALIDATOR.verifyProof(modProofFinal, pkFinal, modCtx), dkgExecutorService)
                     .thenCombine(CompletableFuture.supplyAsync(
-                            () -> {
-                                NoSmallFactorProofValidator facValidator = new NoSmallFactorProofValidator(zkFinal, auxMinPaillierBitsForProof);
-                                return facValidator.verifyProofDetailed(facProofFinal, pkFinal, modCtx).ok();
-                            }, dkgExecutorService),
+                                    () -> {
+                                        NoSmallFactorProofValidator facValidator = new NoSmallFactorProofValidator(zkFinal, auxMinPaillierBitsForProof);
+                                        return facValidator.verifyProofDetailed(facProofFinal, pkFinal, modCtx).ok();
+                                    }, dkgExecutorService),
                             (modOk, facOk) -> modOk && facOk);
             taskFinal.round2ModFacVerifyFutures.put(senderNodeIdFinal, verifyFuture);
             modFacFuture = verifyFuture;
@@ -1105,7 +1102,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         if (!expected.equals(hash)) {
             logger.warn("Round1 echo mismatch from node {} (task {})", senderNodeId, taskId);
             fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Round1 echo mismatch",
-                    Map.of("senderId", senderNodeId, "expected", expected, "received", hash)),
+                            Map.of("senderId", senderNodeId, "expected", expected, "received", hash)),
                     "CGGMP_DKG_COMPLAINT");
             task.fail();
             task.errorMessage = "Round1 echo mismatch from node " + senderNodeId
@@ -1137,7 +1134,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             if (!expected.equals(hash)) {
                 logger.warn("Round1 echo mismatch from node {} (task {})", senderId, task.taskId);
                 fireAndForget(broadcastDkgComplaint(task, senderId, "Round1 echo mismatch",
-                        Map.of("senderId", senderId, "expected", expected, "received", hash)),
+                                Map.of("senderId", senderId, "expected", expected, "received", hash)),
                         "CGGMP_DKG_COMPLAINT");
                 task.fail();
                 task.errorMessage = "Round1 echo mismatch from node " + senderId
@@ -1539,7 +1536,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     private Object maybeDecompressDkgPayload(MessageType type, byte[] bytes) {
         return null;
     }
-
 
 
     private Map<String, Object> encodeSchProof(PiSchProof proof) {

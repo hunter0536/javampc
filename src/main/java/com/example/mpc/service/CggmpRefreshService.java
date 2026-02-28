@@ -1,6 +1,5 @@
 package com.example.mpc.service;
 
-import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
@@ -11,6 +10,7 @@ import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
 import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
+import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
@@ -33,9 +33,26 @@ import org.springframework.stereotype.Service;
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class CggmpRefreshService implements NodeService.MessageHandler {
@@ -142,7 +159,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     // 已废弃：基于 MtA 的 DKG 处理程序，已在 CGGMP21 DKG 中移除
 
 
-
     private static byte[] buildRefreshContext(String taskId, byte[] rid, int senderId, String label) {
         String base = "REFRESH:" + label + ":" + taskId + ":" + senderId + ":";
         byte[] prefix = base.getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -154,7 +170,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         System.arraycopy(rid, 0, out, prefix.length, rid.length);
         return out;
     }
-
 
 
     private CompletableFuture<Void> runRefreshProtocolAsync(CggmpRefreshTask task) {
@@ -1157,7 +1172,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         md.update((byte) ((length >>> 8) & 0xFF));
         md.update((byte) (length & 0xFF));
     }
-
 
 
     private Object maybeDecompressDkgPayload(MessageType type, byte[] bytes) {

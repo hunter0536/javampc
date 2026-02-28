@@ -1,15 +1,21 @@
 package com.example.mpc.service;
 
-import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
 import com.example.mpc.cggmp.mta.MtAProtocol;
 import com.example.mpc.cggmp.presign.Presignature;
-import com.example.mpc.cggmp.proof.*;
+import com.example.mpc.cggmp.proof.PiAffGProof;
+import com.example.mpc.cggmp.proof.PiDecProof;
+import com.example.mpc.cggmp.proof.PiEncElgProof;
+import com.example.mpc.cggmp.proof.PiLogProof;
+import com.example.mpc.cggmp.proof.PiPrmProof;
+import com.example.mpc.cggmp.proof.PiSchProof;
+import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.sign.CggmpIntegrityChecker;
 import com.example.mpc.cggmp.sign.EcChaumPedersenProof;
-import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
+import com.example.mpc.cggmp.util.CggmpCodecUtils;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
@@ -25,7 +31,6 @@ import com.example.mpc.model.CggmpAuxTask;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.model.KeyShare;
 import com.example.mpc.util.PresignUsageStore;
-import com.example.mpc.service.SignUtils;
 import org.bouncycastle.asn1.ASN1EncodableVector;
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.DERSequence;
@@ -47,10 +52,28 @@ import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.security.Security;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class CggmpSignatureService implements NodeService.MessageHandler {
@@ -157,14 +180,14 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public List<ComplaintDao.ComplaintRecord> getComplaints(String taskId,
-                                                                                          String reason,
-                                                                                          String reasonLike,
-                                                                                          Integer senderId,
-                                                                                          Integer offenderId,
-                                                                                          Long fromTs,
-                                                                                          Long toTs,
-                                                                                          int limit,
-                                                                                          int offset) {
+                                                            String reason,
+                                                            String reasonLike,
+                                                            Integer senderId,
+                                                            Integer offenderId,
+                                                            Long fromTs,
+                                                            Long toTs,
+                                                            int limit,
+                                                            int offset) {
         int safeLimit = Math.max(1, Math.min(500, limit));
         int safeOffset = Math.max(0, offset);
         if ((taskId == null || taskId.isBlank())
@@ -820,7 +843,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("logProof", CggmpCodecUtils.encodePiLogProof(logProof));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R3, data));
     }
-
 
 
     private Map<String, Object> encodeAffGProofMap(Map<Integer, PiAffGProof> map) {
@@ -1580,11 +1602,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
                 senderId, message.type, logTaskId);
-        Executor executor = ThreadPoolUtil.getSingleThreadPool();        return CompletableFuture.runAsync(() -> {
+        Executor executor = ThreadPoolUtil.getSingleThreadPool();
+        return CompletableFuture.runAsync(() -> {
             try {
                 Object data = message.data;
                 logger.info("=== CGGMP processing: type={} ===", message.type);
-                switch (message.type) {                    case GG20_SIGN_INIT:
+                switch (message.type) {
+                    case GG20_SIGN_INIT:
                         handleCggmpSignOfflineInit(senderId, data);
                         break;
                     case CGGMP_SIGN_OFFLINE_INIT:
@@ -1643,7 +1667,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                         break;
                     case CGGMP_SIGN_S_SHARE:
                         handleCggmpSignSShare(senderId, data);
-                        break;                    default:
+                        break;
+                    default:
                         logger.debug("Ignoring message of type {} for CGGMP service", message.type);
                 }
             } catch (Exception e) {
@@ -1866,7 +1891,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         if (!expected.equals(hash)) {
             fireAndForget(broadcastComplaint(task, senderId, "Presign R1 echo mismatch",
-                    Map.of("senderId", senderId, "expected", expected, "received", hash)),
+                            Map.of("senderId", senderId, "expected", expected, "received", hash)),
                     "CGGMP_PRESIGN_COMPLAINT");
             failSignatureTask(task, "Presign R1 echo mismatch from node " + senderId);
             return;
@@ -1890,7 +1915,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             String hash = e.getValue();
             if (!expected.equals(hash)) {
                 fireAndForget(broadcastComplaint(task, senderId, "Presign R1 echo mismatch",
-                        Map.of("senderId", senderId, "expected", expected, "received", hash)),
+                                Map.of("senderId", senderId, "expected", expected, "received", hash)),
                         "CGGMP_PRESIGN_COMPLAINT");
                 failSignatureTask(task, "Presign R1 echo mismatch from node " + senderId);
                 return;

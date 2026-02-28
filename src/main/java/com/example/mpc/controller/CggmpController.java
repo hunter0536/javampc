@@ -1,15 +1,15 @@
 package com.example.mpc.controller;
 
 import com.example.mpc.common.response.ApiResponse;
-import com.example.mpc.common.response.DkgTaskStartResponse;
-import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.response.AuxTaskStartResponse;
 import com.example.mpc.common.response.AuxTaskStatusResponse;
+import com.example.mpc.common.response.DkgTaskStartResponse;
+import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.response.RefreshTaskStartResponse;
 import com.example.mpc.common.response.RefreshTaskStatusResponse;
+import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStartResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
-import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
@@ -17,7 +17,11 @@ import com.example.mpc.service.CggmpSignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -155,12 +159,12 @@ public class CggmpController {
             StringBuilder sb = new StringBuilder();
             for (com.example.mpc.dao.ComplaintDao.ComplaintRecord r : records) {
                 sb.append("{\"ts\":").append(r.ts())
-                  .append(",\"taskId\":\"").append(escapeJson(r.taskId())).append("\"")
-                  .append(",\"senderId\":").append(r.senderId())
-                  .append(",\"offenderId\":").append(r.offenderId() == null ? "null" : r.offenderId())
-                  .append(",\"reason\":\"").append(escapeJson(r.reason())).append("\"")
-                  .append(",\"evidence\":").append(r.evidence() == null ? "null" : r.evidence())
-                  .append("}\n");
+                        .append(",\"taskId\":\"").append(escapeJson(r.taskId())).append("\"")
+                        .append(",\"senderId\":").append(r.senderId())
+                        .append(",\"offenderId\":").append(r.offenderId() == null ? "null" : r.offenderId())
+                        .append(",\"reason\":\"").append(escapeJson(r.reason())).append("\"")
+                        .append(",\"evidence\":").append(r.evidence() == null ? "null" : r.evidence())
+                        .append("}\n");
             }
             return sb.toString();
         });
@@ -306,7 +310,7 @@ public class CggmpController {
      */
     @PostMapping("/sign/start")
     public CompletableFuture<ApiResponse<SignatureTaskStartResponse>> sign(@RequestParam(required = true) String groupPublicKey,
-                                                                          @RequestParam(required = true) String message) {
+                                                                           @RequestParam(required = true) String message) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 if (groupPublicKey == null || groupPublicKey.isEmpty()) {

@@ -11,10 +11,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.Base64;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 public final class PresignUsageStore {
     private static volatile Path file = Paths.get("databases", "presign-usage.jsonl");

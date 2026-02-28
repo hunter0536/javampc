@@ -1,7 +1,7 @@
 package com.example.mpc.cggmp.proof;
 
-import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;

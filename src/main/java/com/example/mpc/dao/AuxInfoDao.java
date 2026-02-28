@@ -1,8 +1,8 @@
 package com.example.mpc.dao;
 
+import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.model.AuxInfo;
 import com.example.mpc.service.DatabaseService;
-import com.example.mpc.common.util.ThreadPoolUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,41 +24,6 @@ public class AuxInfoDao {
 
     @Autowired
     private DatabaseService databaseService;
-
-    public void save(AuxInfo info) throws SQLException {
-        Connection conn = null;
-        PreparedStatement insertStmt = null;
-        PreparedStatement selectStmt = null;
-        try {
-            conn = databaseService.getShareConnection(info.getNodeId());
-            insertStmt = conn.prepareStatement(INSERT_SQL);
-            selectStmt = conn.prepareStatement(SELECT_LAST_ID_SQL);
-
-            int index = 1;
-            insertStmt.setInt(index++, info.getNodeId());
-            insertStmt.setString(index++, info.getTaskId());
-            insertStmt.setString(index++, info.getPaillierP());
-            insertStmt.setString(index++, info.getPaillierQ());
-            insertStmt.setString(index++, info.getPaillierN());
-            insertStmt.setString(index++, info.getPaillierG());
-            insertStmt.setInt(index++, info.getPaillierBitLength() == null ? 0 : info.getPaillierBitLength());
-            insertStmt.setString(index++, info.getPedersenHatN());
-            insertStmt.setString(index++, info.getPedersenS());
-            insertStmt.setString(index, info.getPedersenT());
-            insertStmt.executeUpdate();
-
-            var rs = selectStmt.executeQuery();
-            if (rs.next()) {
-                info.setId(rs.getLong(1));
-            }
-        } finally {
-            closeStatement(selectStmt);
-            closeStatement(insertStmt);
-            if (conn != null) {
-                databaseService.releaseShareConnection(conn, info.getNodeId());
-            }
-        }
-    }
 
     public boolean saveIfAbsentByTask(AuxInfo info) throws SQLException {
         Connection conn = null;

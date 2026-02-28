@@ -1,17 +1,12 @@
 package com.example.mpc.cggmp.proof;
 
 import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.proof.PaillierRangeEncryptionWitness;
-import com.example.mpc.cggmp.proof.PaillierRangeProof;
-import com.example.mpc.cggmp.proof.PaillierRangeProofContext;
-import com.example.mpc.cggmp.proof.PaillierRangeProofGenerator;
-import com.example.mpc.cggmp.proof.PaillierRangeProofValidator;
-import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import org.bouncycastle.math.ec.ECPoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.security.MessageDigest;
@@ -19,15 +14,17 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 public final class PresignProofs {
     private static final Logger logger = LoggerFactory.getLogger(PresignProofs.class);
-    public record EncElgVerifyResult(boolean ok, boolean eq1, boolean eq2, boolean eq3, boolean eq4, boolean z1InRange) {
+
+    public record EncElgVerifyResult(boolean ok, boolean eq1, boolean eq2, boolean eq3, boolean eq4,
+                                     boolean z1InRange) {
     }
 
-    public record AffGVerifyResult(boolean ok, int index, boolean eq1, boolean eq2, boolean eq3, boolean zInRange, boolean zPrimeInRange) {
+    public record AffGVerifyResult(boolean ok, int index, boolean eq1, boolean eq2, boolean eq3, boolean zInRange,
+                                   boolean zPrimeInRange) {
     }
 
     private PresignProofs() {

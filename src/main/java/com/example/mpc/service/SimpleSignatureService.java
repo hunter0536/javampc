@@ -7,6 +7,7 @@ import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.KeyShare;
 import com.example.mpc.model.SimpleSignatureTask;
+import jakarta.annotation.PreDestroy;
 import org.bouncycastle.asn1.ASN1EncodableVector;
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.DERSequence;
@@ -17,14 +18,25 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import jakarta.annotation.PreDestroy;
-
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
@@ -526,8 +538,8 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
                 return;
             }
             if (task.getPhase() == SimpleSignatureTask.Phase.OFFLINE_COMPLETED ||
-                task.getPhase() == SimpleSignatureTask.Phase.ONLINE_WAITING ||
-                task.getPhase() == SimpleSignatureTask.Phase.COMPLETED) {
+                    task.getPhase() == SimpleSignatureTask.Phase.ONLINE_WAITING ||
+                    task.getPhase() == SimpleSignatureTask.Phase.COMPLETED) {
                 logger.warn("Ignoring offline data for task {} in phase {}", taskId, task.getPhase());
                 return;
             }
@@ -648,7 +660,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
                 return;
             }
             if (task.getPhase() == SimpleSignatureTask.Phase.ONLINE_WAITING ||
-                task.getPhase() == SimpleSignatureTask.Phase.COMPLETED) {
+                    task.getPhase() == SimpleSignatureTask.Phase.COMPLETED) {
                 logger.debug("Ignoring sigma share for task {} in phase {}", taskId, task.getPhase());
                 return;
             }
@@ -692,8 +704,8 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         }
 
         if (task.getPhase() == SimpleSignatureTask.Phase.OFFLINE_COMPLETED ||
-            task.getPhase() == SimpleSignatureTask.Phase.ONLINE_WAITING ||
-            task.getPhase() == SimpleSignatureTask.Phase.COMPLETED) {
+                task.getPhase() == SimpleSignatureTask.Phase.ONLINE_WAITING ||
+                task.getPhase() == SimpleSignatureTask.Phase.COMPLETED) {
             logger.debug("Task {} already in phase {}, responding to offline request", taskId, task.getPhase());
         }
 
@@ -732,7 +744,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         }
 
         if (task.phase.get() == SimpleSignatureTask.Phase.ONLINE_WAITING ||
-            task.phase.get() == SimpleSignatureTask.Phase.COMPLETED) {
+                task.phase.get() == SimpleSignatureTask.Phase.COMPLETED) {
             Map<String, String> responseData = new HashMap<>();
             responseData.put("taskId", task.taskId);
             responseData.put("groupPublicKey", task.groupPublicKey);
@@ -795,7 +807,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
             BigInteger s = new BigInteger(sHex, 16);
 
             if (r.signum() <= 0 || r.compareTo(curveOrder) >= 0 ||
-                s.signum() <= 0 || s.compareTo(curveOrder) >= 0) {
+                    s.signum() <= 0 || s.compareTo(curveOrder) >= 0) {
                 logger.warn("Invalid signature: r or s out of range");
                 return false;
             }
@@ -850,6 +862,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
             return null;
         }
     }
+
     private KeyShare loadKeyShareByGroupPublicKeySync(String groupPublicKey) {
         return keyShareDao.findByGroupPublicKeySync(nodeId, groupPublicKey);
     }

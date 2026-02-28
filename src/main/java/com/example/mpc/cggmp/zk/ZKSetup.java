@@ -1,7 +1,5 @@
 package com.example.mpc.cggmp.zk;
 
-import com.example.mpc.cggmp.util.BigIntegerUtils;
-
 import java.math.BigInteger;
 import java.security.SecureRandom;
 

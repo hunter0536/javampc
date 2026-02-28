@@ -31,7 +31,7 @@ public enum TaskStatus {
     }
 
     public boolean isRunning() {
-        return this == IN_PROGRESS || this == ROUND1_WAITING || 
-               this == ROUND2_WAITING || this == VALIDATING || this == COMPLETING;
+        return this == IN_PROGRESS || this == ROUND1_WAITING ||
+                this == ROUND2_WAITING || this == VALIDATING || this == COMPLETING;
     }
 }

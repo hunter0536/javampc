@@ -1,8 +1,7 @@
 package com.example.mpc.cggmp.sign;
 
-import org.bouncycastle.math.ec.ECPoint;
-
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
+import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
 

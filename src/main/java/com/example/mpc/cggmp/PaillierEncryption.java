@@ -56,10 +56,10 @@ public class PaillierEncryption {
         n = p.multiply(q);
         nSquared = n.multiply(n);
         bitLength = n.bitLength();
-        
+
         lambda = lcm(p.subtract(BigInteger.ONE), q.subtract(BigInteger.ONE));
         g = n.add(BigInteger.ONE);
-        
+
         mu = lambda.modInverse(n);
     }
 

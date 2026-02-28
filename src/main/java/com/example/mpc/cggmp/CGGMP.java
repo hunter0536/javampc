@@ -1,18 +1,20 @@
 package com.example.mpc.cggmp;
 
-import org.bouncycastle.math.ec.ECPoint;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
 import com.example.mpc.cggmp.proof.NoSmallFactorProof;
 import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
 import com.example.mpc.cggmp.zk.ZKSetup;
+import org.bouncycastle.math.ec.ECPoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class CGGMP {
@@ -22,17 +24,17 @@ public class CGGMP {
     private final int totalNodes;
     private final int nodeId;
     private final String curveName;
-    
+
     private PedersenCommitment pedersen;
     private PaillierEncryption paillier;
     private PaillierEncryption.PublicKey paillierPublicKey;
     private ZKSetup zkSetup;
-    
+
     private BigInteger secretShare;
     private ECPoint publicKey;
     private Map<Integer, PaillierEncryption.PublicKey> otherPaillierKeys;
     private Map<Integer, ECPoint> otherPublicKeys;
-    
+
     private SecureRandom random;
 
     public CGGMP(int threshold, int totalNodes, int nodeId, String curveName) throws Exception {
@@ -43,7 +45,7 @@ public class CGGMP {
         this.random = new SecureRandom();
         this.otherPaillierKeys = new ConcurrentHashMap<>();
         this.otherPublicKeys = new ConcurrentHashMap<>();
-        
+
         initialize();
     }
 
@@ -76,22 +78,22 @@ public class CGGMP {
 
     public DkgRound1Output dkgRound1(byte[] context) {
         logger.info("Node {} starting DKG Round 1", nodeId);
-        
+
         BigInteger[] coefficients = new BigInteger[threshold];
         BigInteger curveOrder = pedersen.getCurveOrder();
         do {
             coefficients[0] = new BigInteger(curveOrder.bitLength() - 1, random).mod(curveOrder);
         } while (coefficients[0].signum() == 0);
-        
+
         for (int i = 1; i < threshold; i++) {
             coefficients[i] = new BigInteger(curveOrder.bitLength() - 1, random).mod(curveOrder);
         }
-        
+
         List<ECPoint> commitments = new ArrayList<>();
         for (BigInteger coeff : coefficients) {
             commitments.add(pedersen.getG().multiply(coeff).normalize());
         }
-        
+
         ECPoint publicKeyCommitment = commitments.get(0);
         this.publicKey = publicKeyCommitment;
 
@@ -106,36 +108,36 @@ public class CGGMP {
 
     public DkgRound2Output dkgRound2(Map<Integer, DkgRound1Output> round1Outputs) throws Exception {
         logger.info("Node {} starting DKG Round 2", nodeId);
-        
+
         DkgRound1Output selfOutput = round1Outputs.get(nodeId);
-        
+
         for (Map.Entry<Integer, DkgRound1Output> entry : round1Outputs.entrySet()) {
             if (entry.getKey() != nodeId) {
                 otherPaillierKeys.put(entry.getKey(), entry.getValue().paillierKey);
                 otherPublicKeys.put(entry.getKey(), entry.getValue().commitments.get(0));
             }
         }
-        
+
         Map<Integer, BigInteger> shares = new HashMap<>();
-        
+
         for (int i = 1; i <= totalNodes; i++) {
             if (i != nodeId) {
                 BigInteger share = evaluatePolynomial(selfOutput.coefficients, BigInteger.valueOf(i));
                 shares.put(i, share);
             }
         }
-        
+
         BigInteger selfShare = evaluatePolynomial(selfOutput.coefficients, BigInteger.valueOf(nodeId));
         this.secretShare = selfShare;
-        
+
         return new DkgRound2Output(nodeId, shares);
     }
 
     public boolean dkgRound3(Map<Integer, DkgRound2Output> round2Outputs, Map<Integer, DkgRound1Output> round1Outputs) {
         logger.info("Node {} starting DKG Round 3", nodeId);
-        
+
         boolean allValid = true;
-        
+
         for (Map.Entry<Integer, DkgRound2Output> entry : round2Outputs.entrySet()) {
             int senderId = entry.getKey();
             if (senderId != nodeId) {
@@ -146,17 +148,17 @@ public class CGGMP {
                     allValid = false;
                     continue;
                 }
-                
+
                 ECPoint expected = computeExpectedShare(round1Outputs.get(senderId).commitments, BigInteger.valueOf(nodeId));
                 ECPoint actual = pedersen.getG().multiply(share).normalize();
-                
+
                 if (!expected.equals(actual)) {
                     logger.warn("Invalid share from node {}", senderId);
                     allValid = false;
                 }
             }
         }
-        
+
         if (allValid) {
             BigInteger totalShare = secretShare;
             for (Map.Entry<Integer, DkgRound2Output> entry : round2Outputs.entrySet()) {
@@ -166,14 +168,14 @@ public class CGGMP {
                 }
             }
             this.secretShare = totalShare;
-            
+
             ECPoint groupPublicKey = publicKey;
             for (ECPoint otherPubKey : otherPublicKeys.values()) {
                 groupPublicKey = groupPublicKey.add(otherPubKey).normalize();
             }
             this.publicKey = groupPublicKey;
         }
-        
+
         return allValid;
     }
 
@@ -212,24 +214,24 @@ public class CGGMP {
     private BigInteger evaluatePolynomial(BigInteger[] coefficients, BigInteger x) {
         BigInteger result = BigInteger.ZERO;
         BigInteger xPower = BigInteger.ONE;
-        
+
         for (BigInteger coeff : coefficients) {
             result = result.add(coeff.multiply(xPower)).mod(pedersen.getCurveOrder());
             xPower = xPower.multiply(x).mod(pedersen.getCurveOrder());
         }
-        
+
         return result;
     }
 
     private ECPoint computeExpectedShare(List<ECPoint> commitments, BigInteger x) {
         ECPoint result = pedersen.getEcSpec().getCurve().getInfinity();
         BigInteger xPower = BigInteger.ONE;
-        
+
         for (ECPoint commitment : commitments) {
             result = result.add(commitment.multiply(xPower)).normalize();
             xPower = xPower.multiply(x).mod(pedersen.getCurveOrder());
         }
-        
+
         return result;
     }
 

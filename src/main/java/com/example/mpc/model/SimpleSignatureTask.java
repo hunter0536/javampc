@@ -53,7 +53,7 @@ public class SimpleSignatureTask {
     public String errorMessage;
 
     public SimpleSignatureTask(String taskId, String groupPublicKey, String message,
-                                Set<Integer> participants, int initiatorId) {
+                               Set<Integer> participants, int initiatorId) {
         this.taskId = taskId;
         this.groupPublicKey = groupPublicKey;
         this.message = message;
@@ -66,7 +66,7 @@ public class SimpleSignatureTask {
     }
 
     public SimpleSignatureTask(String taskId, String groupPublicKey, String message,
-                                int nodesCount, int threshold, int initiatorId) {
+                               int nodesCount, int threshold, int initiatorId) {
         this.taskId = taskId;
         this.groupPublicKey = groupPublicKey;
         this.message = message;

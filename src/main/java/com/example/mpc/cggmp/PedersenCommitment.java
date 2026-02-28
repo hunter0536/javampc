@@ -42,11 +42,11 @@ public class PedersenCommitment {
         keyGen.initialize(ecSpecParam);
         KeyPair keyPair = keyGen.generateKeyPair();
         ECPublicKey publicKey = (ECPublicKey) keyPair.getPublic();
-        
+
         this.ecSpec = publicKey.getParameters();
         this.G = ecSpec.getG();
         this.curveOrder = ecSpec.getN();
-        
+
         SecureRandom random = new SecureRandom();
         BigInteger h = new BigInteger(curveOrder.bitLength(), random).mod(curveOrder);
         this.H = G.multiply(h);
