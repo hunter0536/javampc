@@ -23,25 +23,23 @@ public final class RetryUtils {
         int attempts = Math.max(1, maxAttempts);
         AtomicInteger counter = new AtomicInteger(0);
         CompletableFuture<Void> result = new CompletableFuture<>();
-        Runnable runner = new Runnable() {
-            @Override
-            public void run() {
-                int attempt = counter.incrementAndGet();
-                action.get().whenComplete((v, ex) -> {
-                    if (ex == null) {
-                        result.complete(null);
-                        return;
-                    }
-                    if (attempt >= attempts) {
-                        result.completeExceptionally(ex);
-                        return;
-                    }
-                    logger.warn("{} failed (attempt {}/{}): {}", name, attempt, attempts, ex.getMessage());
-                    scheduler.schedule(this, Math.max(0, delayMs), TimeUnit.MILLISECONDS);
-                });
-            }
+        final Runnable[] runner = new Runnable[1];
+        runner[0] = () -> {
+            int attempt = counter.incrementAndGet();
+            action.get().whenComplete((v, ex) -> {
+                if (ex == null) {
+                    result.complete(null);
+                    return;
+                }
+                if (attempt >= attempts) {
+                    result.completeExceptionally(ex);
+                    return;
+                }
+                logger.warn("{} failed (attempt {}/{}): {}", name, attempt, attempts, ex.getMessage());
+                scheduler.schedule(runner[0], Math.max(0, delayMs), TimeUnit.MILLISECONDS);
+            });
         };
-        scheduler.execute(runner);
+        scheduler.execute(runner[0]);
         return result;
     }
 }

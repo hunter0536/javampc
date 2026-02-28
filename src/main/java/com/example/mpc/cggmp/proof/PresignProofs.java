@@ -346,7 +346,6 @@ public final class PresignProofs {
 
     public static boolean verifyLogStarProof(PiLogStarProof proof, ECPoint base, ECPoint X, byte[] context) {
         if (proof == null || proof.A() == null || proof.z() == null) return false;
-        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger c = challenge("PI_LOGSTAR", base, X, proof.A(), context);
         ECPoint left = base.multiply(proof.z()).normalize();
         ECPoint right = proof.A().add(X.multiply(c)).normalize();
