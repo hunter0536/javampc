@@ -86,14 +86,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     private final int threshold = Constants.THRESHOLD;
     private final ScheduledExecutorService cggmpScheduler = Executors.newSingleThreadScheduledExecutor();
 
-    private void fireAndForget(CompletableFuture<Void> future, String name) {
-        future.whenComplete((v, ex) -> {
-            if (ex != null) {
-                logger.warn("{} failed: {}", name, ex.getMessage());
-            }
-        });
-    }
-
     public String createRefreshTask(String groupPublicKey) {
         String fixedGroupPublicKey;
         try {
@@ -1258,6 +1250,14 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         }, 0, 50, TimeUnit.MILLISECONDS);
         future.whenComplete((v, ex) -> tick.cancel(false));
         return future;
+    }
+
+    private void fireAndForget(CompletableFuture<Void> future, String name) {
+        future.whenComplete((v, ex) -> {
+            if (ex != null) {
+                logger.warn("{} failed: {}", name, ex.getMessage());
+            }
+        });
     }
 
 }

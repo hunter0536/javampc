@@ -72,34 +72,12 @@ public class CggmpAuxService implements NodeService.MessageHandler {
 
     private final Map<String, CggmpAuxTask> auxTasks = new ConcurrentHashMap<>();
 
-    private static final class AuxStatus {
-        final boolean hasAux;
-        final long tsMs;
-
-        AuxStatus(boolean hasAux, long tsMs) {
-            this.hasAux = hasAux;
-            this.tsMs = tsMs;
-        }
-    }
-
     private final ConcurrentHashMap<Integer, AuxStatus> auxStatus = new ConcurrentHashMap<>();
     private final AtomicBoolean auxAutoTriggered = new AtomicBoolean(false);
     private final AtomicBoolean auxAutoCheckRunning = new AtomicBoolean(false);
 
     private final int nodesCount = Constants.NODES_COUNT;
     private java.util.concurrent.ScheduledExecutorService auxScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
-
-    private static final class PendingMsg {
-        final int senderId;
-        final Object data;
-        final MessageType type;
-
-        PendingMsg(int senderId, Object data, MessageType type) {
-            this.senderId = senderId;
-            this.data = data;
-            this.type = type;
-        }
-    }
 
     private final ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<PendingMsg>> pendingAuxMessages =
             new ConcurrentHashMap<>();
@@ -555,22 +533,6 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                 }, auxExecutorService);
     }
 
-    private static class AuxContext {
-        final CggmpAuxTask task;
-        final PaillierEncryption paillier;
-        final PiPrmProof prmProof;
-        final byte[] rho;
-        final byte[] u;
-
-        AuxContext(CggmpAuxTask task, PaillierEncryption paillier, PiPrmProof prmProof, byte[] rho, byte[] u) {
-            this.task = task;
-            this.paillier = paillier;
-            this.prmProof = prmProof;
-            this.rho = rho;
-            this.u = u;
-        }
-    }
-
     @Override
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
         switch (message.type) {
@@ -956,6 +918,44 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             return HexUtils.bytesToHex(md.digest());
         } catch (Exception e) {
             throw new RuntimeException("Failed to compute AUX commit hash", e);
+        }
+    }
+
+    private static final class AuxStatus {
+        final boolean hasAux;
+        final long tsMs;
+
+        AuxStatus(boolean hasAux, long tsMs) {
+            this.hasAux = hasAux;
+            this.tsMs = tsMs;
+        }
+    }
+
+    private static final class PendingMsg {
+        final int senderId;
+        final Object data;
+        final MessageType type;
+
+        PendingMsg(int senderId, Object data, MessageType type) {
+            this.senderId = senderId;
+            this.data = data;
+            this.type = type;
+        }
+    }
+
+    private static class AuxContext {
+        final CggmpAuxTask task;
+        final PaillierEncryption paillier;
+        final PiPrmProof prmProof;
+        final byte[] rho;
+        final byte[] u;
+
+        AuxContext(CggmpAuxTask task, PaillierEncryption paillier, PiPrmProof prmProof, byte[] rho, byte[] u) {
+            this.task = task;
+            this.paillier = paillier;
+            this.prmProof = prmProof;
+            this.rho = rho;
+            this.u = u;
         }
     }
 }

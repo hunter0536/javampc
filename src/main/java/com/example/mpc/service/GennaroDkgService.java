@@ -595,17 +595,6 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     }
 
 
-    private static final class CommitmentContext {
-        final GennaroDkgTask task;
-        final Map<String, Object> commitmentData;
-        CompletableFuture<Void> future;
-
-        private CommitmentContext(GennaroDkgTask task, Map<String, Object> commitmentData) {
-            this.task = task;
-            this.commitmentData = commitmentData;
-        }
-    }
-
     private boolean verifyGennaroShare(BigInteger share, int x, List<ECPoint> verificationPoints, List<ECPoint> maskingVerificationPoints) throws Exception {
         ECPoint G = getCurveGenerator();
 
@@ -936,6 +925,17 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             logger.debug("Event-driven: public key condition met for task {}", task.taskId);
             task.publicKeyFuture.complete(null);
             task.publicKeyFuture = null;
+        }
+    }
+
+    private static final class CommitmentContext {
+        final GennaroDkgTask task;
+        final Map<String, Object> commitmentData;
+        CompletableFuture<Void> future;
+
+        private CommitmentContext(GennaroDkgTask task, Map<String, Object> commitmentData) {
+            this.task = task;
+            this.commitmentData = commitmentData;
         }
     }
 }

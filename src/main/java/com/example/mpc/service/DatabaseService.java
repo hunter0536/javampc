@@ -55,6 +55,285 @@ public class DatabaseService {
         }
     }
 
+    /**
+     * 初始化份额数据库
+     *
+     * @param shareIndex 份额索引
+     */
+    public void initShareDatabase(int shareIndex) throws SQLException {
+        // 创建数据库目录
+        File dir = new File(databaseDir);
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+
+        // 数据库文件路径
+        String dbPath = databaseDir + File.separator + "share_" + shareIndex + ".db";
+        java.util.concurrent.atomic.AtomicBoolean initFlag =
+                initializedDbs.computeIfAbsent(dbPath, k -> new java.util.concurrent.atomic.AtomicBoolean(false));
+        if (initFlag.get()) {
+            return;
+        }
+
+        // 连接数据库
+        Connection conn = null;
+        try {
+            conn = getConnection(dbPath);
+            // 创建密钥份额表
+            String createTableSql = """
+                    CREATE TABLE IF NOT EXISTS key_shares (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        share_index INTEGER NOT NULL,
+                        key_share TEXT NOT NULL,
+                        group_public_key TEXT NOT NULL,
+                        dkg_task_id TEXT NOT NULL,
+                        public_shares TEXT,
+                        index_map TEXT,
+                        chain_code TEXT
+                    )
+                    """;
+            String createAuxTableSql = """
+                    CREATE TABLE IF NOT EXISTS aux_info (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        node_id INTEGER NOT NULL,
+                        task_id TEXT NOT NULL,
+                        paillier_p TEXT NOT NULL,
+                        paillier_q TEXT NOT NULL,
+                        paillier_n TEXT NOT NULL,
+                        paillier_g TEXT NOT NULL,
+                        paillier_bit_length INTEGER NOT NULL,
+                        pedersen_hat_n TEXT NOT NULL,
+                        pedersen_s TEXT NOT NULL,
+                        pedersen_t TEXT NOT NULL
+                    )
+                    """;
+            String createComplaintsSql = """
+                    CREATE TABLE IF NOT EXISTS complaints (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts INTEGER NOT NULL,
+                        task_id TEXT NOT NULL,
+                        sender_id INTEGER NOT NULL,
+                        offender_id INTEGER,
+                        reason TEXT NOT NULL,
+                        evidence TEXT
+                    )
+                    """;
+
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(createTableSql);
+                stmt.execute(createAuxTableSql);
+                stmt.execute(createComplaintsSql);
+                statementCount.incrementAndGet();
+                ensureKeyShareColumn(stmt, "group_public_key", "TEXT");
+                ensureKeyShareColumn(stmt, "dkg_task_id", "TEXT");
+                ensureKeyShareColumn(stmt, "public_shares", "TEXT");
+                ensureKeyShareColumn(stmt, "index_map", "TEXT");
+                ensureKeyShareColumn(stmt, "chain_code", "TEXT");
+                ensureKeyShareIndex(stmt);
+                ensureComplaintIndexes(stmt);
+            }
+            initFlag.set(true);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("Connection interrupted", e);
+        } finally {
+            // 释放连接
+            if (conn != null) {
+                releaseConnection(conn, dbPath);
+            }
+        }
+    }
+
+    private void ensureKeyShareIndex(Statement stmt) {
+        try {
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_key_shares_group_public_key ON key_shares(group_public_key, id DESC)");
+            statementCount.incrementAndGet();
+        } catch (SQLException e) {
+            // 忽略索引创建错误，避免在已有数据库上启动失败
+        }
+    }
+
+    private void ensureComplaintIndexes(Statement stmt) {
+        try {
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_task_id ON complaints(task_id, id DESC)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_ts ON complaints(ts DESC)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_sender_id ON complaints(sender_id, id DESC)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_offender_id ON complaints(offender_id, id DESC)");
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_reason ON complaints(reason, id DESC)");
+            statementCount.incrementAndGet();
+        } catch (SQLException e) {
+            // 忽略索引创建错误，避免在已有数据库上启动失败
+        }
+    }
+
+    private void ensureKeyShareColumn(Statement stmt, String columnName, String columnType) {
+        try {
+            boolean exists = false;
+            try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(key_shares)")) {
+                while (rs.next()) {
+                    String name = rs.getString("name");
+                    if (columnName.equalsIgnoreCase(name)) {
+                        exists = true;
+                        break;
+                    }
+                }
+            }
+            if (!exists) {
+                stmt.execute("ALTER TABLE key_shares ADD COLUMN " + columnName + " " + columnType);
+                statementCount.incrementAndGet();
+            }
+        } catch (SQLException e) {
+            // 忽略迁移错误，避免在已有数据库上启动失败
+        }
+    }
+
+    /**
+     * 获取数据库连接
+     *
+     * @param dbPath 数据库路径
+     * @return 数据库连接
+     */
+    private Connection getConnection(String dbPath) throws SQLException, InterruptedException {
+        // 获取或创建对应数据库的连接池
+        ConnectionPool pool = connectionPools.computeIfAbsent(dbPath, ConnectionPool::new);
+        return pool.getConnection();
+    }
+
+    private void applyPragmas(Connection conn) {
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("PRAGMA journal_mode=WAL");
+            stmt.execute("PRAGMA synchronous=NORMAL");
+            stmt.execute("PRAGMA busy_timeout=3000");
+        } catch (SQLException e) {
+            // 忽略 PRAGMA 错误以保持兼容性
+        }
+    }
+
+    /**
+     * 释放数据库连接
+     *
+     * @param conn   数据库连接
+     * @param dbPath 数据库路径
+     */
+    private void releaseConnection(Connection conn, String dbPath) {
+        if (conn != null) {
+            ConnectionPool pool = connectionPools.get(dbPath);
+            if (pool != null) {
+                pool.releaseConnection(conn);
+            } else {
+                try {
+                    conn.close();
+                } catch (SQLException e) {
+                    // 忽略关闭异常
+                }
+            }
+        }
+    }
+
+    /**
+     * 获取份额数据库连接
+     *
+     * @param shareIndex 份额索引
+     * @return 数据库连接
+     */
+    public Connection getShareConnection(int shareIndex) throws SQLException {
+        String dbPath = databaseDir + File.separator + "share_" + shareIndex + ".db";
+        try {
+            initShareDatabase(shareIndex);
+            return getConnection(dbPath);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SQLException("Connection interrupted", e);
+        }
+    }
+
+    /**
+     * 回收份额数据库连接
+     *
+     * @param conn       数据库连接
+     * @param shareIndex 份额索引
+     */
+    public void releaseShareConnection(Connection conn, int shareIndex) {
+        String dbPath = databaseDir + File.separator + "share_" + shareIndex + ".db";
+        releaseConnection(conn, dbPath);
+    }
+
+    /**
+     * 批量执行SQL语句
+     *
+     * @param conn        数据库连接
+     * @param sql         SQL语句
+     * @param batchParams 批量参数
+     * @return 影响的行数
+     */
+    public int[] executeBatch(Connection conn, String sql, List<Object[]> batchParams) throws SQLException {
+        boolean previousAutoCommit = conn.getAutoCommit();
+        conn.setAutoCommit(false);
+        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            for (Object[] params : batchParams) {
+                for (int i = 0; i < params.length; i++) {
+                    pstmt.setObject(i + 1, params[i]);
+                }
+                pstmt.addBatch();
+            }
+            int[] result = pstmt.executeBatch();
+            conn.commit();
+            batchStatementCount.incrementAndGet();
+            return result;
+        } catch (SQLException e) {
+            try {
+                conn.rollback();
+            } catch (SQLException ignore) {
+                // 忽略回滚失败
+            }
+            throw e;
+        } finally {
+            try {
+                conn.setAutoCommit(previousAutoCommit);
+            } catch (SQLException ignore) {
+                // 忽略恢复失败
+            }
+        }
+    }
+
+    /**
+     * 关闭数据库连接
+     *
+     * @param conn       数据库连接
+     * @param shareIndex 份额索引
+     */
+    public void closeConnection(Connection conn, int shareIndex) {
+        if (conn != null) {
+            releaseShareConnection(conn, shareIndex);
+        }
+    }
+
+    /**
+     * 获取数据库操作统计信息
+     *
+     * @return 统计信息
+     */
+    public Map<String, Object> getDatabaseStats() {
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("statementCount", statementCount.get());
+        stats.put("batchStatementCount", batchStatementCount.get());
+        stats.put("connectionCount", connectionCount.get());
+        stats.put("connectionReuseCount", connectionReuseCount.get());
+
+        // 添加连接池详细信息
+        Map<String, Object> poolStats = new HashMap<>();
+        for (Map.Entry<String, ConnectionPool> entry : connectionPools.entrySet()) {
+            ConnectionPool pool = entry.getValue();
+            Map<String, Object> poolInfo = new HashMap<>();
+            poolInfo.put("activeConnections", pool.getActiveConnections());
+            poolInfo.put("totalConnections", pool.getTotalConnections());
+            poolStats.put(entry.getKey(), poolInfo);
+        }
+        stats.put("connectionPools", poolStats);
+
+        return stats;
+    }
+
     // 内部连接池类
     private class ConnectionPool {
         private final String dbPath;
@@ -479,284 +758,5 @@ public class DatabaseService {
         public int getNetworkTimeout() throws SQLException {
             return delegate.getNetworkTimeout();
         }
-    }
-
-    /**
-     * 初始化份额数据库
-     *
-     * @param shareIndex 份额索引
-     */
-    public void initShareDatabase(int shareIndex) throws SQLException {
-        // 创建数据库目录
-        File dir = new File(databaseDir);
-        if (!dir.exists()) {
-            dir.mkdirs();
-        }
-
-        // 数据库文件路径
-        String dbPath = databaseDir + File.separator + "share_" + shareIndex + ".db";
-        java.util.concurrent.atomic.AtomicBoolean initFlag =
-                initializedDbs.computeIfAbsent(dbPath, k -> new java.util.concurrent.atomic.AtomicBoolean(false));
-        if (initFlag.get()) {
-            return;
-        }
-
-        // 连接数据库
-        Connection conn = null;
-        try {
-            conn = getConnection(dbPath);
-            // 创建密钥份额表
-            String createTableSql = """
-                    CREATE TABLE IF NOT EXISTS key_shares (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        share_index INTEGER NOT NULL,
-                        key_share TEXT NOT NULL,
-                        group_public_key TEXT NOT NULL,
-                        dkg_task_id TEXT NOT NULL,
-                        public_shares TEXT,
-                        index_map TEXT,
-                        chain_code TEXT
-                    )
-                    """;
-            String createAuxTableSql = """
-                    CREATE TABLE IF NOT EXISTS aux_info (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        node_id INTEGER NOT NULL,
-                        task_id TEXT NOT NULL,
-                        paillier_p TEXT NOT NULL,
-                        paillier_q TEXT NOT NULL,
-                        paillier_n TEXT NOT NULL,
-                        paillier_g TEXT NOT NULL,
-                        paillier_bit_length INTEGER NOT NULL,
-                        pedersen_hat_n TEXT NOT NULL,
-                        pedersen_s TEXT NOT NULL,
-                        pedersen_t TEXT NOT NULL
-                    )
-                    """;
-            String createComplaintsSql = """
-                    CREATE TABLE IF NOT EXISTS complaints (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        ts INTEGER NOT NULL,
-                        task_id TEXT NOT NULL,
-                        sender_id INTEGER NOT NULL,
-                        offender_id INTEGER,
-                        reason TEXT NOT NULL,
-                        evidence TEXT
-                    )
-                    """;
-
-            try (Statement stmt = conn.createStatement()) {
-                stmt.execute(createTableSql);
-                stmt.execute(createAuxTableSql);
-                stmt.execute(createComplaintsSql);
-                statementCount.incrementAndGet();
-                ensureKeyShareColumn(stmt, "group_public_key", "TEXT");
-                ensureKeyShareColumn(stmt, "dkg_task_id", "TEXT");
-                ensureKeyShareColumn(stmt, "public_shares", "TEXT");
-                ensureKeyShareColumn(stmt, "index_map", "TEXT");
-                ensureKeyShareColumn(stmt, "chain_code", "TEXT");
-                ensureKeyShareIndex(stmt);
-                ensureComplaintIndexes(stmt);
-            }
-            initFlag.set(true);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SQLException("Connection interrupted", e);
-        } finally {
-            // 释放连接
-            if (conn != null) {
-                releaseConnection(conn, dbPath);
-            }
-        }
-    }
-
-    private void ensureKeyShareIndex(Statement stmt) {
-        try {
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_key_shares_group_public_key ON key_shares(group_public_key, id DESC)");
-            statementCount.incrementAndGet();
-        } catch (SQLException e) {
-            // 忽略索引创建错误，避免在已有数据库上启动失败
-        }
-    }
-
-    private void ensureComplaintIndexes(Statement stmt) {
-        try {
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_task_id ON complaints(task_id, id DESC)");
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_ts ON complaints(ts DESC)");
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_sender_id ON complaints(sender_id, id DESC)");
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_offender_id ON complaints(offender_id, id DESC)");
-            stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_reason ON complaints(reason, id DESC)");
-            statementCount.incrementAndGet();
-        } catch (SQLException e) {
-            // 忽略索引创建错误，避免在已有数据库上启动失败
-        }
-    }
-
-    private void ensureKeyShareColumn(Statement stmt, String columnName, String columnType) {
-        try {
-            boolean exists = false;
-            try (ResultSet rs = stmt.executeQuery("PRAGMA table_info(key_shares)")) {
-                while (rs.next()) {
-                    String name = rs.getString("name");
-                    if (columnName.equalsIgnoreCase(name)) {
-                        exists = true;
-                        break;
-                    }
-                }
-            }
-            if (!exists) {
-                stmt.execute("ALTER TABLE key_shares ADD COLUMN " + columnName + " " + columnType);
-                statementCount.incrementAndGet();
-            }
-        } catch (SQLException e) {
-            // 忽略迁移错误，避免在已有数据库上启动失败
-        }
-    }
-
-    /**
-     * 获取数据库连接
-     *
-     * @param dbPath 数据库路径
-     * @return 数据库连接
-     */
-    private Connection getConnection(String dbPath) throws SQLException, InterruptedException {
-        // 获取或创建对应数据库的连接池
-        ConnectionPool pool = connectionPools.computeIfAbsent(dbPath, ConnectionPool::new);
-        return pool.getConnection();
-    }
-
-    private void applyPragmas(Connection conn) {
-        try (Statement stmt = conn.createStatement()) {
-            stmt.execute("PRAGMA journal_mode=WAL");
-            stmt.execute("PRAGMA synchronous=NORMAL");
-            stmt.execute("PRAGMA busy_timeout=3000");
-        } catch (SQLException e) {
-            // 忽略 PRAGMA 错误以保持兼容性
-        }
-    }
-
-    /**
-     * 释放数据库连接
-     *
-     * @param conn   数据库连接
-     * @param dbPath 数据库路径
-     */
-    private void releaseConnection(Connection conn, String dbPath) {
-        if (conn != null) {
-            ConnectionPool pool = connectionPools.get(dbPath);
-            if (pool != null) {
-                pool.releaseConnection(conn);
-            } else {
-                try {
-                    conn.close();
-                } catch (SQLException e) {
-                    // 忽略关闭异常
-                }
-            }
-        }
-    }
-
-    /**
-     * 获取份额数据库连接
-     *
-     * @param shareIndex 份额索引
-     * @return 数据库连接
-     */
-    public Connection getShareConnection(int shareIndex) throws SQLException {
-        String dbPath = databaseDir + File.separator + "share_" + shareIndex + ".db";
-        try {
-            initShareDatabase(shareIndex);
-            return getConnection(dbPath);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new SQLException("Connection interrupted", e);
-        }
-    }
-
-    /**
-     * 回收份额数据库连接
-     *
-     * @param conn       数据库连接
-     * @param shareIndex 份额索引
-     */
-    public void releaseShareConnection(Connection conn, int shareIndex) {
-        String dbPath = databaseDir + File.separator + "share_" + shareIndex + ".db";
-        releaseConnection(conn, dbPath);
-    }
-
-    /**
-     * 批量执行SQL语句
-     *
-     * @param conn        数据库连接
-     * @param sql         SQL语句
-     * @param batchParams 批量参数
-     * @return 影响的行数
-     */
-    public int[] executeBatch(Connection conn, String sql, List<Object[]> batchParams) throws SQLException {
-        boolean previousAutoCommit = conn.getAutoCommit();
-        conn.setAutoCommit(false);
-        try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            for (Object[] params : batchParams) {
-                for (int i = 0; i < params.length; i++) {
-                    pstmt.setObject(i + 1, params[i]);
-                }
-                pstmt.addBatch();
-            }
-            int[] result = pstmt.executeBatch();
-            conn.commit();
-            batchStatementCount.incrementAndGet();
-            return result;
-        } catch (SQLException e) {
-            try {
-                conn.rollback();
-            } catch (SQLException ignore) {
-                // 忽略回滚失败
-            }
-            throw e;
-        } finally {
-            try {
-                conn.setAutoCommit(previousAutoCommit);
-            } catch (SQLException ignore) {
-                // 忽略恢复失败
-            }
-        }
-    }
-
-    /**
-     * 关闭数据库连接
-     *
-     * @param conn       数据库连接
-     * @param shareIndex 份额索引
-     */
-    public void closeConnection(Connection conn, int shareIndex) {
-        if (conn != null) {
-            releaseShareConnection(conn, shareIndex);
-        }
-    }
-
-    /**
-     * 获取数据库操作统计信息
-     *
-     * @return 统计信息
-     */
-    public Map<String, Object> getDatabaseStats() {
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("statementCount", statementCount.get());
-        stats.put("batchStatementCount", batchStatementCount.get());
-        stats.put("connectionCount", connectionCount.get());
-        stats.put("connectionReuseCount", connectionReuseCount.get());
-
-        // 添加连接池详细信息
-        Map<String, Object> poolStats = new HashMap<>();
-        for (Map.Entry<String, ConnectionPool> entry : connectionPools.entrySet()) {
-            ConnectionPool pool = entry.getValue();
-            Map<String, Object> poolInfo = new HashMap<>();
-            poolInfo.put("activeConnections", pool.getActiveConnections());
-            poolInfo.put("totalConnections", pool.getTotalConnections());
-            poolStats.put(entry.getKey(), poolInfo);
-        }
-        stats.put("connectionPools", poolStats);
-
-        return stats;
     }
 }

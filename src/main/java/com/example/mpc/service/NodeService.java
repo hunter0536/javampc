@@ -112,79 +112,6 @@ public class NodeService {
     private final ConcurrentHashMap<String, RbcState> rbcStates = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, java.util.Set<Integer>> pendingRbcEchoes = new ConcurrentHashMap<>();
 
-    private static final class RbcState {
-        final Message message;
-        final java.util.Set<Integer> echoes = java.util.concurrent.ConcurrentHashMap.newKeySet();
-        final CompletableFuture<Void> delivered = new CompletableFuture<>();
-        volatile boolean deliveredOnce = false;
-
-        RbcState(Message message) {
-            this.message = message;
-        }
-    }
-
-    // 节点信息类
-    public static class NodeInfo {
-        public final int id;
-        public final String host;
-        public final int port;
-        public long lastSeen;
-
-        public NodeInfo(int id, String host, int port) {
-            this.id = id;
-            this.host = host;
-            this.port = port;
-            this.lastSeen = System.currentTimeMillis();
-        }
-    }
-
-    // 消息处理器接口
-    public interface MessageHandler {
-        CompletableFuture<Void> handleMessage(int senderId, Message message) throws Exception;
-    }
-
-    // 消息类
-    public static class Message implements Serializable {
-        public final int senderId;
-        public final MessageType type;
-        public final Object data;
-        public final String messageId;
-        public final boolean requireAck;
-        public final String ackForId;
-        public final boolean rbc;
-        public final String rbcHash;
-
-        public Message(int senderId, MessageType type, Object data) {
-            this(senderId, type, data, null, false, null, false, null);
-        }
-
-        public Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck, String ackForId) {
-            this(senderId, type, data, messageId, requireAck, ackForId, false, null);
-        }
-
-        public Message(int senderId,
-                       MessageType type,
-                       Object data,
-                       String messageId,
-                       boolean requireAck,
-                       String ackForId,
-                       boolean rbc,
-                       String rbcHash) {
-            this.senderId = senderId;
-            this.type = type;
-            this.data = data;
-            this.messageId = messageId;
-            this.requireAck = requireAck;
-            this.ackForId = ackForId;
-            this.rbc = rbc;
-            this.rbcHash = rbcHash;
-        }
-
-        public static Message ack(int senderId, String ackForId) {
-            return new Message(senderId, MessageType.NET_ACK, null, null, false, ackForId, false, null);
-        }
-    }
-
     private synchronized ScheduledExecutorService getRetryScheduler() {
         if (retryScheduler == null || retryScheduler.isShutdown() || retryScheduler.isTerminated()) {
             retryScheduler = Executors.newSingleThreadScheduledExecutor();
@@ -937,5 +864,78 @@ public class NodeService {
                 totalTaskTime.addAndGet(endTime - startTime);
             }
         });
+    }
+
+    private static final class RbcState {
+        final Message message;
+        final java.util.Set<Integer> echoes = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        final CompletableFuture<Void> delivered = new CompletableFuture<>();
+        volatile boolean deliveredOnce = false;
+
+        RbcState(Message message) {
+            this.message = message;
+        }
+    }
+
+    // 节点信息类
+    public static class NodeInfo {
+        public final int id;
+        public final String host;
+        public final int port;
+        public long lastSeen;
+
+        public NodeInfo(int id, String host, int port) {
+            this.id = id;
+            this.host = host;
+            this.port = port;
+            this.lastSeen = System.currentTimeMillis();
+        }
+    }
+
+    // 消息处理器接口
+    public interface MessageHandler {
+        CompletableFuture<Void> handleMessage(int senderId, Message message) throws Exception;
+    }
+
+    // 消息类
+    public static class Message implements Serializable {
+        public final int senderId;
+        public final MessageType type;
+        public final Object data;
+        public final String messageId;
+        public final boolean requireAck;
+        public final String ackForId;
+        public final boolean rbc;
+        public final String rbcHash;
+
+        public Message(int senderId, MessageType type, Object data) {
+            this(senderId, type, data, null, false, null, false, null);
+        }
+
+        public Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck, String ackForId) {
+            this(senderId, type, data, messageId, requireAck, ackForId, false, null);
+        }
+
+        public Message(int senderId,
+                       MessageType type,
+                       Object data,
+                       String messageId,
+                       boolean requireAck,
+                       String ackForId,
+                       boolean rbc,
+                       String rbcHash) {
+            this.senderId = senderId;
+            this.type = type;
+            this.data = data;
+            this.messageId = messageId;
+            this.requireAck = requireAck;
+            this.ackForId = ackForId;
+            this.rbc = rbc;
+            this.rbcHash = rbcHash;
+        }
+
+        public static Message ack(int senderId, String ackForId) {
+            return new Message(senderId, MessageType.NET_ACK, null, null, false, ackForId, false, null);
+        }
     }
 }

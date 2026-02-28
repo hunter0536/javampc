@@ -21,8 +21,10 @@ public class SignUtils {
         return ctx.getBytes(StandardCharsets.UTF_8);
     }
 
-    private static String buildSignSid(String taskId) {
-        return "SIGN" + ":" + taskId;
+    public static byte[] buildSignContext(String taskId, int senderId, byte[] messageHash, String stage) {
+        String sid = buildSignSid(taskId);
+        String ctx = "SIGN:" + stage + ":" + sid + ":" + senderId + ":" + HexUtils.bytesToHex(messageHash);
+        return ctx.getBytes(StandardCharsets.UTF_8);
     }
 
     public static String computeTaggedHashHex(String tag, Object... parts) {
@@ -36,6 +38,21 @@ public class SignUtils {
         } catch (Exception e) {
             throw new RuntimeException("Failed to compute tagged hash", e);
         }
+    }
+
+    public static BigInteger negateModN(BigInteger value, BigInteger n) {
+        return value.negate().mod(n);
+    }
+
+    public static BigInteger decodeSigned(BigInteger value, BigInteger n) {
+        if (value.compareTo(n) < 0) {
+            return value;
+        }
+        return value.subtract(n);
+    }
+
+    private static String buildSignSid(String taskId) {
+        return "SIGN" + ":" + taskId;
     }
 
     private static void updateDigest(MessageDigest md, Object value) {
@@ -59,22 +76,5 @@ public class SignUtils {
                 updateDigest(md, o);
             }
         }
-    }
-
-    public static BigInteger negateModN(BigInteger value, BigInteger n) {
-        return value.negate().mod(n);
-    }
-
-    public static BigInteger decodeSigned(BigInteger value, BigInteger n) {
-        if (value.compareTo(n) < 0) {
-            return value;
-        }
-        return value.subtract(n);
-    }
-
-    public static byte[] buildSignContext(String taskId, int senderId, byte[] messageHash, String stage) {
-        String sid = buildSignSid(taskId);
-        String ctx = "SIGN:" + stage + ":" + sid + ":" + senderId + ":" + HexUtils.bytesToHex(messageHash);
-        return ctx.getBytes(StandardCharsets.UTF_8);
     }
 }
