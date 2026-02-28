@@ -54,18 +54,18 @@ app:
     complaint:
       logPath: logs/complaints.jsonl # 投诉记录日志文件路径
     proof:
-      kappa: 64   # Πdec/Πaff-g* 的挑战位长度（临时降低以排查卡顿）
-      epsBits: 16 # Πdec/Πaff-g* 取值范围扩展位数
+      kappa: 128  # Πdec/Πaff-g* 的挑战位长度（生产环境推荐值：128，提供 2^-128 可靠性）
+      epsBits: 16 # Πdec/Πaff-g* 取值范围扩展位数（标准值：16）
     presign:
       retentionDays: 30 # 预签名使用记录保留天数
       usagePath: databases/node-{nodeId}/presign-usage.jsonl # 预签名使用记录路径（支持 {nodeId} 占位）
       echoEnabled: false # 是否启用 presign R1 echo
       useRbc: false # 是否对 presign R1 echo 使用 RBC
     refresh:
-      paillierBits: 1024 # 演练用：降低 Paillier 密钥位数加速 refresh
+      paillierBits: 3072 # Paillier 密钥位数（生产环境推荐值：≥3072，提供足够安全强度）
     aux:
-      paillierBits: 2048 # 测试用：恢复到 >=2048
-      minPaillierBitsForProof: 2047 # 允许 2048 目标位长产生的 2047 位 n
+      paillierBits: 3072 # Paillier 密钥位数（生产环境推荐值：≥3072，提供足够安全强度）
+      minPaillierBitsForProof: 3071 # 允许的最小 Paillier 模数位数（配合 3072 位目标）
       autoCheckIntervalSeconds: 60 # 自动 AUX 轮询间隔（秒）
 
 # MPC 全局参数

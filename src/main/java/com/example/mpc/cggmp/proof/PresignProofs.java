@@ -32,7 +32,7 @@ public final class PresignProofs {
     private PresignProofs() {
     }
 
-    // Real Π_enc using Paillier range proof (k_i, gamma_i in range)
+    // 真实的 Π_enc，使用 Paillier 范围证明 (k_i, gamma_i 在范围内)
     public static PiEncProof createEncProof(PaillierEncryption.PublicKey publicKey,
                                             ZKSetup zkSetup,
                                             BigInteger q,

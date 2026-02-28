@@ -7,14 +7,14 @@ public class AuxInfo {
     private Integer nodeId;
     private String taskId;
 
-    // Paillier private key components
+    // Paillier 私钥组件
     private String paillierP;
     private String paillierQ;
     private String paillierN;
     private String paillierG;
     private Integer paillierBitLength;
 
-    // Pedersen parameters (hatN, s, t)
+    // Pedersen 参数 (hatN, s, t)
     private String pedersenHatN;
     private String pedersenS;
     private String pedersenT;

@@ -136,7 +136,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         return response;
     }
 
-    // Legacy MtA-based DKG handlers removed in CGGMP21 DKG.
+    // 已废弃：基于 MtA 的 DKG 处理程序，已在 CGGMP21 DKG 中移除
 
     private String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder();

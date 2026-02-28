@@ -109,7 +109,7 @@ public class NettyService {
             logger.info("Netty server started on port {}", port);
 
             // 等待服务器关闭
-            // f.channel().closeFuture().sync();
+            // f.channel().closeFuture().sync(); // 等待通道关闭
         } catch (InterruptedException e) {
             logger.error("Error starting Netty server: {}", e.getMessage());
             throw e;

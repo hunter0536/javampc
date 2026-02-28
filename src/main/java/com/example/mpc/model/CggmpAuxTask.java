@@ -27,7 +27,7 @@ public class CggmpAuxTask {
     public volatile long startedAtMs = 0L;
     public volatile java.util.Map<String, Object> lastErrorEvidence;
 
-    // Local generated data
+    // 本地生成的数据
     public volatile PaillierEncryption paillier;
     public volatile BigInteger hatN;
     public volatile BigInteger s;

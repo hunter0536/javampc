@@ -36,7 +36,7 @@ public class Gg20SignatureTask {
     public final ConcurrentHashMap<Integer, java.math.BigInteger> peerShares = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.math.BigInteger> mtaBetas = new ConcurrentHashMap<>();
 
-    // Presign state (CGGMP21 3-round presigning)
+    // 预签名状态 (CGGMP21 三轮预签名)
     public final ConcurrentHashMap<Integer, BigInteger> presignK = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, BigInteger> presignG = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> presignGamma = new ConcurrentHashMap<>();

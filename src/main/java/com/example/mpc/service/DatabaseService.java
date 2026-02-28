@@ -559,7 +559,7 @@ public class DatabaseService {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_key_shares_group_public_key ON key_shares(group_public_key, id DESC)");
             statementCount.incrementAndGet();
         } catch (SQLException e) {
-            // Ignore index creation errors to avoid breaking startup on existing DBs.
+            // 忽略索引创建错误，避免在已有数据库上启动失败
         }
     }
 
@@ -572,7 +572,7 @@ public class DatabaseService {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_complaints_reason ON complaints(reason, id DESC)");
             statementCount.incrementAndGet();
         } catch (SQLException e) {
-            // Ignore index creation errors to avoid breaking startup on existing DBs.
+            // 忽略索引创建错误，避免在已有数据库上启动失败
         }
     }
 
@@ -593,7 +593,7 @@ public class DatabaseService {
                 statementCount.incrementAndGet();
             }
         } catch (SQLException e) {
-            // Ignore migration errors to avoid breaking startup on existing DBs.
+            // 忽略迁移错误，避免在已有数据库上启动失败
         }
     }
 
@@ -615,7 +615,7 @@ public class DatabaseService {
             stmt.execute("PRAGMA synchronous=NORMAL");
             stmt.execute("PRAGMA busy_timeout=3000");
         } catch (SQLException e) {
-            // Ignore PRAGMA errors for compatibility.
+            // 忽略 PRAGMA 错误以保持兼容性
         }
     }
 
@@ -694,14 +694,14 @@ public class DatabaseService {
             try {
                 conn.rollback();
             } catch (SQLException ignore) {
-                // ignore rollback failures
+                // 忽略回滚失败
             }
             throw e;
         } finally {
             try {
                 conn.setAutoCommit(previousAutoCommit);
             } catch (SQLException ignore) {
-                // ignore restore failures
+                // 忽略恢复失败
             }
         }
     }

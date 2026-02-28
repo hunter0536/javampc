@@ -1173,7 +1173,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             BigInteger q = Secp256k1Curve.n();
 
             int selfCheckKeyBits = 1024;
-            // PiDec self-check
+            // PiDec 自检
             PaillierEncryption paillier = new PaillierEncryption(selfCheckKeyBits);
             PaillierEncryption.PublicKey pk = paillier.getPublicKeyInfo();
             BigInteger x = randomNonZero(q);
@@ -1214,7 +1214,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             );
             result.put("piDecOk", decOk);
 
-            // PiAffG self-check
+            // PiAffG 自检
             PaillierEncryption paillier0 = new PaillierEncryption(selfCheckKeyBits);
             PaillierEncryption paillier1 = new PaillierEncryption(selfCheckKeyBits);
             PaillierEncryption.PublicKey pk0 = paillier0.getPublicKeyInfo();

@@ -44,7 +44,7 @@ public class CggmpDkgTask {
     public final ConcurrentHashMap<Integer, MtAInitiatorMessage> mtaInitiatorMessages = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, BigInteger> mtaBetas = new ConcurrentHashMap<>();
 
-    // Figure 7 (Aux Info / Key Refresh) state
+    // 图 7（辅助信息 / 密钥刷新）状态
     public final ConcurrentHashMap<Integer, byte[]> ridParts = new ConcurrentHashMap<>();
     public volatile byte[] rid;
     public final ConcurrentHashMap<Integer, byte[]> chainCodeParts = new ConcurrentHashMap<>();
@@ -58,12 +58,12 @@ public class CggmpDkgTask {
     public final ConcurrentHashMap<Integer, NoSmallFactorProof> factorProofs = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, NoSmallFactorProofValidator> noSmallFactorValidators = new ConcurrentHashMap<>();
 
-    // X_{j,k} and A_{j,k}
+    // X_{j,k} 和 A_{j,k}
     public final ConcurrentHashMap<Integer, ConcurrentHashMap<Integer, ECPoint>> Xjks = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ConcurrentHashMap<Integer, ECPoint>> Ajks = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, BigInteger> schAlphas = new ConcurrentHashMap<>();
 
-    // Y_{j,i} and C_{j,i}
+    // Y_{j,i} 和 C_{j,i}
     public final ConcurrentHashMap<Integer, ConcurrentHashMap<Integer, ECPoint>> Yji = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ConcurrentHashMap<Integer, BigInteger>> Cji = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ConcurrentHashMap<Integer, com.example.mpc.cggmp.proof.BiPrimeBlumProof>> modProofs = new ConcurrentHashMap<>();
@@ -78,11 +78,11 @@ public class CggmpDkgTask {
     public final ConcurrentHashMap<Integer, java.util.concurrent.CompletableFuture<Boolean>> round2ModFacVerifyFutures = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.util.concurrent.CompletableFuture<Boolean>> round2SchVerifyFutures = new ConcurrentHashMap<>();
 
-    // Derived x_{j,i} shares and X*_k
+    // 派生的 x_{j,i} 份额和 X*_k
     public final ConcurrentHashMap<Integer, ConcurrentHashMap<Integer, BigInteger>> xji = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> XkStar = new ConcurrentHashMap<>();
 
-    // Round de-duplication
+    // 轮次去重
     public final ConcurrentHashMap<Integer, Boolean> round1Received = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> round1EchoReceived = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> round1Processing = new ConcurrentHashMap<>();
