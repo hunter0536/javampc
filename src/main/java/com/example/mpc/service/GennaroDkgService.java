@@ -36,7 +36,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -47,9 +46,6 @@ import java.util.function.BooleanSupplier;
 @Service
 public class GennaroDkgService implements NodeService.MessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(GennaroDkgService.class);
-
-    @Autowired
-    private DatabaseService databaseService;
 
     @Autowired
     private NodeService nodeService;
@@ -67,11 +63,6 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     }
 
     private final ConcurrentHashMap<String, GennaroDkgTask> dkgTasks = new ConcurrentHashMap<>();
-    private static final ExecutorService dkgExecutorService = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "Gennaro-DKG-Thread");
-        t.setDaemon(true);
-        return t;
-    });
     private static final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "Gennaro-DKG-Scheduler");
         t.setDaemon(true);

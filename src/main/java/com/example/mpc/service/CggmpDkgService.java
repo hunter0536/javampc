@@ -1,10 +1,5 @@
 package com.example.mpc.service;
 
-import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
-import com.example.mpc.cggmp.proof.BiPrimeProofValidator;
-import com.example.mpc.cggmp.proof.NoSmallFactorProof;
-import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
@@ -54,7 +49,6 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class CggmpDkgService implements NodeService.MessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpDkgService.class);
-    private static final BiPrimeProofValidator BI_PRIME_VALIDATOR = new BiPrimeProofValidator();
     private static final ExecutorService dkgExecutorService = ThreadPoolUtil.getComputationThreadPool();
 
     private final SecureRandom secureRandom = new SecureRandom();
@@ -81,8 +75,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     private boolean dkgUseRbc;
 
     @Value("${app.cggmp.aux.minPaillierBitsForProof:2048}")
-    private int auxMinPaillierBitsForProof;
-
     private final int nodesCount = Constants.NODES_COUNT;
     private final int threshold = Constants.THRESHOLD;
 

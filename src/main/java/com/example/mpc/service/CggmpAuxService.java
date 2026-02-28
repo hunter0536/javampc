@@ -49,7 +49,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class CggmpAuxService implements NodeService.MessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpAuxService.class);
-    private final SecureRandom secureRandom = new SecureRandom();
     private static final ExecutorService auxExecutorService = ThreadPoolUtil.getAuxThreadPool();
     private static final BiPrimeProofValidator BI_PRIME_VALIDATOR = new BiPrimeProofValidator();
 
