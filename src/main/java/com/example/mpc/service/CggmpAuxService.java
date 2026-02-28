@@ -17,6 +17,7 @@ import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.AuxInfoDao;
 import com.example.mpc.enums.MessageType;
+import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.model.AuxInfo;
 import com.example.mpc.model.CggmpAuxTask;
 import org.slf4j.Logger;
@@ -236,7 +237,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     private boolean hasActiveAuxTask() {
         pruneStaleAuxTasks();
         for (CggmpAuxTask task : auxTasks.values()) {
-            if (task != null && task.status.get() == com.example.mpc.enums.TaskStatus.IN_PROGRESS) {
+            if (task != null && task.status.get() == TaskStatus.IN_PROGRESS) {
                 return true;
             }
         }
@@ -248,7 +249,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             var entry = it.next();
             CggmpAuxTask task = entry.getValue();
             if (task == null) continue;
-            if (task.status.get() == com.example.mpc.enums.TaskStatus.IN_PROGRESS && task.isTimeout()) {
+            if (task.status.get() == TaskStatus.IN_PROGRESS && task.isTimeout()) {
                 task.fail("AUX task timeout");
                 task.lastErrorEvidence = buildAuxEvidence(task);
                 logger.warn("AUX task timed out and will be cleared: taskId={}, executionId={}",
@@ -365,7 +366,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         response.setTaskId(task.taskId);
         response.setStatus(task.status.get().name());
         response.setInProgress(task.status.get().isRunning());
-        response.setCompleted(task.status.get() == com.example.mpc.enums.TaskStatus.COMPLETED);
+        response.setCompleted(task.status.get() == TaskStatus.COMPLETED);
         response.setErrorMessage(task.errorMessage);
         response.setLastErrorEvidence(task.lastErrorEvidence);
         response.setReceivedCommits(task.commitHashes.size());

@@ -18,6 +18,7 @@ import com.example.mpc.common.util.JsonUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
+import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.CggmpAuxTask;
@@ -60,7 +61,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     @Autowired
     private KeyShareDao keyShareDao;
     @Autowired
-    private com.example.mpc.dao.ComplaintDao complaintDao;
+    private ComplaintDao complaintDao;
 
     @Value("${node.id}")
     private int nodeId;
@@ -154,7 +155,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         });
     }
 
-    public java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> getComplaints(String taskId,
+    public List<ComplaintDao.ComplaintRecord> getComplaints(String taskId,
                                                                                           String reason,
                                                                                           String reasonLike,
                                                                                           Integer senderId,

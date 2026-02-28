@@ -17,8 +17,10 @@ import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
+import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
+import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.model.CggmpRefreshTask;
 import com.example.mpc.model.KeyShare;
 import org.bouncycastle.math.ec.ECPoint;
@@ -47,7 +49,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     private KeyShareDao keyShareDao;
 
     @Autowired
-    private com.example.mpc.dao.ComplaintDao complaintDao;
+    private ComplaintDao complaintDao;
 
     @Value("${node.id}")
     private int nodeId;
@@ -58,7 +60,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     private int refreshPaillierBits;
     @Value("${app.cggmp.complaint.logPath:logs/complaints.jsonl}")
     private String complaintLogPath;
-    private final Map<String, com.example.mpc.model.CggmpRefreshTask> refreshTasks = new ConcurrentHashMap<>();
+    private final Map<String, CggmpRefreshTask> refreshTasks = new ConcurrentHashMap<>();
 
     private volatile PaillierEncryption refreshPaillier;
     private volatile ZKSetup refreshZkSetup;
@@ -102,7 +104,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     }
 
     public CompletableFuture<Void> startRefreshTask(String taskId) {
-        com.example.mpc.model.CggmpRefreshTask task = refreshTasks.get(taskId);
+        CggmpRefreshTask task = refreshTasks.get(taskId);
         if (task == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Refresh task not found"));
         }
@@ -119,7 +121,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     }
 
     public com.example.mpc.common.response.RefreshTaskStatusResponse getRefreshTaskStatus(String taskId) {
-        com.example.mpc.model.CggmpRefreshTask task = refreshTasks.get(taskId);
+        CggmpRefreshTask task = refreshTasks.get(taskId);
         if (task == null) {
             throw new RuntimeException("Refresh task not found: " + taskId);
         }
@@ -127,7 +129,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         response.setTaskId(task.taskId);
         response.setGroupPublicKey(task.groupPublicKey);
         response.setInProgress(task.status.get().isRunning());
-        response.setCompleted(task.status.get() == com.example.mpc.enums.TaskStatus.COMPLETED);
+        response.setCompleted(task.status.get() == TaskStatus.COMPLETED);
         response.setStatus(task.status.get().name());
         response.setErrorMessage(task.errorMessage);
         response.setParticipants(new ArrayList<>(task.participants));
