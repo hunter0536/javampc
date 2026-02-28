@@ -2,6 +2,8 @@ package com.example.mpc.cggmp.sign;
 
 import org.bouncycastle.math.ec.ECPoint;
 
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
+
 import java.math.BigInteger;
 
 public final class CggmpIntegrityChecker {
@@ -23,7 +25,7 @@ public final class CggmpIntegrityChecker {
         if (commitment == null || gamma == null || blinding == null) {
             return false;
         }
-        BigInteger gammaValue = gamma.getAffineXCoord().toBigInteger().mod(Secp256k1Curve.n());
+        BigInteger gammaValue = gamma.getAffineXCoord().toBigInteger().mod(Secp256k1CurveUtils.n());
         ECPoint expected = EcPedersen.commit(gammaValue, blinding);
         return expected.equals(commitment);
     }

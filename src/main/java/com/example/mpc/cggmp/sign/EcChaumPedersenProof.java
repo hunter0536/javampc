@@ -2,6 +2,8 @@ package com.example.mpc.cggmp.sign;
 
 import org.bouncycastle.math.ec.ECPoint;
 
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
+
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -59,10 +61,10 @@ public final class EcChaumPedersenProof {
     private static BigInteger challenge(ECPoint commitment, ECPoint A, byte[] context, BigInteger q) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update(Secp256k1Curve.encodePoint(EcPedersen.G()));
-            digest.update(Secp256k1Curve.encodePoint(EcPedersen.H()));
-            digest.update(Secp256k1Curve.encodePoint(commitment));
-            digest.update(Secp256k1Curve.encodePoint(A));
+            digest.update(Secp256k1CurveUtils.encodePoint(EcPedersen.G()));
+            digest.update(Secp256k1CurveUtils.encodePoint(EcPedersen.H()));
+            digest.update(Secp256k1CurveUtils.encodePoint(commitment));
+            digest.update(Secp256k1CurveUtils.encodePoint(A));
             if (context != null) {
                 digest.update(context);
             }

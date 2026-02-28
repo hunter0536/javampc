@@ -1,17 +1,24 @@
-package com.example.mpc.cggmp.sign;
+package com.example.mpc.cggmp.util;
 
 import org.bouncycastle.asn1.x9.X9ECParameters;
 import org.bouncycastle.crypto.ec.CustomNamedCurves;
 import org.bouncycastle.math.ec.ECPoint;
 
+import com.example.mpc.common.util.HexUtils;
+
 import java.math.BigInteger;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
-public final class Secp256k1Curve {
+public final class Secp256k1CurveUtils {
     private static final X9ECParameters CURVE = CustomNamedCurves.getByName("secp256k1");
 
-    private Secp256k1Curve() {
+    private Secp256k1CurveUtils() {
     }
 
     public static ECPoint G() {
@@ -58,5 +65,38 @@ public final class Secp256k1Curve {
             r = new BigInteger(n.bitLength(), rnd).mod(n);
         } while (r.signum() == 0);
         return r;
+    }
+
+    public static Map<String, String> encodeECPointMap(Map<Integer, ECPoint> map) {
+        Map<String, String> out = new LinkedHashMap<>();
+        List<Integer> keys = new ArrayList<>(map.keySet());
+        Collections.sort(keys);
+        for (int k : keys) {
+            ECPoint p = map.get(k);
+            if (p == null) continue;
+            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(false)));
+        }
+        return out;
+    }
+
+    public static Map<String, String> encodeECPointMapCompressed(Map<Integer, ECPoint> map) {
+        Map<String, String> out = new LinkedHashMap<>();
+        List<Integer> keys = new ArrayList<>(map.keySet());
+        Collections.sort(keys);
+        for (int k : keys) {
+            ECPoint p = map.get(k);
+            if (p == null) continue;
+            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(true)));
+        }
+        return out;
+    }
+
+    public static Map<Integer, ECPoint> decodeECPointMap(Map<?, ?> map) {
+        Map<Integer, ECPoint> out = new HashMap<>();
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            int key = Integer.parseInt(String.valueOf(e.getKey()));
+            out.put(key, decodePoint(HexUtils.hexToBytes(String.valueOf(e.getValue()))));
+        }
+        return out;
     }
 }

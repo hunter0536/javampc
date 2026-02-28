@@ -7,7 +7,7 @@ import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.cggmp.PaillierEncryption;
 
 import org.bouncycastle.math.ec.ECPoint;
-import com.example.mpc.cggmp.sign.Secp256k1Curve;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 
 import java.math.BigInteger;
@@ -377,7 +377,7 @@ public final class CggmpCodecUtils {
     }
 
     private static ECPoint fromHexPoint(String hex) {
-        return Secp256k1Curve.decodePoint(HexUtils.hexToBytes(hex));
+        return Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(hex));
     }
 
     public static Map<String, Object> encodeSchProofMap(Map<Integer, PiSchProof> map) {

@@ -1,6 +1,6 @@
 package com.example.mpc.cggmp.proof;
 
-import com.example.mpc.cggmp.sign.Secp256k1Curve;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
 import org.bouncycastle.math.ec.ECPoint;
 
@@ -13,7 +13,7 @@ public final class RefreshProofs {
     }
 
     public static PiSchProof createSchProof(ECPoint g, ECPoint X, BigInteger x, byte[] context) {
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         SecureRandom rnd = new SecureRandom();
         BigInteger alpha = new BigInteger(q.bitLength(), rnd).mod(q);
         ECPoint A = g.multiply(alpha).normalize();
@@ -24,7 +24,7 @@ public final class RefreshProofs {
 
     public static boolean verifySchProof(PiSchProof proof, ECPoint g, ECPoint X, byte[] context) {
         if (proof == null || proof.A() == null || proof.z() == null) return false;
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger e = challenge("PI_SCH", q, context, g, X, proof.A());
         ECPoint left = g.multiply(proof.z()).normalize();
         ECPoint right = proof.A().add(X.multiply(e)).normalize();
@@ -35,7 +35,7 @@ public final class RefreshProofs {
         SecureRandom rnd = new SecureRandom();
         BigInteger alpha = new BigInteger(hatN.bitLength(), rnd).mod(hatN);
         BigInteger A = BigIntegerUtils.powSigned(t, alpha, hatN);
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger e = challenge("PI_PRM", q, context, hatN, s, t, A);
         BigInteger z = alpha.add(e.multiply(lambda));
         return new PiPrmProof(A, z);
@@ -43,7 +43,7 @@ public final class RefreshProofs {
 
     public static boolean verifyPrmProof(PiPrmProof proof, BigInteger hatN, BigInteger s, BigInteger t, byte[] context) {
         if (proof == null || proof.A() == null || proof.z() == null) return false;
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger e = challenge("PI_PRM", q, context, hatN, s, t, proof.A());
         BigInteger left = BigIntegerUtils.powSigned(t, proof.z(), hatN);
         BigInteger right = proof.A().multiply(BigIntegerUtils.powSigned(s, e, hatN)).mod(hatN);
@@ -62,7 +62,7 @@ public final class RefreshProofs {
                 if (o instanceof BigInteger bi) {
                     md.update(bi.toByteArray());
                 } else if (o instanceof ECPoint p) {
-                    md.update(Secp256k1Curve.encodePoint(p));
+                    md.update(Secp256k1CurveUtils.encodePoint(p));
                 } else {
                     md.update(String.valueOf(o).getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }

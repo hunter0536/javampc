@@ -1,6 +1,6 @@
 package com.example.mpc.service;
 
-import com.example.mpc.cggmp.sign.Secp256k1Curve;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.KeyShareDao;
@@ -238,14 +238,14 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
 
     private void runOfflinePhase(SimpleSignatureTask task) {
         try {
-            BigInteger curveOrder = Secp256k1Curve.n();
+            BigInteger curveOrder = Secp256k1CurveUtils.n();
 
             task.k_i = randomNonZero(curveOrder);
             task.gamma_i = randomNonZero(curveOrder);
 
-            task.R = Secp256k1Curve.multiply(Secp256k1Curve.G(), task.k_i).normalize();
+            task.R = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), task.k_i).normalize();
 
-            ECPoint Gamma = Secp256k1Curve.multiply(Secp256k1Curve.G(), task.gamma_i).normalize();
+            ECPoint Gamma = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), task.gamma_i).normalize();
             task.Gamma = Gamma;
 
             logger.info("Node {} generated k_i={}, gamma_i={}, broadcasting R and Gamma",
@@ -257,8 +257,8 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
 
             waitForOfflinePhaseAsync(task).join();
 
-            task.R = Secp256k1Curve.sumPoints(task.RShares);
-            task.Gamma = Secp256k1Curve.sumPoints(task.GammaShares);
+            task.R = Secp256k1CurveUtils.sumPoints(task.RShares);
+            task.Gamma = Secp256k1CurveUtils.sumPoints(task.GammaShares);
 
             logger.info("Node {} completed offline phase: R={}, Gamma={}",
                     nodeId, task.R.getAffineXCoord().toBigInteger().toString(16),
@@ -279,7 +279,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
                 throw new RuntimeException("Offline phase not completed");
             }
 
-            BigInteger curveOrder = Secp256k1Curve.n();
+            BigInteger curveOrder = Secp256k1CurveUtils.n();
 
             BigInteger r = task.R.getAffineXCoord().toBigInteger().mod(curveOrder);
             if (r.signum() == 0) {
@@ -551,8 +551,8 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
             }
         }
 
-        ECPoint R = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(RHex)).normalize();
-        ECPoint Gamma = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(GammaHex)).normalize();
+        ECPoint R = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(RHex)).normalize();
+        ECPoint Gamma = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(GammaHex)).normalize();
 
         task.RShares.put(senderId, R);
         task.GammaShares.put(senderId, Gamma);
@@ -771,7 +771,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     }
 
     private String derEncodeSignature(BigInteger r, BigInteger s) {
-        BigInteger n = Secp256k1Curve.n();
+        BigInteger n = Secp256k1CurveUtils.n();
         if (s.compareTo(n.shiftRight(1)) > 0) {
             s = n.subtract(s);
         }
@@ -789,7 +789,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
 
     public boolean verifySignature(String groupPublicKey, String message, String rHex, String sHex) {
         try {
-            BigInteger curveOrder = Secp256k1Curve.n();
+            BigInteger curveOrder = Secp256k1CurveUtils.n();
 
             BigInteger r = new BigInteger(rHex, 16);
             BigInteger s = new BigInteger(sHex, 16);
@@ -800,7 +800,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
                 return false;
             }
 
-            ECPoint groupPublicKeyPoint = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(groupPublicKey));
+            ECPoint groupPublicKeyPoint = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(groupPublicKey));
             if (groupPublicKeyPoint == null || groupPublicKeyPoint.isInfinity()) {
                 logger.warn("Invalid group public key");
                 return false;
@@ -812,7 +812,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
             BigInteger u1 = messageHash.multiply(sInv).mod(curveOrder);
             BigInteger u2 = r.multiply(sInv).mod(curveOrder);
 
-            ECPoint R = Secp256k1Curve.G().multiply(u1).add(groupPublicKeyPoint.multiply(u2)).normalize();
+            ECPoint R = Secp256k1CurveUtils.G().multiply(u1).add(groupPublicKeyPoint.multiply(u2)).normalize();
 
             if (R.isInfinity()) {
                 logger.warn("R is infinity");
@@ -844,7 +844,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
                 return null;
             }
             BigInteger privateKey = new BigInteger(keyShareHex, 16);
-            return privateKey.mod(Secp256k1Curve.n());
+            return privateKey.mod(Secp256k1CurveUtils.n());
         } catch (Exception e) {
             logger.error("Failed to load private key: {}", e.getMessage());
             return null;

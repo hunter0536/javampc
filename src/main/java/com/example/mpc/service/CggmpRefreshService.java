@@ -11,7 +11,7 @@ import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
 import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
-import com.example.mpc.cggmp.sign.Secp256k1Curve;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonUtils;
@@ -163,7 +163,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                     }
                     return CompletableFuture.supplyAsync(() -> {
                         try {
-                            BigInteger q = Secp256k1Curve.n();
+                            BigInteger q = Secp256k1CurveUtils.n();
                             logger.info("Refresh {} network ready", task.taskId);
                             if (!task.participants.contains(nodeId)) {
                                 return null;
@@ -188,7 +188,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                             );
 
                             BigInteger xi = loadLocalShare(task.groupPublicKey);
-                            ECPoint Xi = Secp256k1Curve.multiply(Secp256k1Curve.G(), xi);
+                            ECPoint Xi = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), xi);
 
                             BigInteger sum = BigInteger.ZERO;
                             for (int peerId : task.participants) {
@@ -203,13 +203,13 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                             task.xShares.put(nodeId, selfShare);
                             for (int peerId : task.participants) {
                                 BigInteger x = task.xShares.get(peerId);
-                                task.xPoints.put(peerId, Secp256k1Curve.multiply(Secp256k1Curve.G(), x));
+                                task.xPoints.put(peerId, Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x));
                             }
 
                             for (int peerId : task.participants) {
                                 BigInteger y = randomNonZero(q);
                                 task.yShares.put(peerId, y);
-                                task.yPoints.put(peerId, Secp256k1Curve.multiply(Secp256k1Curve.G(), y));
+                                task.yPoints.put(peerId, Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), y));
                             }
 
                             Map<Integer, ECPoint> A = new HashMap<>();
@@ -217,7 +217,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                             for (int peerId : task.participants) {
                                 BigInteger alpha = new BigInteger(q.bitLength(), rnd).mod(q);
                                 task.schAlphas.put(peerId, alpha);
-                                A.put(peerId, Secp256k1Curve.multiply(Secp256k1Curve.G(), alpha));
+                                A.put(peerId, Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), alpha));
                             }
 
                             byte[] rid = randomBytes(32);
@@ -273,12 +273,12 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                                     BigInteger y = task.yShares.get(peerId);
                                     BigInteger rho = deriveRefreshMask(task.taskId, mergedRid, nodeId, peerId, Yji, y);
                                     BigInteger xij = task.xShares.get(peerId);
-                                    C.put(peerId, xij.add(rho).mod(Secp256k1Curve.n()));
+                                    C.put(peerId, xij.add(rho).mod(Secp256k1CurveUtils.n()));
                                 }
                                 for (int peerId : task.participants) {
                                     BigInteger xij = task.xShares.get(peerId);
                                     PiSchProof sch = RefreshProofs.createSchProof(
-                                            Secp256k1Curve.G(),
+                                            Secp256k1CurveUtils.G(),
                                             task.xPoints.get(peerId),
                                             xij,
                                             buildRefreshContext(task.taskId, mergedRid, nodeId, "SCH:" + peerId)
@@ -341,7 +341,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         data.put("Y", JsonUtils.encodeECPointMap(r2.Y));
         data.put("X", JsonUtils.encodeECPointMap(r2.X));
         data.put("A", JsonUtils.encodeECPointMap(r2.A));
-        data.put("Xi", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(r2.Xi)));
+        data.put("Xi", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(r2.Xi)));
         data.put("rid", Base64.getEncoder().encodeToString(r2.rid));
         data.put("u", Base64.getEncoder().encodeToString(r2.u));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_REFRESH_R2, data));
@@ -475,7 +475,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             Map<Integer, ECPoint> Y = JsonUtils.decodeECPointMap(yMap);
             Map<Integer, ECPoint> X = JsonUtils.decodeECPointMap(xMap);
             Map<Integer, ECPoint> A = JsonUtils.decodeECPointMap(aMap);
-            ECPoint Xi = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(xiHex));
+            ECPoint Xi = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(xiHex));
             byte[] rid = Base64.getDecoder().decode(ridB64);
             byte[] u = Base64.getDecoder().decode(uB64);
 
@@ -643,7 +643,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         if (task.rid == null || task.rid.length == 0) {
             return false;
         }
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         for (int peerId : task.participants) {
             if (!task.round1Commit.containsKey(peerId) || !task.round2Data.containsKey(peerId) || !task.round3Data.containsKey(peerId)) {
                 fireAndForget(broadcastRefreshComplaint(task, peerId, "Missing refresh data",
@@ -677,7 +677,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                         "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
-            ECPoint sum = Secp256k1Curve.sumPoints(r2.X);
+            ECPoint sum = Secp256k1CurveUtils.sumPoints(r2.X);
             if (!sum.isInfinity()) {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("peerId", peerId);
@@ -721,7 +721,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                             "CGGMP_REFRESH_COMPLAINT");
                     return false;
                 }
-                if (!RefreshProofs.verifySchProof(sch, Secp256k1Curve.G(), Xjk, buildRefreshContext(task.taskId, task.rid, peerId, "SCH:" + k))) {
+                if (!RefreshProofs.verifySchProof(sch, Secp256k1CurveUtils.G(), Xjk, buildRefreshContext(task.taskId, task.rid, peerId, "SCH:" + k))) {
                     fireAndForget(broadcastRefreshComplaint(task, peerId, "Invalid Schnorr proof",
                                     refreshEvidence(task, peerId, "Invalid Schnorr proof", Map.of("peerId", peerId, "k", k))),
                             "CGGMP_REFRESH_COMPLAINT");
@@ -759,7 +759,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                         "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
-            ECPoint check = Secp256k1Curve.multiply(Secp256k1Curve.G(), xji);
+            ECPoint check = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), xji);
             if (!check.equals(Xji)) {
                 fireAndForget(broadcastRefreshComplaint(task, peerId, "Invalid C_{j,i} decryption",
                                 refreshEvidence(task, peerId, "Invalid C_{j,i} decryption", Map.of("peerId", peerId, "missingFor", nodeId))),
@@ -878,7 +878,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                         buildRefreshContext(task.taskId, null, offenderId, "PRM"));
             }
             if (r.startsWith("Sum of X not identity")) {
-                return r2 != null && !Secp256k1Curve.sumPoints(r2.X).isInfinity();
+                return r2 != null && !Secp256k1CurveUtils.sumPoints(r2.X).isInfinity();
             }
             if (r.startsWith("Invalid Blum proof")) {
                 if (r2 == null || r3 == null) return false;
@@ -907,7 +907,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                     PiSchProof sch = r3.schProofs.get(k);
                     ECPoint Xjk = r2.X.get(k);
                     if (sch == null || Xjk == null) continue;
-                    boolean ok = RefreshProofs.verifySchProof(sch, Secp256k1Curve.G(), Xjk,
+                    boolean ok = RefreshProofs.verifySchProof(sch, Secp256k1CurveUtils.G(), Xjk,
                             buildRefreshContext(task.taskId, task.rid, offenderId, "SCH:" + k));
                     if (!ok) return true;
                 }
@@ -930,8 +930,8 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                 BigInteger yij = task.yShares.get(offenderId);
                 if (Cji == null || Yji == null || Xji == null || yij == null) return false;
                 BigInteger rho = deriveRefreshMask(task.taskId, task.rid, offenderId, nodeId, Yji, yij);
-                BigInteger xji = Cji.subtract(rho).mod(Secp256k1Curve.n());
-                ECPoint check = Secp256k1Curve.multiply(Secp256k1Curve.G(), xji);
+                BigInteger xji = Cji.subtract(rho).mod(Secp256k1CurveUtils.n());
+                ECPoint check = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), xji);
                 return !check.equals(Xji);
             }
         } catch (Exception e) {
@@ -1053,7 +1053,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             throw new RuntimeException("Key share not found");
         }
         BigInteger share = new BigInteger(keyShare.getKeyShare(), 16);
-        return share.mod(Secp256k1Curve.n());
+        return share.mod(Secp256k1CurveUtils.n());
     }
 
     private BigInteger randomNonZero(BigInteger n) {
@@ -1110,7 +1110,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             updatePointMap(md, X);
             updatePointMap(md, Y);
             updatePointMap(md, A);
-            md.update(Secp256k1Curve.encodePoint(Xi));
+            md.update(Secp256k1CurveUtils.encodePoint(Xi));
             md.update(pk.n.toByteArray());
             md.update(zkSetup.hatN().toByteArray());
             md.update(zkSetup.h1().toByteArray());
@@ -1170,8 +1170,8 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             md.update(BigInteger.valueOf(i).toByteArray());
             md.update(BigInteger.valueOf(j).toByteArray());
             ECPoint shared = Yji.multiply(yij).normalize();
-            md.update(Secp256k1Curve.encodePoint(shared));
-            return new BigInteger(1, md.digest()).mod(Secp256k1Curve.n());
+            md.update(Secp256k1CurveUtils.encodePoint(shared));
+            return new BigInteger(1, md.digest()).mod(Secp256k1CurveUtils.n());
         } catch (Exception e) {
             throw new RuntimeException("Refresh mask failed", e);
         }
@@ -1199,7 +1199,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         if (publicKey == null || publicKey.n == null || publicKey.nSquared == null || publicKey.g == null) {
             return false;
         }
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         return publicKey.n.compareTo(q.pow(8)) >= 0;
     }
 

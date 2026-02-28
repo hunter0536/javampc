@@ -6,7 +6,7 @@ import com.example.mpc.cggmp.proof.PaillierRangeProof;
 import com.example.mpc.cggmp.proof.PaillierRangeProofContext;
 import com.example.mpc.cggmp.proof.PaillierRangeProofGenerator;
 import com.example.mpc.cggmp.proof.PaillierRangeProofValidator;
-import com.example.mpc.cggmp.sign.Secp256k1Curve;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -159,7 +159,7 @@ public final class PresignProofs {
         List<BigInteger> r = new ArrayList<>(effectiveKappa);
         List<BigInteger> s = new ArrayList<>(effectiveKappa);
 
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger rangeBound = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps + 1);
         long loop1Start = System.nanoTime();
         for (int i = 0; i < effectiveKappa; i++) {
@@ -296,7 +296,7 @@ public final class PresignProofs {
         BigInteger N0sq = N0.multiply(N0);
         BigInteger N1sq = N1.multiply(N1);
         boolean[] e = challengeBits("PI_AFFG", context, n, proof.A(), proof.B(), proof.R());
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger rangeBound = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps + 1);
 
         for (int i = 0; i < n; i++) {
@@ -334,7 +334,7 @@ public final class PresignProofs {
     }
 
     public static PiLogStarProof createLogStarProof(ECPoint base, ECPoint X, BigInteger secret, byte[] context) {
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         SecureRandom rnd = new SecureRandom();
         BigInteger alpha;
         do {
@@ -348,7 +348,7 @@ public final class PresignProofs {
 
     public static boolean verifyLogStarProof(PiLogStarProof proof, ECPoint base, ECPoint X, byte[] context) {
         if (proof == null || proof.A() == null || proof.z() == null) return false;
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger c = challenge("PI_LOGSTAR", base, X, proof.A(), context);
         ECPoint left = base.multiply(proof.z()).normalize();
         ECPoint right = proof.A().add(X.multiply(c)).normalize();
@@ -364,7 +364,7 @@ public final class PresignProofs {
                                             BigInteger x,
                                             BigInteger alpha,
                                             byte[] context) {
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         SecureRandom rnd = new SecureRandom();
         BigInteger u = new BigInteger(q.bitLength(), rnd).mod(q);
         BigInteger v = new BigInteger(q.bitLength(), rnd).mod(q);
@@ -386,7 +386,7 @@ public final class PresignProofs {
                                          ECPoint B,
                                          byte[] context) {
         if (proof == null || proof.U1() == null || proof.U2() == null || proof.U3() == null) return false;
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger e = challengeSigned("PI_LOG", q, context, g, h, X, Y, A, B, proof.U1(), proof.U2(), proof.U3());
         ECPoint left1 = h.multiply(proof.z1()).normalize();
         ECPoint right1 = proof.U1().add(X.multiply(e)).normalize();
@@ -411,7 +411,7 @@ public final class PresignProofs {
                                                   BigInteger b,
                                                   int epsBits,
                                                   byte[] context) {
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger N0 = publicKey.n;
         BigInteger N0sq = publicKey.nSquared;
         BigInteger hatN = zkSetup.hatN();
@@ -478,7 +478,7 @@ public final class PresignProofs {
         if (proof == null) {
             return new EncElgVerifyResult(false, false, false, false, false, false);
         }
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger N0 = publicKey.n;
         BigInteger N0sq = publicKey.nSquared;
         BigInteger hatN = zkSetup.hatN();
@@ -542,7 +542,7 @@ public final class PresignProofs {
         int effectiveEps = epsBits > 0 ? epsBits : RANGE_EPS_BITS;
         BigInteger N0sq = N0.multiply(N0);
         SecureRandom rnd = new SecureRandom();
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger rangeBound = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps);
 
         List<BigInteger> A = new ArrayList<>(effectiveKappa);
@@ -618,7 +618,7 @@ public final class PresignProofs {
         }
         BigInteger N0sq = N0.multiply(N0);
         boolean[] e = challengeBits("PI_DEC", context, n, proof.A(), proof.B(), proof.C());
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger rangeBound = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps);
         for (int i = 0; i < n; i++) {
             BigInteger ei = e[i] ? BigInteger.ONE : BigInteger.ZERO;
@@ -658,7 +658,7 @@ public final class PresignProofs {
                 if (o instanceof BigInteger bi) {
                     md.update(bi.toByteArray());
                 } else if (o instanceof ECPoint p) {
-                    md.update(Secp256k1Curve.encodePoint(p));
+                    md.update(Secp256k1CurveUtils.encodePoint(p));
                 } else if (o instanceof Map<?, ?> map) {
                     for (Map.Entry<?, ?> e : map.entrySet()) {
                         md.update(String.valueOf(e.getKey()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -680,13 +680,13 @@ public final class PresignProofs {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             md.update(tag.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            md.update(Secp256k1Curve.encodePoint(base));
-            md.update(Secp256k1Curve.encodePoint(X));
-            md.update(Secp256k1Curve.encodePoint(A));
+            md.update(Secp256k1CurveUtils.encodePoint(base));
+            md.update(Secp256k1CurveUtils.encodePoint(X));
+            md.update(Secp256k1CurveUtils.encodePoint(A));
             if (context != null) {
                 md.update(context);
             }
-            return new BigInteger(1, md.digest()).mod(Secp256k1Curve.n());
+            return new BigInteger(1, md.digest()).mod(Secp256k1CurveUtils.n());
         } catch (Exception e) {
             throw new RuntimeException("Challenge failed", e);
         }
@@ -704,13 +704,13 @@ public final class PresignProofs {
                 if (o instanceof BigInteger bi) {
                     md.update(bi.toByteArray());
                 } else if (o instanceof ECPoint p) {
-                    md.update(Secp256k1Curve.encodePoint(p));
+                    md.update(Secp256k1CurveUtils.encodePoint(p));
                 } else if (o instanceof List<?> list) {
                     for (Object li : list) {
                         if (li instanceof BigInteger lbi) {
                             md.update(lbi.toByteArray());
                         } else if (li instanceof ECPoint lp) {
-                            md.update(Secp256k1Curve.encodePoint(lp));
+                            md.update(Secp256k1CurveUtils.encodePoint(lp));
                         } else {
                             md.update(String.valueOf(li).getBytes(java.nio.charset.StandardCharsets.UTF_8));
                         }
@@ -766,7 +766,7 @@ public final class PresignProofs {
     }
 
     private static ECPoint ecMulSigned(ECPoint base, BigInteger k) {
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger m = k.mod(q);
         return base.multiply(m);
     }

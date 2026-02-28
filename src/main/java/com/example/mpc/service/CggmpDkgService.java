@@ -11,7 +11,7 @@ import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
 import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
-import com.example.mpc.cggmp.sign.Secp256k1Curve;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonUtils;
@@ -220,8 +220,8 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         logger.info("Node {} executing CGGMP24 DKG Round 1 (t-of-n)", nodeId);
 
         CompletableFuture<DkgContext> r1Future = CompletableFuture.supplyAsync(() -> {
-            BigInteger q = Secp256k1Curve.n();
-            ECPoint g = Secp256k1Curve.G();
+            BigInteger q = Secp256k1CurveUtils.n();
+            ECPoint g = Secp256k1CurveUtils.G();
 
             BigInteger[] coeffs = new BigInteger[threshold];
             for (int i = 0; i < threshold; i++) {
@@ -373,8 +373,8 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     private CompletableFuture<Void> executeDkgRoundsNonThreshold(CggmpDkgTask task) {
         logger.info("Node {} executing CGGMP24 DKG Round 1 (n-of-n)", nodeId);
         return CompletableFuture.supplyAsync(() -> {
-            BigInteger q = Secp256k1Curve.n();
-            ECPoint g = Secp256k1Curve.G();
+            BigInteger q = Secp256k1CurveUtils.n();
+            ECPoint g = Secp256k1CurveUtils.G();
 
             BigInteger x_i = randomScalar(q);
             ECPoint X_i = g.multiply(x_i).normalize();
@@ -830,7 +830,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         ECPoint A;
         try {
             S = JsonUtils.decodeECPointMap(sMap);
-            A = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(aHex));
+            A = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(aHex));
         } catch (Exception e) {
             Map<String, Object> evidence = new HashMap<>();
             evidence.put("senderId", senderNodeId);
@@ -1215,7 +1215,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     private void verifyAndAcceptRound3(CggmpDkgTask task, int senderNodeId, PiSchProof proof, ECPoint A) {
         ECPoint X = computePublicShare(task, senderNodeId);
         byte[] ctx = buildDkgContext(task.taskId, task.executionId, task.rid, senderNodeId, "SCH");
-        if (!verifySchProofWithCommitment(Secp256k1Curve.G(), X, A, proof.z(), ctx)) {
+        if (!verifySchProofWithCommitment(Secp256k1CurveUtils.G(), X, A, proof.z(), ctx)) {
             fireAndForget(broadcastDkgComplaint(task, senderNodeId, "Invalid Schnorr proof in DKG Round3", Map.of("senderId", senderNodeId)),
                     "CGGMP_DKG_COMPLAINT");
             task.fail();
@@ -1696,7 +1696,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     }
 
     private static BigInteger[] precomputeEvalPowers(BigInteger x, int threshold) {
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         if (x == null) {
             throw new IllegalArgumentException("Missing evaluation index");
         }
@@ -1710,7 +1710,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     }
 
     private static ECPoint computeExpectedShareFromXjk(Map<Integer, ECPoint> Xjk, BigInteger[] evalPowers) {
-        ECPoint sum = Secp256k1Curve.G().getCurve().getInfinity();
+        ECPoint sum = Secp256k1CurveUtils.G().getCurve().getInfinity();
         if (evalPowers == null) {
             throw new IllegalStateException("Missing precomputed DKG evaluation powers");
         }
@@ -1746,7 +1746,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                 if (!proof.A().equals(AjkPoint)) {
                     return CompletableFuture.completedFuture(false);
                 }
-                boolean ok = RefreshProofs.verifySchProof(proof, Secp256k1Curve.G(), XjkPoint, ctx);
+                boolean ok = RefreshProofs.verifySchProof(proof, Secp256k1CurveUtils.G(), XjkPoint, ctx);
                 logger.debug("DKG Round2 Sch proof verify k={} took {} ms", k, (System.nanoTime() - schOneStart) / 1_000_000);
                 if (!ok) {
                     return CompletableFuture.completedFuture(false);
@@ -1770,7 +1770,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                 if (!proof.A().equals(AjkPoint)) {
                     return false;
                 }
-                boolean ok = RefreshProofs.verifySchProof(proof, Secp256k1Curve.G(), XjkPoint, ctx);
+                boolean ok = RefreshProofs.verifySchProof(proof, Secp256k1CurveUtils.G(), XjkPoint, ctx);
                 logger.debug("DKG Round2 Sch proof verify k={} took {} ms", kk, (System.nanoTime() - schOneStart) / 1_000_000);
                 return ok;
             }, dkgExecutorService));
@@ -1788,7 +1788,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     }
 
     private static PiSchProof createSchProofWithAlpha(ECPoint g, ECPoint X, BigInteger x, BigInteger alpha, byte[] context) {
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         ECPoint A = g.multiply(alpha).normalize();
         BigInteger e = schChallenge(context, g, X, A);
         BigInteger z = alpha.add(e.multiply(x)).mod(q);
@@ -1802,10 +1802,10 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             if (context != null) {
                 md.update(context);
             }
-            md.update(Secp256k1Curve.encodePoint(g));
-            md.update(Secp256k1Curve.encodePoint(X));
-            md.update(Secp256k1Curve.encodePoint(A));
-            BigInteger q = Secp256k1Curve.n();
+            md.update(Secp256k1CurveUtils.encodePoint(g));
+            md.update(Secp256k1CurveUtils.encodePoint(X));
+            md.update(Secp256k1CurveUtils.encodePoint(A));
+            BigInteger q = Secp256k1CurveUtils.n();
             BigInteger twoQ = q.shiftLeft(1);
             BigInteger e = new BigInteger(1, md.digest()).mod(twoQ);
             return e.compareTo(q) >= 0 ? e.subtract(twoQ) : e;
@@ -1815,7 +1815,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     }
 
     private static boolean verifySchProofWithCommitment(ECPoint g, ECPoint X, ECPoint A, BigInteger z, byte[] context) {
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger e = schChallenge(context, g, X, A).mod(q);
         ECPoint lhs = g.multiply(z).normalize();
         ECPoint rhs = A.add(X.multiply(e)).normalize();
@@ -1831,7 +1831,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         }
         BigInteger[] powers = precomputeEvalPowers(x, sVec.size());
         ECPoint expected = computeExpectedShareFromXjk(sVec, powers);
-        ECPoint actual = Secp256k1Curve.G().multiply(sigma).normalize();
+        ECPoint actual = Secp256k1CurveUtils.G().multiply(sigma).normalize();
         return expected.equals(actual);
     }
 

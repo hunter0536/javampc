@@ -2,12 +2,14 @@ package com.example.mpc.cggmp.sign;
 
 import org.bouncycastle.math.ec.ECPoint;
 
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
+
 import java.math.BigInteger;
 import java.security.MessageDigest;
 
 public final class EcPedersen {
-    private static final BigInteger N = Secp256k1Curve.n();
-    private static final ECPoint G = Secp256k1Curve.G();
+    private static final BigInteger N = Secp256k1CurveUtils.n();
+    private static final ECPoint G = Secp256k1CurveUtils.G();
     private static final ECPoint H = deriveH();
 
     private EcPedersen() {

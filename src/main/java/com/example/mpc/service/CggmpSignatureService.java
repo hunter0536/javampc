@@ -8,7 +8,7 @@ import com.example.mpc.cggmp.presign.Presignature;
 import com.example.mpc.cggmp.proof.*;
 import com.example.mpc.cggmp.sign.CggmpIntegrityChecker;
 import com.example.mpc.cggmp.sign.EcChaumPedersenProof;
-import com.example.mpc.cggmp.sign.Secp256k1Curve;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.response.SignatureResultResponse;
@@ -343,7 +343,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             task.messageHash = hashMessage(task.message);
         }
         if (task.groupPublicKeyPoint == null) {
-            task.groupPublicKeyPoint = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(task.groupPublicKey));
+            task.groupPublicKeyPoint = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(task.groupPublicKey));
         }
         ensureKeyShareData(task);
     }
@@ -377,23 +377,23 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         CompletableFuture<PresignR1Context> r1Future = CompletableFuture.supplyAsync(() -> {
             try {
                 long t0 = System.nanoTime();
-                BigInteger curveOrder = Secp256k1Curve.n();
+                BigInteger curveOrder = Secp256k1CurveUtils.n();
                 long t1 = System.nanoTime();
                 initSignaturePaillier(task);
                 long t2 = System.nanoTime();
 
                 task.k_i = randomNonZero(curveOrder);
                 BigInteger gamma_i = randomNonZero(curveOrder);
-                task.presignGamma.put(nodeId, Secp256k1Curve.multiply(Secp256k1Curve.G(), gamma_i));
+                task.presignGamma.put(nodeId, Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), gamma_i));
 
                 BigInteger y_i = randomNonZero(curveOrder);
                 BigInteger a_i = randomNonZero(curveOrder);
                 BigInteger b_i = randomNonZero(curveOrder);
-                ECPoint Y_i = Secp256k1Curve.multiply(Secp256k1Curve.G(), y_i);
-                ECPoint A1 = Secp256k1Curve.multiply(Secp256k1Curve.G(), a_i);
-                ECPoint A2 = Y_i.multiply(a_i).add(Secp256k1Curve.multiply(Secp256k1Curve.G(), task.k_i)).normalize();
-                ECPoint B1 = Secp256k1Curve.multiply(Secp256k1Curve.G(), b_i);
-                ECPoint B2 = Y_i.multiply(b_i).add(Secp256k1Curve.multiply(Secp256k1Curve.G(), gamma_i)).normalize();
+                ECPoint Y_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), y_i);
+                ECPoint A1 = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), a_i);
+                ECPoint A2 = Y_i.multiply(a_i).add(Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), task.k_i)).normalize();
+                ECPoint B1 = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), b_i);
+                ECPoint B2 = Y_i.multiply(b_i).add(Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), gamma_i)).normalize();
                 task.presignYScalar = y_i;
                 task.presignAScalar = a_i;
                 task.presignBScalar = b_i;
@@ -415,7 +415,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 PiEncElgProof encElgK = PresignProofs.createEncElgProof(
                         task.paillier.getPublicKeyInfo(),
                         task.zkSetup,
-                        Secp256k1Curve.G(),
+                        Secp256k1CurveUtils.G(),
                         A1,
                         Y_i,
                         A2,
@@ -429,7 +429,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 long t4 = System.nanoTime();
                 PresignProofs.EncElgVerifyResult localEncElgK = PresignProofs.verifyEncElgProofDetailed(
                         encElgK, task.paillier.getPublicKeyInfo(), task.zkSetup,
-                        Secp256k1Curve.G(), A1, Y_i, A2, K, proofEpsBits, ctxR1K);
+                        Secp256k1CurveUtils.G(), A1, Y_i, A2, K, proofEpsBits, ctxR1K);
                 if (!localEncElgK.ok()) {
                     logger.warn("Local PiEncElg proof (K) failed before broadcast, task {}: eq1={}, eq2={}, eq3={}, eq4={}, z1InRange={}",
                             task.taskId, localEncElgK.eq1(), localEncElgK.eq2(), localEncElgK.eq3(), localEncElgK.eq4(), localEncElgK.z1InRange());
@@ -439,7 +439,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 PiEncElgProof encElgG = PresignProofs.createEncElgProof(
                         task.paillier.getPublicKeyInfo(),
                         task.zkSetup,
-                        Secp256k1Curve.G(),
+                        Secp256k1CurveUtils.G(),
                         B1,
                         Y_i,
                         B2,
@@ -453,7 +453,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 long t6 = System.nanoTime();
                 PresignProofs.EncElgVerifyResult localEncElgG = PresignProofs.verifyEncElgProofDetailed(
                         encElgG, task.paillier.getPublicKeyInfo(), task.zkSetup,
-                        Secp256k1Curve.G(), B1, Y_i, B2, G, proofEpsBits, ctxR1G);
+                        Secp256k1CurveUtils.G(), B1, Y_i, B2, G, proofEpsBits, ctxR1G);
                 if (!localEncElgG.ok()) {
                     logger.warn("Local PiEncElg proof (G) failed before broadcast, task {}: eq1={}, eq2={}, eq3={}, eq4={}, z1InRange={}",
                             task.taskId, localEncElgG.eq1(), localEncElgG.eq2(), localEncElgG.eq3(), localEncElgG.eq4(), localEncElgG.z1InRange());
@@ -488,7 +488,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 .thenCompose(ctx -> CompletableFuture.supplyAsync(() -> {
                     try {
                         logger.debug("Presign R1 completed for task {}, proceeding to R2", task.taskId);
-                        ECPoint Gamma_i = Secp256k1Curve.multiply(Secp256k1Curve.G(), ctx.gamma_i);
+                        ECPoint Gamma_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), ctx.gamma_i);
                         BigInteger x_i_raw = loadLocalShare(task.groupPublicKey);
                         BigInteger lambda_i = computeSignatureLagrange(task, nodeId, ctx.curveOrder);
                         BigInteger x_i = x_i_raw.multiply(lambda_i).mod(ctx.curveOrder);
@@ -517,11 +517,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                                 BigInteger F_ji = encBeta.c;
                                 BigInteger Fhat_ji = encBetaHat.c;
                                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
-                                        Secp256k1Curve.G(), Gamma_i, pk.n, task.paillier.getPublicKeyInfo().n,
+                                        Secp256k1CurveUtils.G(), Gamma_i, pk.n, task.paillier.getPublicKeyInfo().n,
                                         K_peer, D_ji, F_ji, ctx.gamma_i, beta, encNegBeta.r, encBeta.r, proofKappa, proofEpsBits, buildPresignContext(task.taskId, nodeId, "R2")
                                 );
                                 PiAffGProof proofHat = PresignProofs.createAffGProofNegY(
-                                        Secp256k1Curve.G(), X_i, pk.n, task.paillier.getPublicKeyInfo().n,
+                                        Secp256k1CurveUtils.G(), X_i, pk.n, task.paillier.getPublicKeyInfo().n,
                                         K_peer, Dhat_ji, Fhat_ji, x_i, betaHat, encNegBetaHat.r, encBetaHat.r, proofKappa, proofEpsBits, buildPresignContext(task.taskId, nodeId, "R2H")
                                 );
                                 long peerMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - peerStartNs);
@@ -589,8 +589,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                         }
                         byte[] ctxR2 = buildPresignContext(ctx.task.taskId, nodeId, "R2");
                         PiLogProof logProof = PresignProofs.createLogProof(
-                                Secp256k1Curve.G(),
-                                Secp256k1Curve.G(),
+                                Secp256k1CurveUtils.G(),
+                                Secp256k1CurveUtils.G(),
                                 ctx.Gamma_i,
                                 Y_i_r2,
                                 B1_r2,
@@ -635,7 +635,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                             throw new RuntimeException("Missing message hash for online phase");
                         }
 
-                        BigInteger curveOrder = Secp256k1Curve.n();
+                        BigInteger curveOrder = Secp256k1CurveUtils.n();
                         if (task.presignature == null) {
                             throw new RuntimeException("Missing presignature");
                         }
@@ -753,11 +753,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("senderId", nodeId);
         data.put("K", K.toString(16));
         data.put("G", G.toString(16));
-        data.put("Y", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Y)));
-        data.put("A1", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A1)));
-        data.put("A2", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A2)));
-        data.put("B1", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B1)));
-        data.put("B2", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B2)));
+        data.put("Y", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Y)));
+        data.put("A1", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(A1)));
+        data.put("A2", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(A2)));
+        data.put("B1", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(B1)));
+        data.put("B2", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(B2)));
         data.put("encElgProofK", CggmpCodecUtils.encodePiEncElgProof(encElgK));
         data.put("encElgProofG", CggmpCodecUtils.encodePiEncElgProof(encElgG));
         data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
@@ -801,7 +801,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", nodeId);
-        data.put("Gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Gamma)));
+        data.put("Gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Gamma)));
         data.put("D", JsonUtils.encodeBigIntegerMap(D));
         data.put("Dhat", JsonUtils.encodeBigIntegerMap(Dhat));
         data.put("F", JsonUtils.encodeBigIntegerMap(F));
@@ -809,7 +809,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("affGProofs", encodeAffGProofMap(affG));
         data.put("affGProofsHat", encodeAffGProofMap(affGhat));
         data.put("logProof", CggmpCodecUtils.encodePiLogProof(logProof));
-        data.put("X", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(X)));
+        data.put("X", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(X)));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R2, data));
     }
 
@@ -818,8 +818,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", nodeId);
         data.put("delta", delta.toString(16));
-        data.put("Delta", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Delta)));
-        data.put("S", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(S)));
+        data.put("Delta", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Delta)));
+        data.put("S", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(S)));
         data.put("logProof", CggmpCodecUtils.encodePiLogProof(logProof));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R3, data));
     }
@@ -853,7 +853,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private ECPoint sumPresignGamma(Gg20SignatureTask task) {
-        ECPoint sum = Secp256k1Curve.G().getCurve().getInfinity();
+        ECPoint sum = Secp256k1CurveUtils.G().getCurve().getInfinity();
         for (ECPoint p : task.presignGamma.values()) {
             sum = sum.add(p).normalize();
         }
@@ -933,11 +933,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 entry.add(id);
                 entry.add(K.toString(16));
                 entry.add(G.toString(16));
-                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Y)));
-                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A1)));
-                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A2)));
-                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B1)));
-                entry.add(HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B2)));
+                entry.add(HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Y)));
+                entry.add(HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(A1)));
+                entry.add(HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(A2)));
+                entry.add(HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(B1)));
+                entry.add(HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(B2)));
                 payloads.add(entry);
             }
             return computeTaggedHashHex("PRESIGN_R1_ECHO", sid, payloads);
@@ -1062,7 +1062,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         result.put("epsBits", proofEpsBits);
         try {
             SecureRandom rnd = new SecureRandom();
-            BigInteger q = Secp256k1Curve.n();
+            BigInteger q = Secp256k1CurveUtils.n();
 
             int selfCheckKeyBits = 1024;
             // PiDec 自检
@@ -1076,10 +1076,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             BigInteger encY = pk.encryptWithRandom(y, rho);
             BigInteger KInvX = BigIntegerUtils.powSigned(K, x.negate(), pk.nSquared);
             BigInteger D = encY.multiply(KInvX).mod(pk.nSquared);
-            ECPoint X = Secp256k1Curve.multiply(Secp256k1Curve.G(), x);
-            ECPoint S = Secp256k1Curve.multiply(Secp256k1Curve.G(), y);
+            ECPoint X = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x);
+            ECPoint S = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), y);
             PiDecProof decProof = PresignProofs.createDecProof(
-                    Secp256k1Curve.G(),
+                    Secp256k1CurveUtils.G(),
                     X,
                     S,
                     pk.n,
@@ -1094,7 +1094,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             );
             boolean decOk = PresignProofs.verifyDecProof(
                     decProof,
-                    Secp256k1Curve.G(),
+                    Secp256k1CurveUtils.G(),
                     X,
                     S,
                     pk.n,
@@ -1123,9 +1123,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     .multiply(rho2.modPow(pk0.n, pk0.nSquared))
                     .mod(pk0.nSquared);
             BigInteger Y2 = pk1.encryptWithRandom(y2, mu2);
-            ECPoint X2 = Secp256k1Curve.multiply(Secp256k1Curve.G(), x2);
+            ECPoint X2 = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x2);
             PiAffGProof affProof = PresignProofs.createAffGProof(
-                    Secp256k1Curve.G(),
+                    Secp256k1CurveUtils.G(),
                     X2,
                     pk0.n,
                     pk1.n,
@@ -1142,7 +1142,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             );
             boolean affOk = PresignProofs.verifyAffGProof(
                     affProof,
-                    Secp256k1Curve.G(),
+                    Secp256k1CurveUtils.G(),
                     X2,
                     pk0.n,
                     pk1.n,
@@ -1166,7 +1166,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             throw new RuntimeException("Key share not found");
         }
         BigInteger share = new BigInteger(keyShare.getKeyShare(), 16);
-        return share.mod(Secp256k1Curve.n());
+        return share.mod(Secp256k1CurveUtils.n());
     }
 
     private SignatureBundle signMessage(BigInteger privateKey, byte[] messageHash, ECPoint publicKey) {
@@ -1177,7 +1177,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         BigInteger[] sig = signer.generateSignature(messageHash);
         BigInteger r = sig[0];
         BigInteger s = sig[1];
-        BigInteger n = Secp256k1Curve.n();
+        BigInteger n = Secp256k1CurveUtils.n();
         if (s.compareTo(n.shiftRight(1)) > 0) {
             s = n.subtract(s);
         }
@@ -1208,9 +1208,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     private ECDomainParameters buildDomain() {
         return new ECDomainParameters(
-                Secp256k1Curve.G().getCurve(),
-                Secp256k1Curve.G(),
-                Secp256k1Curve.n(),
+                Secp256k1CurveUtils.G().getCurve(),
+                Secp256k1CurveUtils.G(),
+                Secp256k1CurveUtils.n(),
                 BigInteger.ONE
         );
     }
@@ -1277,7 +1277,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 return base.multiply(lambda).normalize();
             }
         }
-        return Secp256k1Curve.G().multiply(x_i).normalize();
+        return Secp256k1CurveUtils.G().multiply(x_i).normalize();
     }
 
     private ECPoint resolvePublicShareFromMap(Gg20SignatureTask task, int signerId, BigInteger lambda) {
@@ -1296,7 +1296,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<Integer, ECPoint> out = new LinkedHashMap<>();
         for (Map.Entry<String, String> e : raw.entrySet()) {
             int key = Integer.parseInt(e.getKey());
-            out.put(key, Secp256k1Curve.decodePoint(HexUtils.hexToBytes(e.getValue())));
+            out.put(key, Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(e.getValue())));
         }
         return out;
     }
@@ -1379,7 +1379,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 if (o instanceof BigInteger bi) {
                     md.update(bi.toByteArray());
                 } else if (o instanceof ECPoint p) {
-                    md.update(Secp256k1Curve.encodePoint(p));
+                    md.update(Secp256k1CurveUtils.encodePoint(p));
                 } else {
                     md.update(String.valueOf(o).getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
@@ -1403,7 +1403,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Collections.sort(keys);
         for (int k : keys) {
             md.update(BigInteger.valueOf(k).toByteArray());
-            md.update(Secp256k1Curve.encodePoint(map.get(k)));
+            md.update(Secp256k1CurveUtils.encodePoint(map.get(k)));
         }
     }
 
@@ -1419,7 +1419,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private ECPoint sumGamma(Gg20SignatureTask task) {
-        ECPoint sum = Secp256k1Curve.G().getCurve().getInfinity();
+        ECPoint sum = Secp256k1CurveUtils.G().getCurve().getInfinity();
         for (ECPoint p : task.gammaPoints.values()) {
             sum = sum.add(p).normalize();
         }
@@ -1441,8 +1441,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", nodeId);
-        data.put("commit", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(commitment)));
-        data.put("proofA", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(proof.A())));
+        data.put("commit", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(commitment)));
+        data.put("proofA", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(proof.A())));
         data.put("proofR", proof.r().toString(16));
         data.put("proofS", proof.s().toString(16));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_GAMMA_COMMIT, data));
@@ -1452,13 +1452,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", nodeId);
-        data.put("gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(gamma)));
+        data.put("gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(gamma)));
         data.put("r", blinding.toString(16));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_GAMMA_OPEN, data));
     }
 
     private CompletableFuture<Void> broadcastMtaKaInit(Gg20SignatureTask task) {
-        MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1Curve.n());
+        MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (int participantId : task.participants) {
             if (participantId == nodeId) {
@@ -1481,7 +1481,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private CompletableFuture<Void> broadcastMtaStInit(Gg20SignatureTask task) {
-        MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1Curve.n());
+        MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
         List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (int participantId : task.participants) {
             if (participantId == nodeId) {
@@ -1526,7 +1526,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private CompletableFuture<Void> sendUShare(Gg20SignatureTask task, BigInteger u_i) {
-        return sendUShare(task, u_i, randomNonZero(Secp256k1Curve.n()));
+        return sendUShare(task, u_i, randomNonZero(Secp256k1CurveUtils.n()));
     }
 
     private CompletableFuture<Void> sendUShare(Gg20SignatureTask task, BigInteger u_i, BigInteger r) {
@@ -1563,7 +1563,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private String commitU(String taskId, int senderId, byte[] messageHash, BigInteger u, BigInteger r) {
-        int nLen = (Secp256k1Curve.n().bitLength() + 7) / 8;
+        int nLen = (Secp256k1CurveUtils.n().bitLength() + 7) / 8;
         byte[] uBytes = BigIntegerUtils.toUnsignedBytes(u, nLen);
         byte[] rBytes = BigIntegerUtils.toUnsignedBytes(r, nLen);
         byte[] ctx = buildSignContext(taskId, senderId, messageHash, "U-COMMIT");
@@ -1606,14 +1606,14 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private ECPoint decodeECPoint(byte[] encoded) {
-        return Secp256k1Curve.decodePoint(encoded);
+        return Secp256k1CurveUtils.decodePoint(encoded);
     }
 
     private boolean validatePaillierPublicKey(PaillierEncryption.PublicKey publicKey) {
         if (publicKey == null || publicKey.n == null || publicKey.nSquared == null || publicKey.g == null) {
             return false;
         }
-        BigInteger q = Secp256k1Curve.n();
+        BigInteger q = Secp256k1CurveUtils.n();
         return publicKey.n.compareTo(q.pow(8)) >= 0;
     }
 
@@ -1849,11 +1849,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         BigInteger K = new BigInteger(kHex, 16);
         BigInteger G = new BigInteger(gHex, 16);
-        ECPoint Y = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(yHex));
-        ECPoint A1 = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(a1Hex));
-        ECPoint A2 = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(a2Hex));
-        ECPoint B1 = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(b1Hex));
-        ECPoint B2 = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(b2Hex));
+        ECPoint Y = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(yHex));
+        ECPoint A1 = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(a1Hex));
+        ECPoint A2 = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(a2Hex));
+        ECPoint B1 = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(b1Hex));
+        ECPoint B2 = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(b2Hex));
         PiEncElgProof encElgK = encElgKMap == null ? null : CggmpCodecUtils.decodePiEncElgProof(encElgKMap);
         PiEncElgProof encElgG = encElgGMap == null ? null : CggmpCodecUtils.decodePiEncElgProof(encElgGMap);
         PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
@@ -1866,7 +1866,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         byte[] ctxK = buildPresignContext(task.taskId, senderId, "R1K");
         PresignProofs.EncElgVerifyResult encElgKResult = PresignProofs.verifyEncElgProofDetailed(
-                encElgK, publicKey, zkSetup, Secp256k1Curve.G(), A1, Y, A2, K, proofEpsBits, ctxK);
+                encElgK, publicKey, zkSetup, Secp256k1CurveUtils.G(), A1, Y, A2, K, proofEpsBits, ctxK);
         if (!encElgKResult.ok()) {
             logger.warn("Invalid PiEncElg proof (K) from node {}: eq1={}, eq2={}, eq3={}, eq4={}, z1InRange={}",
                     senderId, encElgKResult.eq1(), encElgKResult.eq2(), encElgKResult.eq3(), encElgKResult.eq4(), encElgKResult.z1InRange());
@@ -1877,7 +1877,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         byte[] ctxG = buildPresignContext(task.taskId, senderId, "R1G");
         PresignProofs.EncElgVerifyResult encElgGResult = PresignProofs.verifyEncElgProofDetailed(
-                encElgG, publicKey, zkSetup, Secp256k1Curve.G(), B1, Y, B2, G, proofEpsBits, ctxG);
+                encElgG, publicKey, zkSetup, Secp256k1CurveUtils.G(), B1, Y, B2, G, proofEpsBits, ctxG);
         if (!encElgGResult.ok()) {
             logger.warn("Invalid PiEncElg proof (G) from node {}: eq1={}, eq2={}, eq3={}, eq4={}, z1InRange={}",
                     senderId, encElgGResult.eq1(), encElgGResult.eq2(), encElgGResult.eq3(), encElgGResult.eq4(), encElgGResult.z1InRange());
@@ -2020,8 +2020,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (dMap == null || dhMap == null || fMap == null || fhMap == null) {
             return;
         }
-        BigInteger curveOrder = Secp256k1Curve.n();
-        ECPoint Gamma = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(gammaHex));
+        BigInteger curveOrder = Secp256k1CurveUtils.n();
+        ECPoint Gamma = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(gammaHex));
         task.presignGamma.put(senderId, Gamma);
         Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
         Map<Integer, BigInteger> Dhat = JsonUtils.decodeBigIntegerMap(dhMap);
@@ -2045,7 +2045,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             task.pendingPresignR2.put(senderId, new HashMap<String, Object>((Map<String, Object>) dataMap));
             return;
         }
-        if (!PresignProofs.verifyLogProof(logProof, Secp256k1Curve.G(), Secp256k1Curve.G(), Gamma, Y, B1, B2, ctx)) {
+        if (!PresignProofs.verifyLogProof(logProof, Secp256k1CurveUtils.G(), Secp256k1CurveUtils.G(), Gamma, Y, B1, B2, ctx)) {
             Map<String, Object> ev = new HashMap<>();
             ev.put("Gamma", gammaHex);
             ev.put("D", dMap);
@@ -2062,10 +2062,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             expectedX = resolvePublicShareFromMap(task, senderId, lambdaSender);
         }
         if (expectedX != null && xHex != null) {
-            ECPoint provided = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(xHex));
+            ECPoint provided = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(xHex));
             if (!expectedX.equals(provided)) {
                 Map<String, Object> ev = new HashMap<>();
-                ev.put("expectedX", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(expectedX)));
+                ev.put("expectedX", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(expectedX)));
                 ev.put("providedX", xHex);
                 fireAndForget(broadcastComplaint(task, senderId, "Invalid X in presign R2", ev),
                         "CGGMP_PRESIGN_COMPLAINT");
@@ -2075,7 +2075,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         ECPoint X_i_resolved = expectedX;
         if (X_i_resolved == null && xHex != null) {
-            X_i_resolved = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(xHex));
+            X_i_resolved = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(xHex));
         }
         if (X_i_resolved == null) {
             fireAndForget(broadcastComplaint(task, senderId, "Missing X in presign R2", Map.of("senderId", senderId)),
@@ -2100,7 +2100,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (K_self != null && D_ji != null && F_ji != null && N1 != null) {
                 PresignProofs.AffGVerifyResult affGResult = PresignProofs.verifyAffGProofDetailedNegY(
                         proof,
-                        Secp256k1Curve.G(),
+                        Secp256k1CurveUtils.G(),
                         Gamma,
                         N0.n,
                         N1.n,
@@ -2124,7 +2124,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (K_self != null && Dhat_ji != null && Fhat_ji != null && N1 != null) {
                 PresignProofs.AffGVerifyResult affGHatResult = PresignProofs.verifyAffGProofDetailedNegY(
                         proofHat,
-                        Secp256k1Curve.G(),
+                        Secp256k1CurveUtils.G(),
                         X_i,
                         N0.n,
                         N1.n,
@@ -2195,8 +2195,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return;
         }
         PiLogProof logProof = logProofMap == null ? null : CggmpCodecUtils.decodePiLogProof(logProofMap);
-        ECPoint Delta = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(deltaPointHex));
-        ECPoint S = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(sPointHex));
+        ECPoint Delta = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(deltaPointHex));
+        ECPoint S = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(sPointHex));
         byte[] ctx = buildPresignContext(task.taskId, senderId, "R3");
         if (task.presignR2Latch.getCount() > 0) {
             task.pendingPresignR3.put(senderId, new HashMap<String, Object>((Map<String, Object>) dataMap));
@@ -2210,7 +2210,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             task.pendingPresignR3.put(senderId, new HashMap<String, Object>((Map<String, Object>) dataMap));
             return;
         }
-        if (!PresignProofs.verifyLogProof(logProof, Secp256k1Curve.G(), Gamma, Delta, Y, A1, A2, ctx)) {
+        if (!PresignProofs.verifyLogProof(logProof, Secp256k1CurveUtils.G(), Gamma, Delta, Y, A1, A2, ctx)) {
             Map<String, Object> ev = new HashMap<>();
             ev.put("Delta", deltaPointHex);
             ev.put("S", sPointHex);
@@ -2331,14 +2331,14 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (D == null) return null;
             ECPoint Gamma = task.presignGamma.get(nodeId);
             if (Gamma == null) {
-                Gamma = Secp256k1Curve.multiply(Secp256k1Curve.G(), gamma_i);
+                Gamma = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), gamma_i);
             }
-            ECPoint S = Secp256k1Curve.multiply(Secp256k1Curve.G(), delta_i);
+            ECPoint S = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), delta_i);
             BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared;
             BigInteger c = task.paillier.getPublicKeyInfo().multiply(K, gamma_i).multiply(D).mod(nSquared);
             BigInteger rho = task.paillier.recoverRandomizer(c, delta_i);
             PiDecProof proof = PresignProofs.createDecProof(
-                    Secp256k1Curve.G(),
+                    Secp256k1CurveUtils.G(),
                     Gamma,
                     S,
                     task.paillier.getPublicKeyInfo().n,
@@ -2355,8 +2355,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             ev.put("piDecProof", CggmpCodecUtils.encodePiDecProof(proof));
             ev.put("K", HexUtils.toHex(K));
             ev.put("D", HexUtils.toHex(D));
-            ev.put("Gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Gamma)));
-            ev.put("S", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(S)));
+            ev.put("Gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Gamma)));
+            ev.put("S", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(S)));
             Map<String, Object> affg = buildAffGEvidenceDelta(task, gamma_i, Gamma);
             if (affg != null && !affg.isEmpty()) {
                 ev.putAll(affg);
@@ -2375,7 +2375,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             BigInteger Dhat = computePresignDForSelf(task, task.presignDhat, task.presignFhatOutgoing);
             if (Dhat == null) return null;
             ECPoint Gamma = sumPresignGamma(task);
-            ECPoint X_i = Secp256k1Curve.multiply(Secp256k1Curve.G(), x_i);
+            ECPoint X_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x_i);
             ECPoint S = Gamma.multiply(chi_i).normalize();
             BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared;
             BigInteger c = task.paillier.getPublicKeyInfo().multiply(K, x_i).multiply(Dhat).mod(nSquared);
@@ -2398,9 +2398,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             ev.put("piDecProof", CggmpCodecUtils.encodePiDecProof(proof));
             ev.put("K", HexUtils.toHex(K));
             ev.put("D", HexUtils.toHex(Dhat));
-            ev.put("Gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Gamma)));
-            ev.put("X", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(X_i)));
-            ev.put("S", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(S)));
+            ev.put("Gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Gamma)));
+            ev.put("X", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(X_i)));
+            ev.put("S", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(S)));
             Map<String, Object> affg = buildAffGEvidenceChi(task, x_i, X_i);
             if (affg != null && !affg.isEmpty()) {
                 ev.putAll(affg);
@@ -2449,11 +2449,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             }
             BigInteger K = HexUtils.fromHex(kHex);
             BigInteger D = HexUtils.fromHex(dHex);
-            ECPoint Gamma = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(gammaHex));
-            ECPoint S = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(sHex));
+            ECPoint Gamma = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(gammaHex));
+            ECPoint S = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(sHex));
             ECPoint X = xHex == null
                     ? Gamma
-                    : Secp256k1Curve.decodePoint(HexUtils.hexToBytes(xHex));
+                    : Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(xHex));
             PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(senderId);
             if (pk == null) {
                 return false;
@@ -2464,7 +2464,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             String ctxTag = xHex == null ? "DEC" : "DECH";
             boolean ok = PresignProofs.verifyDecProof(
                     proof,
-                    xHex == null ? Secp256k1Curve.G() : Gamma,
+                    xHex == null ? Secp256k1CurveUtils.G() : Gamma,
                     X,
                     S,
                     pk.n,
@@ -2550,7 +2550,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             BigInteger d = pk.multiply(K_peer, gamma_i).multiply(encNegBeta).mod(pk.nSquared);
             BigInteger f = senderPk.encryptWithRandom(beta, mu);
             PiAffGProof proof = PresignProofs.createAffGProofNegY(
-                    Secp256k1Curve.G(),
+                    Secp256k1CurveUtils.G(),
                     Gamma,
                     pk.n,
                     senderPk.n,
@@ -2576,7 +2576,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         ev.put("affGProofs", encodeAffGProofMap(proofs));
         ev.put("DMap", JsonUtils.encodeBigIntegerMap(D));
         ev.put("FMap", JsonUtils.encodeBigIntegerMap(F));
-        ev.put("Gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Gamma)));
+        ev.put("Gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Gamma)));
         return ev;
     }
 
@@ -2601,7 +2601,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             BigInteger d = pk.multiply(K_peer, x_i).multiply(encNegBeta).mod(pk.nSquared);
             BigInteger f = senderPk.encryptWithRandom(betaHat, muHat);
             PiAffGProof proof = PresignProofs.createAffGProofNegY(
-                    Secp256k1Curve.G(),
+                    Secp256k1CurveUtils.G(),
                     X_i,
                     pk.n,
                     senderPk.n,
@@ -2627,7 +2627,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         ev.put("affGProofsHat", encodeAffGProofMap(proofs));
         ev.put("DhatMap", JsonUtils.encodeBigIntegerMap(Dhat));
         ev.put("FhatMap", JsonUtils.encodeBigIntegerMap(Fhat));
-        ev.put("X", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(X_i)));
+        ev.put("X", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(X_i)));
         return ev;
     }
 
@@ -2647,7 +2647,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (gammaHex == null) {
                 return false;
             }
-            ECPoint Gamma = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(gammaHex));
+            ECPoint Gamma = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(gammaHex));
             Map<Integer, PiAffGProof> proofs = decodeAffGProofMap(proofMap);
             Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
             Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
@@ -2666,7 +2666,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 }
                 boolean ok = PresignProofs.verifyAffGProofDetailedNegY(
                         proof,
-                        Secp256k1Curve.G(),
+                        Secp256k1CurveUtils.G(),
                         Gamma,
                         pk.n,
                         senderPk.n,
@@ -2689,7 +2689,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (xHex == null) {
                 return false;
             }
-            ECPoint X = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(xHex));
+            ECPoint X = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(xHex));
             Map<Integer, PiAffGProof> proofs = decodeAffGProofMap(proofMap);
             Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
             Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
@@ -2708,7 +2708,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 }
                 boolean ok = PresignProofs.verifyAffGProofDetailedNegY(
                         proof,
-                        Secp256k1Curve.G(),
+                        Secp256k1CurveUtils.G(),
                         X,
                         pk.n,
                         senderPk.n,
@@ -2907,8 +2907,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return;
         }
         try {
-            ECPoint commitment = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(commitHex));
-            ECPoint proofA = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(proofAHex));
+            ECPoint commitment = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(commitHex));
+            ECPoint proofA = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(proofAHex));
             BigInteger proofR = new BigInteger(proofRHex, 16);
             BigInteger proofS = new BigInteger(proofSHex, 16);
             EcChaumPedersenProof proof = new EcChaumPedersenProof(proofA, proofR, proofS);
@@ -2958,7 +2958,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return;
         }
         try {
-            ECPoint gamma = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(gammaHex));
+            ECPoint gamma = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(gammaHex));
             BigInteger r = new BigInteger(rHex, 16);
             ECPoint commitment = task.gammaCommitments.get(senderId);
             if (commitment == null) {
@@ -3060,7 +3060,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 return;
             }
 
-            MtAProtocol protocol = new MtAProtocol(null, Secp256k1Curve.n());
+            MtAProtocol protocol = new MtAProtocol(null, Secp256k1CurveUtils.n());
             byte[] mtaContext = buildMtaContext(taskId + ":KA", initiatorId, receiverId);
             if (!protocol.verifyInitiatorRangeProof(initiatorMessage, publicKey, zkSetup, mtaContext)
                     || !protocol.verifyInitiatorBiPrimeProof(initiatorMessage, publicKey, mtaContext)
@@ -3132,7 +3132,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 failSignatureTask(task, "Missing KA MtA respondent proof");
                 return;
             }
-            MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1Curve.n());
+            MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
             byte[] mtaContext = buildMtaContext(taskId + ":KA", initiatorId, responderId);
             if (!protocol.verifyRespondentProof(result, initiatorMessage.cA(), task.paillier.getPublicKeyInfo(), task.zkSetup, mtaContext)) {
                 logger.warn("Invalid KA MtA respondent proof from node {} for task {}", responderId, taskId);
@@ -3143,7 +3143,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 failSignatureTask(task, "Invalid KA MtA respondent proof");
                 return;
             }
-            BigInteger alpha = protocol.decryptCj(result.c_j()).mod(Secp256k1Curve.n());
+            BigInteger alpha = protocol.decryptCj(result.c_j()).mod(Secp256k1CurveUtils.n());
             task.kaAlphas.put(responderId, alpha);
             if (task.kaResponseLatch.getCount() > 0) {
                 task.kaResponseLatch.countDown();
@@ -3300,7 +3300,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 return;
             }
 
-            MtAProtocol protocol = new MtAProtocol(null, Secp256k1Curve.n());
+            MtAProtocol protocol = new MtAProtocol(null, Secp256k1CurveUtils.n());
             byte[] mtaContext = buildMtaContext(taskId + ":ST", initiatorId, receiverId);
             if (!protocol.verifyInitiatorRangeProof(initiatorMessage, publicKey, zkSetup, mtaContext)
                     || !protocol.verifyInitiatorBiPrimeProof(initiatorMessage, publicKey, mtaContext)
@@ -3372,7 +3372,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 failSignatureTask(task, "Missing ST MtA respondent proof");
                 return;
             }
-            MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1Curve.n());
+            MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
             byte[] mtaContext = buildMtaContext(taskId + ":ST", initiatorId, responderId);
             if (!protocol.verifyRespondentProof(result, initiatorMessage.cA(), task.paillier.getPublicKeyInfo(), task.zkSetup, mtaContext)) {
                 logger.warn("Invalid ST MtA respondent proof from node {} for task {}", responderId, taskId);
@@ -3383,7 +3383,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 failSignatureTask(task, "Invalid ST MtA respondent proof");
                 return;
             }
-            BigInteger alpha = protocol.decryptCj(result.c_j()).mod(Secp256k1Curve.n());
+            BigInteger alpha = protocol.decryptCj(result.c_j()).mod(Secp256k1CurveUtils.n());
             task.stAlphas.put(responderId, alpha);
             if (task.stResponseLatch.getCount() > 0) {
                 task.stResponseLatch.countDown();
@@ -3433,7 +3433,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (task.presignature == null || task.messageHash == null) {
             return false;
         }
-        BigInteger curveOrder = Secp256k1Curve.n();
+        BigInteger curveOrder = Secp256k1CurveUtils.n();
         ECPoint Gamma = task.presignature.Gamma();
         BigInteger r = task.r != null ? task.r : Gamma.getAffineXCoord().toBigInteger().mod(curveOrder);
         BigInteger m = new BigInteger(1, task.messageHash).mod(curveOrder);
@@ -3803,7 +3803,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                             throw new RuntimeException("Missing presign R1 commitments for PiLog proof (R3)");
                         }
                         PiLogProof logProofR3 = PresignProofs.createLogProof(
-                                Secp256k1Curve.G(),
+                                Secp256k1CurveUtils.G(),
                                 Gamma,
                                 Delta_i,
                                 Y_i_r3,
@@ -3828,13 +3828,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     private void finalizePresign(PresignR3Context r3ctx) {
         PresignR2Context ctx = r3ctx.ctx;
         BigInteger delta = sumShares(ctx.task.presignDelta, ctx.curveOrder);
-        ECPoint left = Secp256k1Curve.multiply(Secp256k1Curve.G(), delta);
-        ECPoint right = Secp256k1Curve.sumPoints(ctx.task.presignDeltaPoint);
+        ECPoint left = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), delta);
+        ECPoint right = Secp256k1CurveUtils.sumPoints(ctx.task.presignDeltaPoint);
         if (!left.equals(right)) {
             logger.warn("Presign delta verification mismatch for task {}: left={}, right={}, delta={}, participants={}",
                     ctx.task.taskId,
-                    HexUtils.bytesToHex(Secp256k1Curve.encodePoint(left)),
-                    HexUtils.bytesToHex(Secp256k1Curve.encodePoint(right)),
+                    HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(left)),
+                    HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(right)),
                     delta.toString(16),
                     ctx.task.participants);
             Map<String, Object> evidence = buildDecEvidenceDelta(ctx.task, ctx.gamma_i, r3ctx.delta_i);
@@ -3845,12 +3845,12 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         ECPoint X = ctx.task.groupPublicKeyPoint;
         ECPoint leftS = X.multiply(delta).normalize();
-        ECPoint rightS = Secp256k1Curve.sumPoints(ctx.task.presignSPoint);
+        ECPoint rightS = Secp256k1CurveUtils.sumPoints(ctx.task.presignSPoint);
         if (!leftS.equals(rightS)) {
             logger.warn("Presign chi verification mismatch for task {}: leftS={}, rightS={}, delta={}, participants={}",
                     ctx.task.taskId,
-                    HexUtils.bytesToHex(Secp256k1Curve.encodePoint(leftS)),
-                    HexUtils.bytesToHex(Secp256k1Curve.encodePoint(rightS)),
+                    HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(leftS)),
+                    HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(rightS)),
                     delta.toString(16),
                     ctx.task.participants);
             for (int peerId : ctx.task.participants) {
@@ -3862,7 +3862,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.warn("Presign chi mismatch details task {} peer {}: S_i={}, delta_i={}",
                         ctx.task.taskId,
                         peerId,
-                        sPoint == null ? null : HexUtils.bytesToHex(Secp256k1Curve.encodePoint(sPoint)),
+                        sPoint == null ? null : HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(sPoint)),
                         deltaShare == null ? null : deltaShare.toString(16));
             }
             Map<String, Object> evidence = buildDecEvidenceChi(ctx.task, ctx.x_i, r3ctx.chi_i);
