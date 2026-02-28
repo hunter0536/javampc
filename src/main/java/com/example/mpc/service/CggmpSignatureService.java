@@ -825,38 +825,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
 
-    private Map<String, String> encodePointMap(Map<Integer, ECPoint> map) {
-        Map<String, String> out = new LinkedHashMap<>();
-        List<Integer> keys = new ArrayList<>(map.keySet());
-        Collections.sort(keys);
-        for (int k : keys) {
-            ECPoint p = map.get(k);
-            if (p == null) continue;
-            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(false)));
-        }
-        return out;
-    }
-
-    private Map<String, String> encodePointMapCompressed(Map<Integer, ECPoint> map) {
-        Map<String, String> out = new LinkedHashMap<>();
-        List<Integer> keys = new ArrayList<>(map.keySet());
-        Collections.sort(keys);
-        for (int k : keys) {
-            ECPoint p = map.get(k);
-            if (p == null) continue;
-            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(true)));
-        }
-        return out;
-    }
-
-    private Map<Integer, ECPoint> decodePointMap(Map<?, ?> map) {
-        Map<Integer, ECPoint> out = new HashMap<>();
-        for (Map.Entry<?, ?> e : map.entrySet()) {
-            int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, Secp256k1Curve.decodePoint(HexUtils.hexToBytes(String.valueOf(e.getValue()))));
-        }
-        return out;
-    }
 
     private Map<String, Object> encodeAffGProofMap(Map<Integer, PiAffGProof> map) {
         Map<String, Object> out = new HashMap<>();

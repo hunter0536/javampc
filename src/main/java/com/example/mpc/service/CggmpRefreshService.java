@@ -140,26 +140,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     // 已废弃：基于 MtA 的 DKG 处理程序，已在 CGGMP21 DKG 中移除
 
 
-    private Map<String, String> encodePointMap(Map<Integer, ECPoint> map) {
-        Map<String, String> out = new LinkedHashMap<>();
-        List<Integer> keys = new ArrayList<>(map.keySet());
-        Collections.sort(keys);
-        for (int k : keys) {
-            ECPoint p = map.get(k);
-            if (p == null) continue;
-            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(false)));
-        }
-        return out;
-    }
-
-    private Map<Integer, ECPoint> decodePointMap(Map<?, ?> map) {
-        Map<Integer, ECPoint> out = new HashMap<>();
-        for (Map.Entry<?, ?> e : map.entrySet()) {
-            int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, Secp256k1Curve.decodePoint(HexUtils.hexToBytes(String.valueOf(e.getValue()))));
-        }
-        return out;
-    }
 
     private static byte[] buildRefreshContext(String taskId, byte[] rid, int senderId, String label) {
         String base = "REFRESH:" + label + ":" + taskId + ":" + senderId + ":";
@@ -358,9 +338,9 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         data.put("s", r2.s.toString(16));
         data.put("t", r2.t.toString(16));
         data.put("prmProof", CggmpDkgCodec.encodePiPrmProof(r2.prmProof));
-        data.put("Y", encodePointMap(r2.Y));
-        data.put("X", encodePointMap(r2.X));
-        data.put("A", encodePointMap(r2.A));
+        data.put("Y", JsonUtils.encodeECPointMap(r2.Y));
+        data.put("X", JsonUtils.encodeECPointMap(r2.X));
+        data.put("A", JsonUtils.encodeECPointMap(r2.A));
         data.put("Xi", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(r2.Xi)));
         data.put("rid", Base64.getEncoder().encodeToString(r2.rid));
         data.put("u", Base64.getEncoder().encodeToString(r2.u));
@@ -492,9 +472,9 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             BigInteger s = new BigInteger(sHex, 16);
             BigInteger t = new BigInteger(tHex, 16);
             PiPrmProof prmProof = CggmpDkgCodec.decodePiPrmProof(prmMap);
-            Map<Integer, ECPoint> Y = decodePointMap(yMap);
-            Map<Integer, ECPoint> X = decodePointMap(xMap);
-            Map<Integer, ECPoint> A = decodePointMap(aMap);
+            Map<Integer, ECPoint> Y = JsonUtils.decodeECPointMap(yMap);
+            Map<Integer, ECPoint> X = JsonUtils.decodeECPointMap(xMap);
+            Map<Integer, ECPoint> A = JsonUtils.decodeECPointMap(aMap);
             ECPoint Xi = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(xiHex));
             byte[] rid = Base64.getDecoder().decode(ridB64);
             byte[] u = Base64.getDecoder().decode(uB64);

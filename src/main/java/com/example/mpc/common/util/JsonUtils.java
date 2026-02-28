@@ -1,9 +1,13 @@
 package com.example.mpc.common.util;
 
+import com.example.mpc.cggmp.sign.Secp256k1Curve;
+import org.bouncycastle.math.ec.ECPoint;
+
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -103,6 +107,39 @@ public final class JsonUtils {
             Integer key = Integer.parseInt(String.valueOf(e.getKey()));
             BigInteger value = new BigInteger(String.valueOf(e.getValue()), 16);
             out.put(key, value);
+        }
+        return out;
+    }
+
+    public static Map<String, String> encodeECPointMap(Map<Integer, ECPoint> map) {
+        Map<String, String> out = new LinkedHashMap<>();
+        List<Integer> keys = new ArrayList<>(map.keySet());
+        Collections.sort(keys);
+        for (int k : keys) {
+            ECPoint p = map.get(k);
+            if (p == null) continue;
+            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(false)));
+        }
+        return out;
+    }
+
+    public static Map<String, String> encodeECPointMapCompressed(Map<Integer, ECPoint> map) {
+        Map<String, String> out = new LinkedHashMap<>();
+        List<Integer> keys = new ArrayList<>(map.keySet());
+        Collections.sort(keys);
+        for (int k : keys) {
+            ECPoint p = map.get(k);
+            if (p == null) continue;
+            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(true)));
+        }
+        return out;
+    }
+
+    public static Map<Integer, ECPoint> decodeECPointMap(Map<?, ?> map) {
+        Map<Integer, ECPoint> out = new HashMap<>();
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            int key = Integer.parseInt(String.valueOf(e.getKey()));
+            out.put(key, Secp256k1Curve.decodePoint(HexUtils.hexToBytes(String.valueOf(e.getValue()))));
         }
         return out;
     }
