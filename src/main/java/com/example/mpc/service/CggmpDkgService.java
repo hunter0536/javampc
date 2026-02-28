@@ -1,7 +1,7 @@
 package com.example.mpc.service;
 
 import com.example.mpc.cggmp.CGGMP;
-import com.example.mpc.cggmp.CggmpDkgCodec;
+import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.PedersenCommitment;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
@@ -486,14 +486,14 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         data.put("nodeId", round1Output.nodeId);
         data.put("Xjk", JsonUtils.encodeECPointMapCompressed(Xjk));
         data.put("Ajk", JsonUtils.encodeECPointMapCompressed(Ajk));
-        data.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(round1Output.paillierKey));
-        data.put("zkSetup", CggmpDkgCodec.encodeZkSetup(round1Output.zkSetup));
-        data.put("biPrimeProof", CggmpDkgCodec.encodeBiPrimeProof(round1Output.biPrimeProof));
-        data.put("factorProof", CggmpDkgCodec.encodeNoSmallFactorProof(round1Output.factorProof));
+        data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(round1Output.paillierKey));
+        data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(round1Output.zkSetup));
+        data.put("biPrimeProof", CggmpCodecUtils.encodeBiPrimeProof(round1Output.biPrimeProof));
+        data.put("factorProof", CggmpCodecUtils.encodeNoSmallFactorProof(round1Output.factorProof));
         data.put("hatN", task.hatN.get(nodeId).toString(16));
         data.put("s", task.sValues.get(nodeId).toString(16));
         data.put("t", task.tValues.get(nodeId).toString(16));
-        data.put("prmProof", CggmpDkgCodec.encodePiPrmProof(prmProof));
+        data.put("prmProof", CggmpCodecUtils.encodePiPrmProof(prmProof));
         data.put("ridPart", HexUtils.bytesToHex(ridPart));
         if (hdEnabled) {
             byte[] cPart = task.chainCodeParts.get(nodeId);
@@ -922,12 +922,12 @@ public class CggmpDkgService implements NodeService.MessageHandler {
 
         BiPrimeBlumProof modProof = task.round2ModProofs.get(senderNodeId);
         if (modProof == null) {
-            modProof = CggmpDkgCodec.decodeBiPrimeProof(modMap);
+            modProof = CggmpCodecUtils.decodeBiPrimeProof(modMap);
             task.round2ModProofs.putIfAbsent(senderNodeId, modProof);
         }
         NoSmallFactorProof facProof = task.round2FacProofs.get(senderNodeId);
         if (facProof == null) {
-            facProof = CggmpDkgCodec.decodeNoSmallFactorProof(facMap);
+            facProof = CggmpCodecUtils.decodeNoSmallFactorProof(facMap);
             task.round2FacProofs.putIfAbsent(senderNodeId, facProof);
         }
 
@@ -1544,24 +1544,24 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     private Map<String, Object> encodeSchProofMap(Map<Integer, PiSchProof> map) {
         Map<String, Object> out = new HashMap<>();
         for (Map.Entry<Integer, PiSchProof> e : map.entrySet()) {
-            out.put(String.valueOf(e.getKey()), CggmpDkgCodec.encodePiSchProof(e.getValue()));
+            out.put(String.valueOf(e.getKey()), CggmpCodecUtils.encodePiSchProof(e.getValue()));
         }
         return out;
     }
 
     private Map<String, Object> encodeSchProof(PiSchProof proof) {
-        return CggmpDkgCodec.encodePiSchProof(proof);
+        return CggmpCodecUtils.encodePiSchProof(proof);
     }
 
     private PiSchProof decodeSchProof(Map<?, ?> map) {
-        return CggmpDkgCodec.decodePiSchProof(map);
+        return CggmpCodecUtils.decodePiSchProof(map);
     }
 
     private Map<Integer, PiSchProof> decodeSchProofMap(Map<?, ?> map) {
         Map<Integer, PiSchProof> out = new HashMap<>();
         for (Map.Entry<?, ?> e : map.entrySet()) {
             int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, CggmpDkgCodec.decodePiSchProof((Map<?, ?>) e.getValue()));
+            out.put(key, CggmpCodecUtils.decodePiSchProof((Map<?, ?>) e.getValue()));
         }
         return out;
     }

@@ -1,6 +1,6 @@
 package com.example.mpc.service;
 
-import com.example.mpc.cggmp.CggmpDkgCodec;
+import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
@@ -449,9 +449,9 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             task.prmProof = prmProof;
 
             String vCommit = computeAuxCommitHash(task.executionId, task.taskId, nodeId,
-                    CggmpDkgCodec.encodePaillierPublicKey(paillier.getPublicKeyInfo()),
+                    CggmpCodecUtils.encodePaillierPublicKey(paillier.getPublicKeyInfo()),
                     task.hatN.toString(16), task.s.toString(16), task.t.toString(16),
-                    CggmpDkgCodec.encodePiPrmProof(prmProof), rho_i, u_i);
+                    CggmpCodecUtils.encodePiPrmProof(prmProof), rho_i, u_i);
             task.commitHashes.put(nodeId, vCommit);
 
             Map<String, Object> r1 = new HashMap<>();
@@ -504,11 +504,11 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                     r2.put("taskId", task.taskId);
                     r2.put("executionId", task.executionId);
                     r2.put("senderId", nodeId);
-                    r2.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(ctx.paillier.getPublicKeyInfo()));
+                    r2.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(ctx.paillier.getPublicKeyInfo()));
                     r2.put("hatN", task.hatN.toString(16));
                     r2.put("s", task.s.toString(16));
                     r2.put("t", task.t.toString(16));
-                    r2.put("prmProof", CggmpDkgCodec.encodePiPrmProof(ctx.prmProof));
+                    r2.put("prmProof", CggmpCodecUtils.encodePiPrmProof(ctx.prmProof));
                     r2.put("rho", HexUtils.bytesToHex(ctx.rho));
                     r2.put("u", HexUtils.bytesToHex(ctx.u));
                     fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R2, r2)),
@@ -535,13 +535,13 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                         long facStart = System.nanoTime();
                         NoSmallFactorProof facProof = new NoSmallFactorProofGenerator(zk).createProof(ctx.paillier.getPrivateKeyInfo(), modCtx);
                         logger.debug("AUX fac proof generated for peer {} in {} ms", peerId, (System.nanoTime() - facStart) / 1_000_000);
-                        facProofs.put(String.valueOf(peerId), CggmpDkgCodec.encodeNoSmallFactorProof(facProof));
+                        facProofs.put(String.valueOf(peerId), CggmpCodecUtils.encodeNoSmallFactorProof(facProof));
                     }
                     Map<String, Object> r3 = new HashMap<>();
                     r3.put("taskId", task.taskId);
                     r3.put("executionId", task.executionId);
                     r3.put("senderId", nodeId);
-                    r3.put("modProof", CggmpDkgCodec.encodeBiPrimeProof(modProof));
+                    r3.put("modProof", CggmpCodecUtils.encodeBiPrimeProof(modProof));
                     r3.put("facProofs", facProofs);
                     fireAndForget(nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R3, r3)),
                             "CGGMP_AUX_R3");
@@ -727,11 +727,11 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             return;
         }
         if (pkObj instanceof Map<?, ?> pkMap) {
-            task.peerPaillierKeys.put(senderIdVal, CggmpDkgCodec.decodePaillierPublicKey(pkMap));
+            task.peerPaillierKeys.put(senderIdVal, CggmpCodecUtils.decodePaillierPublicKey(pkMap));
         }
         Object prmObj = dataMap.get("prmProof");
         if (prmObj instanceof Map<?, ?> prmMap) {
-            task.peerPrmProofs.put(senderIdVal, CggmpDkgCodec.decodePiPrmProof(prmMap));
+            task.peerPrmProofs.put(senderIdVal, CggmpCodecUtils.decodePiPrmProof(prmMap));
         }
         task.peerHatN.put(senderIdVal, new BigInteger(hatNStr, 16));
         task.peerS.put(senderIdVal, new BigInteger(sStr, 16));
@@ -771,7 +771,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                     taskId, senderNodeId, task.peerPaillierKeys.keySet());
             return;
         }
-        BiPrimeBlumProof modProof = CggmpDkgCodec.decodeBiPrimeProof(modMap);
+        BiPrimeBlumProof modProof = CggmpCodecUtils.decodeBiPrimeProof(modMap);
         byte[] rho = xorAuxRho(task);
         byte[] modCtx = buildAuxContext(taskId, task.executionId, senderNodeId, "MOD", rho);
         if (!BI_PRIME_VALIDATOR.verifyProof(modProof, pk, modCtx)) {
@@ -788,7 +788,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         BigInteger hatN = task.hatN;
         BigInteger s = task.s;
         BigInteger t = task.t;
-        NoSmallFactorProof facProof = CggmpDkgCodec.decodeNoSmallFactorProof(facProofMap);
+        NoSmallFactorProof facProof = CggmpCodecUtils.decodeNoSmallFactorProof(facProofMap);
         ZKSetup zk = new ZKSetup(hatN, s, t);
         NoSmallFactorProofValidator facValidator = new NoSmallFactorProofValidator(zk, auxMinPaillierBitsForProof);
         NoSmallFactorProofValidator.ProofCheckResult facResult = facValidator.verifyProofDetailed(facProof, pk, modCtx);

@@ -2,7 +2,6 @@ package com.example.mpc.cggmp.proof;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
-import com.example.mpc.cggmp.util.DeterministicRandom;
 
 import java.math.BigInteger;
 import java.util.ArrayList;

@@ -1,6 +1,6 @@
 package com.example.mpc.service;
 
-import com.example.mpc.cggmp.CggmpDkgCodec;
+import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
 import com.example.mpc.cggmp.mta.MtAProtocol;
@@ -758,10 +758,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("A2", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A2)));
         data.put("B1", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B1)));
         data.put("B2", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B2)));
-        data.put("encElgProofK", CggmpDkgCodec.encodePiEncElgProof(encElgK));
-        data.put("encElgProofG", CggmpDkgCodec.encodePiEncElgProof(encElgG));
-        data.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
-        data.put("zkSetup", CggmpDkgCodec.encodeZkSetup(task.zkSetup));
+        data.put("encElgProofK", CggmpCodecUtils.encodePiEncElgProof(encElgK));
+        data.put("encElgProofG", CggmpCodecUtils.encodePiEncElgProof(encElgG));
+        data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
+        data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(task.zkSetup));
         return RetryUtils.retryAsync(cggmpScheduler, logger, () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R1, data)),
                 Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
                 Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
@@ -808,7 +808,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("Fhat", JsonUtils.encodeBigIntegerMap(Fhat));
         data.put("affGProofs", encodeAffGProofMap(affG));
         data.put("affGProofsHat", encodeAffGProofMap(affGhat));
-        data.put("logProof", CggmpDkgCodec.encodePiLogProof(logProof));
+        data.put("logProof", CggmpCodecUtils.encodePiLogProof(logProof));
         data.put("X", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(X)));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R2, data));
     }
@@ -820,7 +820,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("delta", delta.toString(16));
         data.put("Delta", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Delta)));
         data.put("S", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(S)));
-        data.put("logProof", CggmpDkgCodec.encodePiLogProof(logProof));
+        data.put("logProof", CggmpCodecUtils.encodePiLogProof(logProof));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R3, data));
     }
 
@@ -829,7 +829,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     private Map<String, Object> encodeAffGProofMap(Map<Integer, PiAffGProof> map) {
         Map<String, Object> out = new HashMap<>();
         for (Map.Entry<Integer, PiAffGProof> e : map.entrySet()) {
-            out.put(String.valueOf(e.getKey()), CggmpDkgCodec.encodePiAffGProof(e.getValue()));
+            out.put(String.valueOf(e.getKey()), CggmpCodecUtils.encodePiAffGProof(e.getValue()));
         }
         return out;
     }
@@ -838,7 +838,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<Integer, PiAffGProof> out = new HashMap<>();
         for (Map.Entry<?, ?> e : map.entrySet()) {
             int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, CggmpDkgCodec.decodePiAffGProof((Map<?, ?>) e.getValue()));
+            out.put(key, CggmpCodecUtils.decodePiAffGProof((Map<?, ?>) e.getValue()));
         }
         return out;
     }
@@ -846,24 +846,24 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     private Map<String, Object> encodeSchProofMap(Map<Integer, PiSchProof> map) {
         Map<String, Object> out = new HashMap<>();
         for (Map.Entry<Integer, PiSchProof> e : map.entrySet()) {
-            out.put(String.valueOf(e.getKey()), CggmpDkgCodec.encodePiSchProof(e.getValue()));
+            out.put(String.valueOf(e.getKey()), CggmpCodecUtils.encodePiSchProof(e.getValue()));
         }
         return out;
     }
 
     private Map<String, Object> encodeSchProof(PiSchProof proof) {
-        return CggmpDkgCodec.encodePiSchProof(proof);
+        return CggmpCodecUtils.encodePiSchProof(proof);
     }
 
     private PiSchProof decodeSchProof(Map<?, ?> map) {
-        return CggmpDkgCodec.decodePiSchProof(map);
+        return CggmpCodecUtils.decodePiSchProof(map);
     }
 
     private Map<Integer, PiSchProof> decodeSchProofMap(Map<?, ?> map) {
         Map<Integer, PiSchProof> out = new HashMap<>();
         for (Map.Entry<?, ?> e : map.entrySet()) {
             int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, CggmpDkgCodec.decodePiSchProof((Map<?, ?>) e.getValue()));
+            out.put(key, CggmpCodecUtils.decodePiSchProof((Map<?, ?>) e.getValue()));
         }
         return out;
     }
@@ -1495,9 +1495,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             data.put("taskId", task.taskId);
             data.put("initiatorId", nodeId);
             data.put("receiverId", participantId);
-            data.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
-            data.put("zkSetup", CggmpDkgCodec.encodeZkSetup(task.zkSetup));
-            data.put("initiatorMessage", CggmpDkgCodec.encodeMtAInitiatorMessage(initiatorMessage));
+            data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
+            data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(task.zkSetup));
+            data.put("initiatorMessage", CggmpCodecUtils.encodeMtAInitiatorMessage(initiatorMessage));
             futures.add(nodeService.sendMessage(participantId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_KA_INIT, data)));
         }
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
@@ -1518,9 +1518,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             data.put("taskId", task.taskId);
             data.put("initiatorId", nodeId);
             data.put("receiverId", participantId);
-            data.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
-            data.put("zkSetup", CggmpDkgCodec.encodeZkSetup(task.zkSetup));
-            data.put("initiatorMessage", CggmpDkgCodec.encodeMtAInitiatorMessage(initiatorMessage));
+            data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
+            data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(task.zkSetup));
+            data.put("initiatorMessage", CggmpCodecUtils.encodeMtAInitiatorMessage(initiatorMessage));
             futures.add(nodeService.sendMessage(participantId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_ST_INIT, data)));
         }
         return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
@@ -1877,10 +1877,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         ECPoint A2 = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(a2Hex));
         ECPoint B1 = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(b1Hex));
         ECPoint B2 = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(b2Hex));
-        PiEncElgProof encElgK = encElgKMap == null ? null : CggmpDkgCodec.decodePiEncElgProof(encElgKMap);
-        PiEncElgProof encElgG = encElgGMap == null ? null : CggmpDkgCodec.decodePiEncElgProof(encElgGMap);
-        PaillierEncryption.PublicKey publicKey = CggmpDkgCodec.decodePaillierPublicKey(pkMap);
-        ZKSetup zkSetup = CggmpDkgCodec.decodeZkSetup(zkMap);
+        PiEncElgProof encElgK = encElgKMap == null ? null : CggmpCodecUtils.decodePiEncElgProof(encElgKMap);
+        PiEncElgProof encElgG = encElgGMap == null ? null : CggmpCodecUtils.decodePiEncElgProof(encElgGMap);
+        PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
+        ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
         if (!ensurePeerKeyConsistency(task, senderId, publicKey, zkSetup)) {
             fireAndForget(broadcastComplaint(task, senderId, "Inconsistent Paillier key/zkSetup (presign R1)", Map.of("paillierPublicKey", pkMap, "zkSetup", zkMap)),
                     "CGGMP_PRESIGN_COMPLAINT");
@@ -2059,7 +2059,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 Dhat.keySet(),
                 dForNode == null ? null : dForNode.toString(16),
                 dhatForNode == null ? null : dhatForNode.toString(16));
-        PiLogProof logProof = logProofMap == null ? null : CggmpDkgCodec.decodePiLogProof(logProofMap);
+        PiLogProof logProof = logProofMap == null ? null : CggmpCodecUtils.decodePiLogProof(logProofMap);
         byte[] ctx = buildPresignContext(task.taskId, senderId, "R2");
         ECPoint Y = task.presignY.get(senderId);
         ECPoint B1 = task.presignB1.get(senderId);
@@ -2217,7 +2217,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (deltaHex == null || deltaPointHex == null || sPointHex == null) {
             return;
         }
-        PiLogProof logProof = logProofMap == null ? null : CggmpDkgCodec.decodePiLogProof(logProofMap);
+        PiLogProof logProof = logProofMap == null ? null : CggmpCodecUtils.decodePiLogProof(logProofMap);
         ECPoint Delta = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(deltaPointHex));
         ECPoint S = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(sPointHex));
         byte[] ctx = buildPresignContext(task.taskId, senderId, "R3");
@@ -2375,7 +2375,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     buildPresignContext(task.taskId, nodeId, "DEC")
             );
             Map<String, Object> ev = new HashMap<>();
-            ev.put("piDecProof", CggmpDkgCodec.encodePiDecProof(proof));
+            ev.put("piDecProof", CggmpCodecUtils.encodePiDecProof(proof));
             ev.put("K", HexUtils.toHex(K));
             ev.put("D", HexUtils.toHex(D));
             ev.put("Gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Gamma)));
@@ -2418,7 +2418,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     buildPresignContext(task.taskId, nodeId, "DECH")
             );
             Map<String, Object> ev = new HashMap<>();
-            ev.put("piDecProof", CggmpDkgCodec.encodePiDecProof(proof));
+            ev.put("piDecProof", CggmpCodecUtils.encodePiDecProof(proof));
             ev.put("K", HexUtils.toHex(K));
             ev.put("D", HexUtils.toHex(Dhat));
             ev.put("Gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Gamma)));
@@ -2461,7 +2461,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return false;
         }
         try {
-            PiDecProof proof = CggmpDkgCodec.decodePiDecProof(proofMap);
+            PiDecProof proof = CggmpCodecUtils.decodePiDecProof(proofMap);
             String kHex = (String) evidence.get("K");
             String dHex = (String) evidence.get("D");
             String gammaHex = (String) evidence.get("Gamma");
@@ -3051,9 +3051,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (pkMap == null || zkMap == null || msgMap == null) {
                 return;
             }
-            PaillierEncryption.PublicKey publicKey = CggmpDkgCodec.decodePaillierPublicKey(pkMap);
-            ZKSetup zkSetup = CggmpDkgCodec.decodeZkSetup(zkMap);
-            MtAInitiatorMessage initiatorMessage = CggmpDkgCodec.decodeMtAInitiatorMessage(msgMap);
+            PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
+            ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
+            MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
             if (!validatePaillierPublicKey(publicKey)) {
                 logger.warn("Invalid Paillier public key for KA from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
@@ -3109,7 +3109,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             resp.put("initiatorId", initiatorId);
             resp.put("responderId", nodeId);
             com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
-            resp.put("result", CggmpDkgCodec.encodeMtAResult(publicResult));
+            resp.put("result", CggmpCodecUtils.encodeMtAResult(publicResult));
             fireAndForget(nodeService.sendMessage(initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_KA_RESPONSE, resp)),
                     "CGGMP_SIGN_MTA_KA_RESPONSE");
         } catch (Exception e) {
@@ -3141,7 +3141,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (resultMap == null) {
                 return;
             }
-            com.example.mpc.cggmp.mta.MtAResult result = CggmpDkgCodec.decodeMtAResult(resultMap);
+            com.example.mpc.cggmp.mta.MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
             MtAInitiatorMessage initiatorMessage = task.mtaKaInitiatorMessages.get(responderId);
             if (initiatorMessage == null) {
                 return;
@@ -3291,9 +3291,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (pkMap == null || zkMap == null || msgMap == null) {
                 return;
             }
-            PaillierEncryption.PublicKey publicKey = CggmpDkgCodec.decodePaillierPublicKey(pkMap);
-            ZKSetup zkSetup = CggmpDkgCodec.decodeZkSetup(zkMap);
-            MtAInitiatorMessage initiatorMessage = CggmpDkgCodec.decodeMtAInitiatorMessage(msgMap);
+            PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
+            ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
+            MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
             if (!validatePaillierPublicKey(publicKey)) {
                 logger.warn("Invalid Paillier public key for ST from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
@@ -3349,7 +3349,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             resp.put("initiatorId", initiatorId);
             resp.put("responderId", nodeId);
             com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
-            resp.put("result", CggmpDkgCodec.encodeMtAResult(publicResult));
+            resp.put("result", CggmpCodecUtils.encodeMtAResult(publicResult));
             fireAndForget(nodeService.sendMessage(initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_ST_RESPONSE, resp)),
                     "CGGMP_SIGN_MTA_ST_RESPONSE");
         } catch (Exception e) {
@@ -3381,7 +3381,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (resultMap == null) {
                 return;
             }
-            com.example.mpc.cggmp.mta.MtAResult result = CggmpDkgCodec.decodeMtAResult(resultMap);
+            com.example.mpc.cggmp.mta.MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
             MtAInitiatorMessage initiatorMessage = task.mtaStInitiatorMessages.get(responderId);
             if (initiatorMessage == null) {
                 return;

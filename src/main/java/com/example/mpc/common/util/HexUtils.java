@@ -31,11 +31,19 @@ public class HexUtils {
         return new BigInteger(hex, 16);
     }
 
+    public static BigInteger fromHex(Object hex) {
+        return new BigInteger((String) hex, 16);
+    }
+
     public static String toBase64(byte[] bytes) {
         return Base64.getEncoder().encodeToString(bytes);
     }
 
     public static byte[] fromBase64(String base64) {
         return Base64.getDecoder().decode(base64);
+    }
+
+    public static byte[] fromBase64(Object base64) {
+        return Base64.getDecoder().decode((String) base64);
     }
 }

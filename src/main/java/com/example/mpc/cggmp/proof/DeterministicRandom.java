@@ -1,4 +1,7 @@
-package com.example.mpc.cggmp.util;
+package com.example.mpc.cggmp.proof;
+
+import com.example.mpc.cggmp.util.BigIntegerUtils;
+import com.example.mpc.cggmp.util.ZkBytes;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;

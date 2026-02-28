@@ -1,6 +1,6 @@
 package com.example.mpc.service;
 
-import com.example.mpc.cggmp.CggmpDkgCodec;
+import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
@@ -332,12 +332,12 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", nodeId);
-        data.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(r2.paillierKey));
-        data.put("zkSetup", CggmpDkgCodec.encodeZkSetup(r2.zkSetup));
+        data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(r2.paillierKey));
+        data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(r2.zkSetup));
         data.put("hatN", r2.hatN.toString(16));
         data.put("s", r2.s.toString(16));
         data.put("t", r2.t.toString(16));
-        data.put("prmProof", CggmpDkgCodec.encodePiPrmProof(r2.prmProof));
+        data.put("prmProof", CggmpCodecUtils.encodePiPrmProof(r2.prmProof));
         data.put("Y", JsonUtils.encodeECPointMap(r2.Y));
         data.put("X", JsonUtils.encodeECPointMap(r2.X));
         data.put("A", JsonUtils.encodeECPointMap(r2.A));
@@ -353,8 +353,8 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         data.put("senderId", nodeId);
         data.put("C", JsonUtils.encodeBigIntegerMap(r3.C));
         data.put("schProofs", encodeSchProofMap(r3.schProofs));
-        data.put("biPrimeProof", CggmpDkgCodec.encodeBiPrimeProof(r3.biPrimeProof));
-        data.put("factorProof", CggmpDkgCodec.encodeNoSmallFactorProof(r3.factorProof));
+        data.put("biPrimeProof", CggmpCodecUtils.encodeBiPrimeProof(r3.biPrimeProof));
+        data.put("factorProof", CggmpCodecUtils.encodeNoSmallFactorProof(r3.factorProof));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_REFRESH_R3, data));
     }
 
@@ -466,12 +466,12 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                 return;
             }
 
-            PaillierEncryption.PublicKey pk = CggmpDkgCodec.decodePaillierPublicKey(pkMap);
-            ZKSetup zk = CggmpDkgCodec.decodeZkSetup(zkMap);
+            PaillierEncryption.PublicKey pk = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
+            ZKSetup zk = CggmpCodecUtils.decodeZkSetup(zkMap);
             BigInteger hatN = new BigInteger(hatNHex, 16);
             BigInteger s = new BigInteger(sHex, 16);
             BigInteger t = new BigInteger(tHex, 16);
-            PiPrmProof prmProof = CggmpDkgCodec.decodePiPrmProof(prmMap);
+            PiPrmProof prmProof = CggmpCodecUtils.decodePiPrmProof(prmMap);
             Map<Integer, ECPoint> Y = JsonUtils.decodeECPointMap(yMap);
             Map<Integer, ECPoint> X = JsonUtils.decodeECPointMap(xMap);
             Map<Integer, ECPoint> A = JsonUtils.decodeECPointMap(aMap);
@@ -550,8 +550,8 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             }
             Map<Integer, BigInteger> C = JsonUtils.decodeBigIntegerMap(cMap);
             Map<Integer, PiSchProof> schProofs = decodeSchProofMap(schMap);
-            BiPrimeBlumProof biPrime = CggmpDkgCodec.decodeBiPrimeProof(biPrimeMap);
-            NoSmallFactorProof factor = CggmpDkgCodec.decodeNoSmallFactorProof(factorMap);
+            BiPrimeBlumProof biPrime = CggmpCodecUtils.decodeBiPrimeProof(biPrimeMap);
+            NoSmallFactorProof factor = CggmpCodecUtils.decodeNoSmallFactorProof(factorMap);
 
             CggmpRefreshTask.RefreshRound3Data r3 = new CggmpRefreshTask.RefreshRound3Data(C, schProofs, biPrime, factor);
             if (task.round3Data.putIfAbsent(senderId, r3) == null && task.round3Latch.getCount() > 0) {
@@ -1159,7 +1159,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     private Map<String, Object> encodeSchProofMap(Map<Integer, PiSchProof> map) {
         Map<String, Object> out = new HashMap<>();
         for (Map.Entry<Integer, PiSchProof> e : map.entrySet()) {
-            out.put(String.valueOf(e.getKey()), CggmpDkgCodec.encodePiSchProof(e.getValue()));
+            out.put(String.valueOf(e.getKey()), CggmpCodecUtils.encodePiSchProof(e.getValue()));
         }
         return out;
     }
@@ -1168,7 +1168,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         Map<Integer, PiSchProof> out = new HashMap<>();
         for (Map.Entry<?, ?> e : map.entrySet()) {
             int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, CggmpDkgCodec.decodePiSchProof((Map<?, ?>) e.getValue()));
+            out.put(key, CggmpCodecUtils.decodePiSchProof((Map<?, ?>) e.getValue()));
         }
         return out;
     }
