@@ -677,7 +677,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                         "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
-            ECPoint sum = sumPoints(r2.X);
+            ECPoint sum = Secp256k1Curve.sumPoints(r2.X);
             if (!sum.isInfinity()) {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("peerId", peerId);
@@ -878,7 +878,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                         buildRefreshContext(task.taskId, null, offenderId, "PRM"));
             }
             if (r.startsWith("Sum of X not identity")) {
-                return r2 != null && !sumPoints(r2.X).isInfinity();
+                return r2 != null && !Secp256k1Curve.sumPoints(r2.X).isInfinity();
             }
             if (r.startsWith("Invalid Blum proof")) {
                 if (r2 == null || r3 == null) return false;
@@ -1157,13 +1157,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     }
 
 
-    private ECPoint sumPoints(Map<Integer, ECPoint> points) {
-        ECPoint sum = Secp256k1Curve.G().getCurve().getInfinity();
-        for (ECPoint p : points.values()) {
-            sum = sum.add(p).normalize();
-        }
-        return sum;
-    }
 
     private Object maybeDecompressDkgPayload(MessageType type, byte[] bytes) {
         return null;

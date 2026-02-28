@@ -860,13 +860,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return sum;
     }
 
-    private ECPoint sumPoints(Map<Integer, ECPoint> points) {
-        ECPoint sum = Secp256k1Curve.G().getCurve().getInfinity();
-        for (ECPoint p : points.values()) {
-            sum = sum.add(p).normalize();
-        }
-        return sum;
-    }
 
     private static byte[] buildPresignContext(String taskId, int senderId, String round) {
         String sid = buildSignSid(taskId);
@@ -3836,7 +3829,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         PresignR2Context ctx = r3ctx.ctx;
         BigInteger delta = sumShares(ctx.task.presignDelta, ctx.curveOrder);
         ECPoint left = Secp256k1Curve.multiply(Secp256k1Curve.G(), delta);
-        ECPoint right = sumPoints(ctx.task.presignDeltaPoint);
+        ECPoint right = Secp256k1Curve.sumPoints(ctx.task.presignDeltaPoint);
         if (!left.equals(right)) {
             logger.warn("Presign delta verification mismatch for task {}: left={}, right={}, delta={}, participants={}",
                     ctx.task.taskId,
@@ -3852,7 +3845,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         ECPoint X = ctx.task.groupPublicKeyPoint;
         ECPoint leftS = X.multiply(delta).normalize();
-        ECPoint rightS = sumPoints(ctx.task.presignSPoint);
+        ECPoint rightS = Secp256k1Curve.sumPoints(ctx.task.presignSPoint);
         if (!leftS.equals(rightS)) {
             logger.warn("Presign chi verification mismatch for task {}: leftS={}, rightS={}, delta={}, participants={}",
                     ctx.task.taskId,

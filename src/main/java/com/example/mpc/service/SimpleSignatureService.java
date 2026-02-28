@@ -257,8 +257,8 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
 
             waitForOfflinePhaseAsync(task).join();
 
-            task.R = sumPoints(task.RShares, curveOrder);
-            task.Gamma = sumPoints(task.GammaShares, curveOrder);
+            task.R = Secp256k1Curve.sumPoints(task.RShares);
+            task.Gamma = Secp256k1Curve.sumPoints(task.GammaShares);
 
             logger.info("Node {} completed offline phase: R={}, Gamma={}",
                     nodeId, task.R.getAffineXCoord().toBigInteger().toString(16),
@@ -749,19 +749,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private ECPoint sumPoints(Map<Integer, ECPoint> points, BigInteger curveOrder) {
-        ECPoint sum = Secp256k1Curve.G().getCurve().getInfinity();
-        for (ECPoint p : points.values()) {
-            if (p != null) {
-                ECPoint normalized = p.normalize();
-                if (normalized.isInfinity()) {
-                    continue;
-                }
-                sum = sum.add(normalized);
-            }
-        }
-        return sum.normalize();
-    }
 
     private BigInteger sumBigIntegers(Map<Integer, BigInteger> values, BigInteger modulus) {
         BigInteger sum = BigInteger.ZERO;

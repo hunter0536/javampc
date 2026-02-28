@@ -6,6 +6,7 @@ import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
+import java.util.Map;
 
 public final class Secp256k1Curve {
     private static final X9ECParameters CURVE = CustomNamedCurves.getByName("secp256k1");
@@ -35,6 +36,19 @@ public final class Secp256k1Curve {
 
     public static ECPoint add(ECPoint a, ECPoint b) {
         return a.add(b).normalize();
+    }
+
+    public static ECPoint sumPoints(Map<Integer, ECPoint> points) {
+        ECPoint sum = CURVE.getCurve().getInfinity();
+        for (ECPoint p : points.values()) {
+            if (p != null) {
+                ECPoint normalized = p.normalize();
+                if (!normalized.isInfinity()) {
+                    sum = sum.add(normalized);
+                }
+            }
+        }
+        return sum.normalize();
     }
 
     public static BigInteger randomScalar(BigInteger n) {
