@@ -1,5 +1,6 @@
 package com.example.mpc.service.netty;
 
+import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.service.NodeService;
 
 import javax.crypto.Mac;
@@ -18,7 +19,7 @@ public final class MessageSigner {
             Mac mac = Mac.getInstance(HMAC_ALG);
             mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), HMAC_ALG));
             byte[] out = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
-            return bytesToHex(out);
+            return HexUtils.bytesToHex(out);
         } catch (Exception e) {
             throw new RuntimeException("Failed to sign message", e);
         }
@@ -93,13 +94,5 @@ public final class MessageSigner {
             result |= a.charAt(i) ^ b.charAt(i);
         }
         return result == 0;
-    }
-
-    private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
     }
 }

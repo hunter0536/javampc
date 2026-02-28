@@ -14,6 +14,7 @@ import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.sign.Secp256k1Curve;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.JsonUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.AuxInfoDao;
@@ -252,7 +253,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             r1Open.put("senderId", nodeId);
             r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
             r1Open.put("S", encodePointMapCompressed(S_i));
-            r1Open.put("A", bytesToHex(A_i.getEncoded(true)));
+            r1Open.put("A", HexUtils.bytesToHex(A_i.getEncoded(true)));
             byte[] uCommit = randomBytes(32);
             r1Open.put("u", HexUtils.bytesToHex(uCommit));
             if (chainCodePart != null) {
@@ -359,7 +360,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                         groupPublicKey = groupPublicKey.add(sVec.get(0)).normalize();
                     }
                     task.groupPublicKey = groupPublicKey;
-                    task.groupPublicKeyHex = bytesToHex(groupPublicKey.getEncoded(false));
+                    task.groupPublicKeyHex = HexUtils.bytesToHex(groupPublicKey.getEncoded(false));
 
                     saveKeyShareToDatabase(task);
                     task.complete();
@@ -401,7 +402,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             r1Open.put("senderId", nodeId);
             r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
             r1Open.put("S", encodePointMapCompressed(S_i));
-            r1Open.put("A", bytesToHex(A_i.getEncoded(true)));
+            r1Open.put("A", HexUtils.bytesToHex(A_i.getEncoded(true)));
             r1Open.put("u", HexUtils.bytesToHex(uCommit));
             if (chainCodePart != null) {
                 r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
@@ -465,7 +466,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                         groupPublicKey = groupPublicKey.add(sVec.get(0)).normalize();
                     }
                     task.groupPublicKey = groupPublicKey;
-                    task.groupPublicKeyHex = bytesToHex(groupPublicKey.getEncoded(false));
+                    task.groupPublicKeyHex = HexUtils.bytesToHex(groupPublicKey.getEncoded(false));
 
                     saveKeyShareToDatabase(task);
                     task.complete();
@@ -1415,7 +1416,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         Map<String, String> out = new LinkedHashMap<>();
         for (int peerId : task.participants) {
             ECPoint Xj = computePublicShare(task, peerId);
-            out.put(String.valueOf(peerId), bytesToHex(Xj.getEncoded(false)));
+            out.put(String.valueOf(peerId), HexUtils.bytesToHex(Xj.getEncoded(false)));
         }
         return out;
     }
@@ -1438,8 +1439,8 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                 sb.append(",");
             }
             first = false;
-            sb.append("\"").append(escapeJson(e.getKey())).append("\":");
-            sb.append("\"").append(escapeJson(e.getValue())).append("\"");
+            sb.append("\"").append(JsonUtils.escapeJson(e.getKey())).append("\":");
+            sb.append("\"").append(JsonUtils.escapeJson(e.getValue())).append("\"");
         }
         sb.append("}");
         return sb.toString();
@@ -1574,7 +1575,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         for (int k : keys) {
             ECPoint p = map.get(k);
             if (p == null) continue;
-            out.put(String.valueOf(k), bytesToHex(p.getEncoded(false)));
+            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(false)));
         }
         return out;
     }
@@ -1586,7 +1587,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         for (int k : keys) {
             ECPoint p = map.get(k);
             if (p == null) continue;
-            out.put(String.valueOf(k), bytesToHex(p.getEncoded(true)));
+            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(true)));
         }
         return out;
     }
@@ -2003,43 +2004,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         return b;
     }
 
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
-    }
-
-    private String escapeJson(String value) {
-        if (value == null) {
-            return "";
-        }
-        StringBuilder out = new StringBuilder(value.length() + 16);
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '\\':
-                    out.append("\\\\");
-                    break;
-                case '"':
-                    out.append("\\\"");
-                    break;
-                case '\n':
-                    out.append("\\n");
-                    break;
-                case '\r':
-                    out.append("\\r");
-                    break;
-                case '\t':
-                    out.append("\\t");
-                    break;
-                default:
-                    out.append(c);
-            }
-        }
-        return out.toString();
-    }
 
     @Override
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {

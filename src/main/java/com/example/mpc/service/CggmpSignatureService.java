@@ -214,14 +214,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 safeOffset);
     }
 
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
-    }
-
     private static byte[] buildMtaContext(String taskId, int senderId, int receiverId) {
         String ctx = taskId + ":" + senderId + ":" + receiverId;
         return ctx.getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -790,11 +782,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("senderId", nodeId);
         data.put("K", K.toString(16));
         data.put("G", G.toString(16));
-        data.put("Y", bytesToHex(Secp256k1Curve.encodePoint(Y)));
-        data.put("A1", bytesToHex(Secp256k1Curve.encodePoint(A1)));
-        data.put("A2", bytesToHex(Secp256k1Curve.encodePoint(A2)));
-        data.put("B1", bytesToHex(Secp256k1Curve.encodePoint(B1)));
-        data.put("B2", bytesToHex(Secp256k1Curve.encodePoint(B2)));
+        data.put("Y", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Y)));
+        data.put("A1", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A1)));
+        data.put("A2", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(A2)));
+        data.put("B1", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B1)));
+        data.put("B2", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(B2)));
         data.put("encElgProofK", CggmpDkgCodec.encodePiEncElgProof(encElgK));
         data.put("encElgProofG", CggmpDkgCodec.encodePiEncElgProof(encElgG));
         data.put("paillierPublicKey", CggmpDkgCodec.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
@@ -839,15 +831,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", nodeId);
-        data.put("Gamma", bytesToHex(Secp256k1Curve.encodePoint(Gamma)));
-        data.put("D", encodeBigIntegerMap(D));
-        data.put("Dhat", encodeBigIntegerMap(Dhat));
-        data.put("F", encodeBigIntegerMap(F));
-        data.put("Fhat", encodeBigIntegerMap(Fhat));
+        data.put("Gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Gamma)));
+        data.put("D", JsonUtils.encodeBigIntegerMap(D));
+        data.put("Dhat", JsonUtils.encodeBigIntegerMap(Dhat));
+        data.put("F", JsonUtils.encodeBigIntegerMap(F));
+        data.put("Fhat", JsonUtils.encodeBigIntegerMap(Fhat));
         data.put("affGProofs", encodeAffGProofMap(affG));
         data.put("affGProofsHat", encodeAffGProofMap(affGhat));
         data.put("logProof", CggmpDkgCodec.encodePiLogProof(logProof));
-        data.put("X", bytesToHex(Secp256k1Curve.encodePoint(X)));
+        data.put("X", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(X)));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R2, data));
     }
 
@@ -856,28 +848,12 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", nodeId);
         data.put("delta", delta.toString(16));
-        data.put("Delta", bytesToHex(Secp256k1Curve.encodePoint(Delta)));
-        data.put("S", bytesToHex(Secp256k1Curve.encodePoint(S)));
+        data.put("Delta", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Delta)));
+        data.put("S", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(S)));
         data.put("logProof", CggmpDkgCodec.encodePiLogProof(logProof));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_PRESIGN_R3, data));
     }
 
-    private Map<String, String> encodeBigIntegerMap(Map<Integer, BigInteger> map) {
-        Map<String, String> out = new HashMap<>();
-        for (Map.Entry<Integer, BigInteger> e : map.entrySet()) {
-            out.put(String.valueOf(e.getKey()), e.getValue().toString(16));
-        }
-        return out;
-    }
-
-    private Map<Integer, BigInteger> decodeBigIntegerMap(Map<?, ?> map) {
-        Map<Integer, BigInteger> out = new HashMap<>();
-        for (Map.Entry<?, ?> e : map.entrySet()) {
-            int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, new BigInteger(String.valueOf(e.getValue()), 16));
-        }
-        return out;
-    }
 
     private Map<String, String> encodePointMap(Map<Integer, ECPoint> map) {
         Map<String, String> out = new LinkedHashMap<>();
@@ -886,7 +862,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         for (int k : keys) {
             ECPoint p = map.get(k);
             if (p == null) continue;
-            out.put(String.valueOf(k), bytesToHex(p.getEncoded(false)));
+            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(false)));
         }
         return out;
     }
@@ -898,7 +874,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         for (int k : keys) {
             ECPoint p = map.get(k);
             if (p == null) continue;
-            out.put(String.valueOf(k), bytesToHex(p.getEncoded(true)));
+            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(true)));
         }
         return out;
     }
@@ -1550,8 +1526,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", nodeId);
-        data.put("commit", bytesToHex(Secp256k1Curve.encodePoint(commitment)));
-        data.put("proofA", bytesToHex(Secp256k1Curve.encodePoint(proof.A())));
+        data.put("commit", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(commitment)));
+        data.put("proofA", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(proof.A())));
         data.put("proofR", proof.r().toString(16));
         data.put("proofS", proof.s().toString(16));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_GAMMA_COMMIT, data));
@@ -1561,7 +1537,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", nodeId);
-        data.put("gamma", bytesToHex(Secp256k1Curve.encodePoint(gamma)));
+        data.put("gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(gamma)));
         data.put("r", blinding.toString(16));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_GAMMA_OPEN, data));
     }
@@ -1682,7 +1658,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             digest.update(uBytes);
             digest.update(rBytes);
             byte[] out = digest.digest();
-            return bytesToHex(out);
+            return HexUtils.bytesToHex(out);
         } catch (Exception e) {
             throw new RuntimeException("U commit hash failed", e);
         }
@@ -2132,10 +2108,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         BigInteger curveOrder = Secp256k1Curve.n();
         ECPoint Gamma = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(gammaHex));
         task.presignGamma.put(senderId, Gamma);
-        Map<Integer, BigInteger> D = decodeBigIntegerMap(dMap);
-        Map<Integer, BigInteger> Dhat = decodeBigIntegerMap(dhMap);
-        Map<Integer, BigInteger> F = decodeBigIntegerMap(fMap);
-        Map<Integer, BigInteger> Fhat = decodeBigIntegerMap(fhMap);
+        Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
+        Map<Integer, BigInteger> Dhat = JsonUtils.decodeBigIntegerMap(dhMap);
+        Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
+        Map<Integer, BigInteger> Fhat = JsonUtils.decodeBigIntegerMap(fhMap);
         BigInteger dForNode = D.get(nodeId);
         BigInteger dhatForNode = Dhat.get(nodeId);
         logger.info("Presign R2 received for task {} from {}: D keys={}, Dhat keys={}, D[node]={}, Dhat[node]={}",
@@ -2613,8 +2589,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                                                     BigInteger claimedD,
                                                     Map<?, ?> dMap,
                                                     Map<?, ?> fMap) {
-        Map<Integer, BigInteger> D = decodeBigIntegerMap(dMap);
-        Map<Integer, BigInteger> F = decodeBigIntegerMap(fMap);
+        Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
+        Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
         PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(senderId);
         if (pk == null) {
             return false;
@@ -2683,8 +2659,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         Map<String, Object> ev = new HashMap<>();
         ev.put("affGProofs", encodeAffGProofMap(proofs));
-        ev.put("DMap", encodeBigIntegerMap(D));
-        ev.put("FMap", encodeBigIntegerMap(F));
+        ev.put("DMap", JsonUtils.encodeBigIntegerMap(D));
+        ev.put("FMap", JsonUtils.encodeBigIntegerMap(F));
         ev.put("Gamma", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(Gamma)));
         return ev;
     }
@@ -2734,8 +2710,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         Map<String, Object> ev = new HashMap<>();
         ev.put("affGProofsHat", encodeAffGProofMap(proofs));
-        ev.put("DhatMap", encodeBigIntegerMap(Dhat));
-        ev.put("FhatMap", encodeBigIntegerMap(Fhat));
+        ev.put("DhatMap", JsonUtils.encodeBigIntegerMap(Dhat));
+        ev.put("FhatMap", JsonUtils.encodeBigIntegerMap(Fhat));
         ev.put("X", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(X_i)));
         return ev;
     }
@@ -2758,8 +2734,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             }
             ECPoint Gamma = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(gammaHex));
             Map<Integer, PiAffGProof> proofs = decodeAffGProofMap(proofMap);
-            Map<Integer, BigInteger> D = decodeBigIntegerMap(dMap);
-            Map<Integer, BigInteger> F = decodeBigIntegerMap(fMap);
+            Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
+            Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
             if (!allPeersPresent(task, senderId, proofs, D, F)) {
                 return false;
             }
@@ -2800,8 +2776,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             }
             ECPoint X = Secp256k1Curve.decodePoint(HexUtils.hexToBytes(xHex));
             Map<Integer, PiAffGProof> proofs = decodeAffGProofMap(proofMap);
-            Map<Integer, BigInteger> D = decodeBigIntegerMap(dMap);
-            Map<Integer, BigInteger> F = decodeBigIntegerMap(fMap);
+            Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
+            Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
             if (!allPeersPresent(task, senderId, proofs, D, F)) {
                 return false;
             }

@@ -139,30 +139,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
 
     // 已废弃：基于 MtA 的 DKG 处理程序，已在 CGGMP21 DKG 中移除
 
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
-    }
-
-    private Map<String, String> encodeBigIntegerMap(Map<Integer, BigInteger> map) {
-        Map<String, String> out = new HashMap<>();
-        for (Map.Entry<Integer, BigInteger> e : map.entrySet()) {
-            out.put(String.valueOf(e.getKey()), e.getValue().toString(16));
-        }
-        return out;
-    }
-
-    private Map<Integer, BigInteger> decodeBigIntegerMap(Map<?, ?> map) {
-        Map<Integer, BigInteger> out = new HashMap<>();
-        for (Map.Entry<?, ?> e : map.entrySet()) {
-            int key = Integer.parseInt(String.valueOf(e.getKey()));
-            out.put(key, new BigInteger(String.valueOf(e.getValue()), 16));
-        }
-        return out;
-    }
 
     private Map<String, String> encodePointMap(Map<Integer, ECPoint> map) {
         Map<String, String> out = new LinkedHashMap<>();
@@ -171,7 +147,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         for (int k : keys) {
             ECPoint p = map.get(k);
             if (p == null) continue;
-            out.put(String.valueOf(k), bytesToHex(p.getEncoded(false)));
+            out.put(String.valueOf(k), HexUtils.bytesToHex(p.getEncoded(false)));
         }
         return out;
     }
@@ -385,7 +361,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         data.put("Y", encodePointMap(r2.Y));
         data.put("X", encodePointMap(r2.X));
         data.put("A", encodePointMap(r2.A));
-        data.put("Xi", bytesToHex(Secp256k1Curve.encodePoint(r2.Xi)));
+        data.put("Xi", HexUtils.bytesToHex(Secp256k1Curve.encodePoint(r2.Xi)));
         data.put("rid", Base64.getEncoder().encodeToString(r2.rid));
         data.put("u", Base64.getEncoder().encodeToString(r2.u));
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_REFRESH_R2, data));
@@ -395,7 +371,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", nodeId);
-        data.put("C", encodeBigIntegerMap(r3.C));
+        data.put("C", JsonUtils.encodeBigIntegerMap(r3.C));
         data.put("schProofs", encodeSchProofMap(r3.schProofs));
         data.put("biPrimeProof", CggmpDkgCodec.encodeBiPrimeProof(r3.biPrimeProof));
         data.put("factorProof", CggmpDkgCodec.encodeNoSmallFactorProof(r3.factorProof));
@@ -592,7 +568,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             if (cMap == null || schMap == null || biPrimeMap == null || factorMap == null) {
                 return;
             }
-            Map<Integer, BigInteger> C = decodeBigIntegerMap(cMap);
+            Map<Integer, BigInteger> C = JsonUtils.decodeBigIntegerMap(cMap);
             Map<Integer, PiSchProof> schProofs = decodeSchProofMap(schMap);
             BiPrimeBlumProof biPrime = CggmpDkgCodec.decodeBiPrimeProof(biPrimeMap);
             NoSmallFactorProof factor = CggmpDkgCodec.decodeNoSmallFactorProof(factorMap);
@@ -725,7 +701,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
             if (!sum.isInfinity()) {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("peerId", peerId);
-                extra.put("xSum", bytesToHex(sum.getEncoded(false)));
+                extra.put("xSum", HexUtils.bytesToHex(sum.getEncoded(false)));
                 fireAndForget(broadcastRefreshComplaint(task, peerId, "Sum of X not identity",
                                 refreshEvidence(task, peerId, "Sum of X not identity", extra)),
                         "CGGMP_REFRESH_COMPLAINT");
