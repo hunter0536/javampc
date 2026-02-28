@@ -71,6 +71,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     @Value("${app.cggmp.presign.retentionDays:30}")
     private long presignRetentionDays;
+    @Value("${app.cggmp.presign.usagePath:databases/node-{nodeId}/presign-usage.jsonl}")
+    private String presignUsagePath;
     @Value("${app.cggmp.presign.echoEnabled:true}")
     private boolean presignEchoEnabled;
     @Value("${app.cggmp.presign.useRbc:false}")
@@ -96,6 +98,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     public void initialize() throws Exception {
         logger.info("Initializing CGGMP service for node {}", nodeId);
         PresignUsageStore.configureRetentionDays(presignRetentionDays);
+        PresignUsageStore.configurePath(presignUsagePath, nodeId);
         logger.info("CGGMP service initialized successfully");
     }
 

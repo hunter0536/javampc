@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Set;
 
 public final class PresignUsageStore {
-    private static final Path FILE = Paths.get("databases", "presign-usage.jsonl");
+    private static volatile Path file = Paths.get("databases", "presign-usage.jsonl");
     private static final Object LOCK = new Object();
     private static final long DEFAULT_RETENTION_DAYS = 30L;
     private static final long MILLIS_PER_DAY = 24L * 60 * 60 * 1000;
@@ -58,6 +58,25 @@ public final class PresignUsageStore {
         retentionMillis = days * MILLIS_PER_DAY;
     }
 
+    public static void configurePath(String path, int nodeId) {
+        if (path == null || path.isBlank()) {
+            file = defaultPath(nodeId);
+            return;
+        }
+        String resolved = path;
+        if (nodeId > 0) {
+            resolved = resolved.replace("{nodeId}", String.valueOf(nodeId));
+        }
+        file = Paths.get(resolved);
+    }
+
+    private static Path defaultPath(int nodeId) {
+        if (nodeId <= 0) {
+            return Paths.get("databases", "presign-usage.jsonl");
+        }
+        return Paths.get("databases", "node-" + nodeId, "presign-usage.jsonl");
+    }
+
     private static String computeId(String groupPublicKeyHex, ECPoint gamma) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -71,9 +90,9 @@ public final class PresignUsageStore {
 
     private static void ensureFile() {
         try {
-            Files.createDirectories(FILE.getParent());
-            if (!Files.exists(FILE)) {
-                Files.writeString(FILE, "", StandardCharsets.UTF_8, StandardOpenOption.CREATE);
+            Files.createDirectories(file.getParent());
+            if (!Files.exists(file)) {
+                Files.writeString(file, "", StandardCharsets.UTF_8, StandardOpenOption.CREATE);
             }
         } catch (IOException e) {
             throw new RuntimeException("Ensure presign usage file failed", e);
@@ -82,10 +101,10 @@ public final class PresignUsageStore {
 
     private static boolean isUsedInternal(String id) {
         try {
-            if (!Files.exists(FILE)) {
+            if (!Files.exists(file)) {
                 return false;
             }
-            List<String> lines = Files.readAllLines(FILE, StandardCharsets.UTF_8);
+            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
             for (String line : lines) {
                 if (line == null || line.isBlank()) continue;
                 String trimmed = line.trim();
@@ -107,7 +126,7 @@ public final class PresignUsageStore {
         try {
             long now = System.currentTimeMillis();
             String line = now + "," + id + System.lineSeparator();
-            Files.writeString(FILE, line, StandardCharsets.UTF_8,
+            Files.writeString(file, line, StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException e) {
             throw new RuntimeException("Write presign usage file failed", e);
@@ -120,12 +139,12 @@ public final class PresignUsageStore {
             return;
         }
         lastCleanupMillis = now;
-        if (!Files.exists(FILE)) {
+        if (!Files.exists(file)) {
             return;
         }
         long cutoff = now - retentionMillis;
         try {
-            List<String> lines = Files.readAllLines(FILE, StandardCharsets.UTF_8);
+            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
             if (lines.isEmpty()) {
                 return;
             }
@@ -148,7 +167,7 @@ public final class PresignUsageStore {
                     sb.append(trimmed).append(System.lineSeparator());
                 }
             }
-            Files.writeString(FILE, sb.toString(), StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
+            Files.writeString(file, sb.toString(), StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
         } catch (IOException e) {
             throw new RuntimeException("Cleanup presign usage file failed", e);
         }

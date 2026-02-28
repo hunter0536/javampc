@@ -42,6 +42,8 @@ logging:
 
 # 应用初始化配置
 app:
+  db:
+    dir: databases # SQLite 数据库存储目录
   init:
     cggmp:
       enabled: true  # 是否启用 CGGMP 服务
@@ -56,6 +58,7 @@ app:
       epsBits: 16 # Πdec/Πaff-g* 取值范围扩展位数
     presign:
       retentionDays: 30 # 预签名使用记录保留天数
+      usagePath: databases/node-{nodeId}/presign-usage.jsonl # 预签名使用记录路径（支持 {nodeId} 占位）
       echoEnabled: false # 是否启用 presign R1 echo
       useRbc: false # 是否对 presign R1 echo 使用 RBC
     refresh:

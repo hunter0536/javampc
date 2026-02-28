@@ -113,11 +113,4 @@ public class Constants {
      */
     public static final long SIGNATURE_BROADCAST_RETRY_INTERVAL_MS = 1000;
 
-    // ==================== 数据库参数 ====================
-
-    /**
-     * 数据库文件存储目录
-     * 用于存储密钥份额等持久化数据
-     */
-    public static final String DATABASE_DIR = "databases";
 }

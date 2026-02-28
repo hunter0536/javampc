@@ -1,7 +1,7 @@
 package com.example.mpc.service;
 
-import com.example.mpc.constant.Constants;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.io.File;
 import java.sql.*;
@@ -28,6 +28,8 @@ public class DatabaseService {
     private final Map<String, java.util.concurrent.atomic.AtomicBoolean> initializedDbs = new java.util.concurrent.ConcurrentHashMap<>();
     private static final int MAX_POOL_SIZE = 1;
     private static final long MAX_IDLE_TIME = 30000; // 30秒
+    @Value("${app.db.dir:databases}")
+    private String databaseDir;
 
     public DatabaseService() {
         try {
@@ -470,13 +472,13 @@ public class DatabaseService {
      */
     public void initShareDatabase(int shareIndex) throws SQLException {
         // 创建数据库目录
-        File dir = new File(Constants.DATABASE_DIR);
+        File dir = new File(databaseDir);
         if (!dir.exists()) {
             dir.mkdirs();
         }
 
         // 数据库文件路径
-        String dbPath = Constants.DATABASE_DIR + File.separator + "share_" + shareIndex + ".db";
+        String dbPath = databaseDir + File.separator + "share_" + shareIndex + ".db";
         java.util.concurrent.atomic.AtomicBoolean initFlag =
                 initializedDbs.computeIfAbsent(dbPath, k -> new java.util.concurrent.atomic.AtomicBoolean(false));
         if (initFlag.get()) {
@@ -645,7 +647,7 @@ public class DatabaseService {
      * @return 数据库连接
      */
     public Connection getShareConnection(int shareIndex) throws SQLException {
-        String dbPath = Constants.DATABASE_DIR + File.separator + "share_" + shareIndex + ".db";
+        String dbPath = databaseDir + File.separator + "share_" + shareIndex + ".db";
         try {
             initShareDatabase(shareIndex);
             return getConnection(dbPath);
@@ -662,7 +664,7 @@ public class DatabaseService {
      * @param shareIndex 份额索引
      */
     public void releaseShareConnection(Connection conn, int shareIndex) {
-        String dbPath = Constants.DATABASE_DIR + File.separator + "share_" + shareIndex + ".db";
+        String dbPath = databaseDir + File.separator + "share_" + shareIndex + ".db";
         releaseConnection(conn, dbPath);
     }
 
