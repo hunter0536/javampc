@@ -1,14 +1,11 @@
 package com.example.mpc.service;
 
-import com.example.mpc.cggmp.CGGMP;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofValidator;
 import com.example.mpc.cggmp.proof.NoSmallFactorProof;
 import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
-import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.proof.PiSchProof;
-import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
@@ -471,60 +468,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                 }, dkgExecutorService));
     }
 
-    private Map<String, Object> buildDkgRound1Payload(CggmpDkgTask task,
-                                                      CGGMP.DkgRound1Output round1Output,
-                                                      Map<Integer, ECPoint> Xjk,
-                                                      Map<Integer, ECPoint> Ajk,
-                                                      PiPrmProof prmProof,
-                                                      byte[] ridPart) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("taskId", task.taskId);
-        data.put("executionId", task.executionId);
-        data.put("nodeId", round1Output.nodeId);
-        data.put("Xjk", Secp256k1CurveUtils.encodeECPointMapCompressed(Xjk));
-        data.put("Ajk", Secp256k1CurveUtils.encodeECPointMapCompressed(Ajk));
-        data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(round1Output.paillierKey));
-        data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(round1Output.zkSetup));
-        data.put("biPrimeProof", CggmpCodecUtils.encodeBiPrimeProof(round1Output.biPrimeProof));
-        data.put("factorProof", CggmpCodecUtils.encodeNoSmallFactorProof(round1Output.factorProof));
-        data.put("hatN", task.hatN.get(nodeId).toString(16));
-        data.put("s", task.sValues.get(nodeId).toString(16));
-        data.put("t", task.tValues.get(nodeId).toString(16));
-        data.put("prmProof", CggmpCodecUtils.encodePiPrmProof(prmProof));
-        data.put("ridPart", HexUtils.bytesToHex(ridPart));
-        if (hdEnabled) {
-            byte[] cPart = task.chainCodeParts.get(nodeId);
-            if (cPart != null) {
-                data.put("c", HexUtils.bytesToHex(cPart));
-            }
-        }
-        return data;
-    }
-
-    private CompletableFuture<Void> sendDkgRound2Share(String taskId,
-                                                       int receiverId,
-                                                       BigInteger Cji,
-                                                       ECPoint Yji) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("taskId", taskId);
-        data.put("senderId", nodeId);
-        data.put("receiverId", receiverId);
-        data.put("C", Cji.toString(16));
-        data.put("Y", HexUtils.bytesToHex(Yji.normalize().getEncoded(true)));
-        return nodeService.sendMessage(receiverId, new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2, data));
-    }
-
-    private CompletableFuture<Void> broadcastDkgRound2Broad(Map<String, Object> data) {
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, data)));
-    }
-
-    private CompletableFuture<Void> broadcastDkgRound2Batch(Map<String, Object> baseData,
-                                                            Map<String, Object> shares) {
-        Map<String, Object> data = new HashMap<>(baseData);
-        data.put("shares", shares);
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND2_BATCH, data));
-    }
-
     private CompletableFuture<Void> broadcastDkgRound1Echo(CggmpDkgTask task) {
         String echo = computeDkgEchoHash(task);
         Map<String, Object> data = new HashMap<>();
@@ -533,15 +476,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         data.put("senderId", nodeId);
         data.put("hash", echo);
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1_ECHO, data));
-    }
-
-    private CompletableFuture<Void> broadcastDkgRound3(CggmpDkgTask task, Map<Integer, ECPoint> XkStar) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("taskId", task.taskId);
-        data.put("executionId", task.executionId);
-        data.put("senderId", nodeId);
-        data.put("XkStar", Secp256k1CurveUtils.encodeECPointMapCompressed(XkStar));
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND3, maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND3, data)));
     }
 
     public DkgTaskStatusResponse getTaskStatus(String taskId) {
@@ -888,145 +822,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         }
     }
 
-    private void processRound2WithProofs(CggmpDkgTask task,
-                                         int senderNodeId,
-                                         int receiverId,
-                                         String cHex,
-                                         String yHex,
-                                         Map<?, ?> schMap,
-                                         Map<?, ?> modMap,
-                                         Map<?, ?> facMap) {
-        if (receiverId != nodeId) {
-            return;
-        }
-        if (task.round2Received.containsKey(senderNodeId)) {
-            return;
-        }
-        if (task.round2Processing.putIfAbsent(senderNodeId, Boolean.TRUE) != null) {
-            return;
-        }
-
-        Map<Integer, PiSchProof> schProofs = task.round2SchProofs.get(senderNodeId);
-        if (schProofs == null) {
-            schProofs = CggmpCodecUtils.decodeSchProofMap(schMap);
-            task.round2SchProofs.putIfAbsent(senderNodeId, schProofs);
-        }
-        if (schProofs.size() != threshold) {
-            logger.warn("Invalid schProofs size from node {}: expected {}, got {}", senderNodeId, threshold, schProofs.size());
-            task.round2Processing.remove(senderNodeId);
-            return;
-        }
-
-        BiPrimeBlumProof modProof = task.round2ModProofs.get(senderNodeId);
-        if (modProof == null) {
-            modProof = CggmpCodecUtils.decodeBiPrimeProof(modMap);
-            task.round2ModProofs.putIfAbsent(senderNodeId, modProof);
-        }
-        NoSmallFactorProof facProof = task.round2FacProofs.get(senderNodeId);
-        if (facProof == null) {
-            facProof = CggmpCodecUtils.decodeNoSmallFactorProof(facMap);
-            task.round2FacProofs.putIfAbsent(senderNodeId, facProof);
-        }
-
-        PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(senderNodeId);
-        com.example.mpc.cggmp.zk.ZKSetup zk = task.peerZkSetups.get(senderNodeId);
-        if (pk == null || zk == null) {
-            logger.warn("Missing Paillier/ZK setup for node {}", senderNodeId);
-            task.round2Processing.remove(senderNodeId);
-            return;
-        }
-        Map<Integer, ECPoint> Xjk = task.Xjks.get(senderNodeId);
-        Map<Integer, ECPoint> Ajk = task.Ajks.get(senderNodeId);
-        if (Xjk == null || Ajk == null) {
-            logger.warn("Missing Xjk/Ajk from node {} for task {}", senderNodeId, task.taskId);
-            task.round2Processing.remove(senderNodeId);
-            return;
-        }
-
-        final int senderNodeIdFinal = senderNodeId;
-        final CggmpDkgTask taskFinal = task;
-        final String cHexFinal = cHex;
-        final String yHexFinal = yHex;
-        final Map<Integer, PiSchProof> schProofsFinal = schProofs;
-        final BiPrimeBlumProof modProofFinal = modProof;
-        final NoSmallFactorProof facProofFinal = facProof;
-        final PaillierEncryption.PublicKey pkFinal = pk;
-        final com.example.mpc.cggmp.zk.ZKSetup zkFinal = zk;
-        final Map<Integer, ECPoint> XjkFinal = Xjk;
-        final Map<Integer, ECPoint> AjkFinal = Ajk;
-
-        CompletableFuture<Boolean> modFacFuture;
-        Boolean cached = taskFinal.modFacVerified.get(senderNodeIdFinal);
-        if (cached != null) {
-            modFacFuture = CompletableFuture.completedFuture(cached);
-        } else if (taskFinal.round2ModFacVerifyFutures.containsKey(senderNodeIdFinal)) {
-            modFacFuture = taskFinal.round2ModFacVerifyFutures.get(senderNodeIdFinal);
-        } else {
-            byte[] rho = HexUtils.hexToBytes(cHexFinal);
-            byte[] modCtx = buildDkgContext(taskFinal.taskId, taskFinal.executionId, taskFinal.rid, senderNodeIdFinal, "MOD");
-            CompletableFuture<Boolean> verifyFuture = CompletableFuture.supplyAsync(
-                            () -> BI_PRIME_VALIDATOR.verifyProof(modProofFinal, pkFinal, modCtx), dkgExecutorService)
-                    .thenCombine(CompletableFuture.supplyAsync(
-                                    () -> {
-                                        NoSmallFactorProofValidator facValidator = new NoSmallFactorProofValidator(zkFinal, auxMinPaillierBitsForProof);
-                                        return facValidator.verifyProofDetailed(facProofFinal, pkFinal, modCtx).ok();
-                                    }, dkgExecutorService),
-                            (modOk, facOk) -> modOk && facOk);
-            taskFinal.round2ModFacVerifyFutures.put(senderNodeIdFinal, verifyFuture);
-            modFacFuture = verifyFuture;
-        }
-
-        modFacFuture.whenComplete((ok, ex) -> {
-            if (ex != null || !Boolean.TRUE.equals(ok)) {
-                Map<String, Object> evidence = new HashMap<>();
-                evidence.put("senderId", senderNodeIdFinal);
-                evidence.put("modOk", ex == null ? ok : false);
-                fireAndForget(broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid PiMod/PiFac proof in DKG Round2", evidence),
-                        "CGGMP_DKG_COMPLAINT");
-                taskFinal.lastComplaintReason = "Invalid PiMod/PiFac proof in DKG Round2";
-                taskFinal.lastComplaintOffenderId = senderNodeIdFinal;
-                taskFinal.lastComplaintEvidence = evidence;
-                taskFinal.round2Processing.remove(senderNodeIdFinal);
-                return;
-            }
-
-            verifySchProofsParallelAsync(taskFinal, senderNodeIdFinal, schProofsFinal, XjkFinal, AjkFinal)
-                    .whenComplete((schOk, schEx) -> {
-                        if (schEx != null || !Boolean.TRUE.equals(schOk)) {
-                            Map<String, Object> evidence = new HashMap<>();
-                            evidence.put("senderId", senderNodeIdFinal);
-                            fireAndForget(broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid PiSch proof in DKG Round2", evidence),
-                                    "CGGMP_DKG_COMPLAINT");
-                            taskFinal.lastComplaintReason = "Invalid PiSch proof in DKG Round2";
-                            taskFinal.lastComplaintOffenderId = senderNodeIdFinal;
-                            taskFinal.lastComplaintEvidence = evidence;
-                            taskFinal.round2Processing.remove(senderNodeIdFinal);
-                            return;
-                        }
-
-                        Map<String, Object> evidence = new HashMap<>();
-                        if (!verifyDkgShare(XjkFinal, getIndexValue(taskFinal, receiverId), new BigInteger(yHexFinal, 16))) {
-                            evidence.put("senderId", senderNodeIdFinal);
-                            evidence.put("receiverId", receiverId);
-                            evidence.put("sigma", yHexFinal);
-                            evidence.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(XjkFinal));
-                            fireAndForget(broadcastDkgComplaint(taskFinal, senderNodeIdFinal, "Invalid share in DKG Round2", evidence),
-                                    "CGGMP_DKG_COMPLAINT");
-                            taskFinal.lastComplaintReason = "Invalid share in DKG Round2";
-                            taskFinal.lastComplaintOffenderId = senderNodeIdFinal;
-                            taskFinal.lastComplaintEvidence = evidence;
-                            taskFinal.round2Processing.remove(senderNodeIdFinal);
-                            return;
-                        }
-
-                        taskFinal.xji.computeIfAbsent(senderNodeIdFinal, k -> new ConcurrentHashMap<>()).put(nodeId, new BigInteger(yHexFinal, 16));
-                        taskFinal.round2Received.put(senderNodeIdFinal, Boolean.TRUE);
-                        taskFinal.round2ReceivedLatch.countDown();
-                        taskFinal.round2Processing.remove(senderNodeIdFinal);
-                    });
-        });
-    }
-
     private void handleCggmpDkgRound2Batch(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -1223,14 +1018,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         if (task.round3Received.putIfAbsent(senderNodeId, Boolean.TRUE) == null) {
             task.round3ReceivedLatch.countDown();
         }
-    }
-
-    private Map<String, Object> buildDkgRound3Evidence(CggmpDkgTask task, int offenderId) {
-        Map<String, Object> ev = new HashMap<>();
-        Map<String, String> xkStar = Secp256k1CurveUtils.encodeECPointMap(task.XkStar);
-        ev.put("XkStar", xkStar);
-        ev.put("rid", HexUtils.bytesToHex(task.rid == null ? new byte[0] : task.rid));
-        return ev;
     }
 
     private void handleCggmpDkgComplaint(int senderId, Object data) {
@@ -1719,68 +1506,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             sum = sum.add(X.multiply(evalPowers[k])).normalize();
         }
         return sum;
-    }
-
-    private CompletableFuture<Boolean> verifySchProofsParallelAsync(CggmpDkgTask task,
-                                                                    int senderNodeId,
-                                                                    Map<Integer, PiSchProof> schProofs,
-                                                                    Map<Integer, ECPoint> Xjk,
-                                                                    Map<Integer, ECPoint> Ajk) {
-        if (schProofs == null || schProofs.size() != threshold) {
-            return CompletableFuture.completedFuture(false);
-        }
-        if (threshold <= 3) {
-            for (int k = 0; k < threshold; k++) {
-                PiSchProof proof = schProofs.get(k);
-                ECPoint AjkPoint = Ajk.get(k);
-                ECPoint XjkPoint = Xjk.get(k);
-                if (proof == null || AjkPoint == null || XjkPoint == null) {
-                    return CompletableFuture.completedFuture(false);
-                }
-                byte[] ctx = buildDkgContext(task.taskId, task.executionId, task.rid, senderNodeId, "SCH:" + k);
-                long schOneStart = System.nanoTime();
-                if (!proof.A().equals(AjkPoint)) {
-                    return CompletableFuture.completedFuture(false);
-                }
-                boolean ok = RefreshProofs.verifySchProof(proof, Secp256k1CurveUtils.G(), XjkPoint, ctx);
-                logger.debug("DKG Round2 Sch proof verify k={} took {} ms", k, (System.nanoTime() - schOneStart) / 1_000_000);
-                if (!ok) {
-                    return CompletableFuture.completedFuture(false);
-                }
-            }
-            return CompletableFuture.completedFuture(true);
-        }
-
-        List<CompletableFuture<Boolean>> futures = new ArrayList<>(threshold);
-        for (int k = 0; k < threshold; k++) {
-            PiSchProof proof = schProofs.get(k);
-            ECPoint AjkPoint = Ajk.get(k);
-            ECPoint XjkPoint = Xjk.get(k);
-            if (proof == null || AjkPoint == null || XjkPoint == null) {
-                return CompletableFuture.completedFuture(false);
-            }
-            byte[] ctx = buildDkgContext(task.taskId, task.executionId, task.rid, senderNodeId, "SCH:" + k);
-            final int kk = k;
-            futures.add(CompletableFuture.supplyAsync(() -> {
-                long schOneStart = System.nanoTime();
-                if (!proof.A().equals(AjkPoint)) {
-                    return false;
-                }
-                boolean ok = RefreshProofs.verifySchProof(proof, Secp256k1CurveUtils.G(), XjkPoint, ctx);
-                logger.debug("DKG Round2 Sch proof verify k={} took {} ms", kk, (System.nanoTime() - schOneStart) / 1_000_000);
-                return ok;
-            }, dkgExecutorService));
-        }
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
-                .thenApply(v -> {
-                    for (CompletableFuture<Boolean> f : futures) {
-                        Boolean ok = f.getNow(false);
-                        if (!Boolean.TRUE.equals(ok)) {
-                            return false;
-                        }
-                    }
-                    return true;
-                });
     }
 
     private static PiSchProof createSchProofWithAlpha(ECPoint g, ECPoint X, BigInteger x, BigInteger alpha, byte[] context) {

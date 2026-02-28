@@ -86,15 +86,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     private final int threshold = Constants.THRESHOLD;
     private final ScheduledExecutorService cggmpScheduler = Executors.newSingleThreadScheduledExecutor();
 
-    private CompletableFuture<Void> delayMs(long delayMs) {
-        if (delayMs <= 0) {
-            return CompletableFuture.completedFuture(null);
-        }
-        CompletableFuture<Void> future = new CompletableFuture<>();
-        cggmpScheduler.schedule(() -> future.complete(null), delayMs, TimeUnit.MILLISECONDS);
-        return future;
-    }
-
     private void fireAndForget(CompletableFuture<Void> future, String name) {
         future.whenComplete((v, ex) -> {
             if (ex != null) {

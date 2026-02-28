@@ -34,12 +34,9 @@ import com.example.mpc.util.PresignUsageStore;
 import org.bouncycastle.asn1.ASN1EncodableVector;
 import org.bouncycastle.asn1.ASN1Integer;
 import org.bouncycastle.asn1.DERSequence;
-import org.bouncycastle.crypto.digests.SHA256Digest;
 import org.bouncycastle.crypto.params.ECDomainParameters;
-import org.bouncycastle.crypto.params.ECPrivateKeyParameters;
 import org.bouncycastle.crypto.params.ECPublicKeyParameters;
 import org.bouncycastle.crypto.signers.ECDSASigner;
-import org.bouncycastle.crypto.signers.HMacDSAKCalculator;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
@@ -127,15 +124,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         PresignUsageStore.configureRetentionDays(presignRetentionDays);
         PresignUsageStore.configurePath(presignUsagePath, nodeId);
         logger.info("CGGMP service initialized successfully");
-    }
-
-    private CompletableFuture<Void> delayMs(long delayMs) {
-        if (delayMs <= 0) {
-            return CompletableFuture.completedFuture(null);
-        }
-        CompletableFuture<Void> future = new CompletableFuture<>();
-        cggmpScheduler.schedule(() -> future.complete(null), delayMs, TimeUnit.MILLISECONDS);
-        return future;
     }
 
     private void cachePendingPresignR1(String taskId, int senderId, Map<?, ?> dataMap) {
@@ -863,14 +851,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
 
-    private Map<String, Object> encodeSchProof(PiSchProof proof) {
-        return CggmpCodecUtils.encodePiSchProof(proof);
-    }
-
-    private PiSchProof decodeSchProof(Map<?, ?> map) {
-        return CggmpCodecUtils.decodePiSchProof(map);
-    }
-
     private ECPoint sumPresignGamma(Gg20SignatureTask task) {
         ECPoint sum = Secp256k1CurveUtils.G().getCurve().getInfinity();
         for (ECPoint p : task.presignGamma.values()) {
@@ -1156,25 +1136,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return share.mod(Secp256k1CurveUtils.n());
     }
 
-    private SignatureBundle signMessage(BigInteger privateKey, byte[] messageHash, ECPoint publicKey) {
-        ECDomainParameters domain = buildDomain();
-        ECPrivateKeyParameters priv = new ECPrivateKeyParameters(privateKey, domain);
-        ECDSASigner signer = new ECDSASigner(new HMacDSAKCalculator(new SHA256Digest()));
-        signer.init(true, priv);
-        BigInteger[] sig = signer.generateSignature(messageHash);
-        BigInteger r = sig[0];
-        BigInteger s = sig[1];
-        BigInteger n = Secp256k1CurveUtils.n();
-        if (s.compareTo(n.shiftRight(1)) > 0) {
-            s = n.subtract(s);
-        }
-
-        byte[] der = derEncodeSignature(r, s);
-        boolean verified = verifySignature(publicKey, messageHash, r, s, domain);
-        String signatureBase64 = Base64.getEncoder().encodeToString(der);
-        return new SignatureBundle(signatureBase64, verified);
-    }
-
     private boolean verifySignature(ECPoint publicKey, byte[] messageHash, BigInteger r, BigInteger s, ECDomainParameters domain) {
         ECDSASigner verifier = new ECDSASigner();
         ECPublicKeyParameters pub = new ECPublicKeyParameters(publicKey, domain);
@@ -1354,25 +1315,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return out.replace("\\\"", "\"").replace("\\\\", "\\");
     }
 
-    private BigInteger lagrangeCoefficient(int i, Set<Integer> participants, BigInteger n) {
-        BigInteger result = BigInteger.ONE;
-        for (int j : participants) {
-            if (j == i) continue;
-            BigInteger numerator = BigInteger.valueOf(-j).mod(n);
-            BigInteger denominator = BigInteger.valueOf(i - j).modInverse(n);
-            result = result.multiply(numerator).multiply(denominator).mod(n);
-        }
-        return result;
-    }
-
-    private ECPoint sumGamma(Gg20SignatureTask task) {
-        ECPoint sum = Secp256k1CurveUtils.G().getCurve().getInfinity();
-        for (ECPoint p : task.gammaPoints.values()) {
-            sum = sum.add(p).normalize();
-        }
-        return sum;
-    }
-
     private BigInteger sumShares(Map<Integer, BigInteger> shares, BigInteger mod) {
         BigInteger sum = BigInteger.ZERO;
         for (BigInteger v : shares.values()) {
@@ -1380,96 +1322,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             sum = sum.add(v);
         }
         return sum.mod(mod);
-    }
-
-    private CompletableFuture<Void> broadcastGammaCommitment(Gg20SignatureTask task, ECPoint commitment, BigInteger gammaValue, BigInteger blinding) {
-        byte[] ctx = SignUtils.buildSignContext(task.taskId, nodeId, task.messageHash, "GAMMA-COMMIT");
-        EcChaumPedersenProof proof = EcChaumPedersenProof.create(gammaValue, blinding, commitment, ctx);
-        Map<String, Object> data = new HashMap<>();
-        data.put("taskId", task.taskId);
-        data.put("senderId", nodeId);
-        data.put("commit", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(commitment)));
-        data.put("proofA", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(proof.A())));
-        data.put("proofR", proof.r().toString(16));
-        data.put("proofS", proof.s().toString(16));
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_GAMMA_COMMIT, data));
-    }
-
-    private CompletableFuture<Void> broadcastGammaOpen(Gg20SignatureTask task, ECPoint gamma, BigInteger blinding) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("taskId", task.taskId);
-        data.put("senderId", nodeId);
-        data.put("gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(gamma)));
-        data.put("r", blinding.toString(16));
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_GAMMA_OPEN, data));
-    }
-
-    private CompletableFuture<Void> broadcastMtaKaInit(Gg20SignatureTask task) {
-        MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        for (int participantId : task.participants) {
-            if (participantId == nodeId) {
-                continue;
-            }
-            byte[] mtaContext = SignUtils.buildMtaContext(task.taskId + ":KA", nodeId, participantId);
-            MtAInitiatorMessage initiatorMessage = protocol.generateInitiatorMessage(task.k_i, task.zkSetup, mtaContext);
-            task.mtaKaInitiatorMessages.put(participantId, initiatorMessage);
-
-            Map<String, Object> data = new HashMap<>();
-            data.put("taskId", task.taskId);
-            data.put("initiatorId", nodeId);
-            data.put("receiverId", participantId);
-            data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
-            data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(task.zkSetup));
-            data.put("initiatorMessage", CggmpCodecUtils.encodeMtAInitiatorMessage(initiatorMessage));
-            futures.add(nodeService.sendMessage(participantId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_KA_INIT, data)));
-        }
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
-    }
-
-    private CompletableFuture<Void> broadcastMtaStInit(Gg20SignatureTask task) {
-        MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
-        List<CompletableFuture<Void>> futures = new ArrayList<>();
-        for (int participantId : task.participants) {
-            if (participantId == nodeId) {
-                continue;
-            }
-            byte[] mtaContext = SignUtils.buildMtaContext(task.taskId + ":ST", nodeId, participantId);
-            MtAInitiatorMessage initiatorMessage = protocol.generateInitiatorMessage(task.kInv_i, task.zkSetup, mtaContext);
-            task.mtaStInitiatorMessages.put(participantId, initiatorMessage);
-
-            Map<String, Object> data = new HashMap<>();
-            data.put("taskId", task.taskId);
-            data.put("initiatorId", nodeId);
-            data.put("receiverId", participantId);
-            data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
-            data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(task.zkSetup));
-            data.put("initiatorMessage", CggmpCodecUtils.encodeMtAInitiatorMessage(initiatorMessage));
-            futures.add(nodeService.sendMessage(participantId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_MTA_ST_INIT, data)));
-        }
-        return CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
-    }
-
-    private BigInteger computeUShare(Gg20SignatureTask task, BigInteger mod) {
-        BigInteger u = task.k_i.multiply(task.a_i).mod(mod);
-        for (BigInteger alpha : task.kaAlphas.values()) {
-            u = u.add(alpha);
-        }
-        for (BigInteger beta : task.kaBetas.values()) {
-            u = u.add(beta);
-        }
-        return u.mod(mod);
-    }
-
-    private BigInteger computeSShare(Gg20SignatureTask task, BigInteger mod) {
-        BigInteger s = task.kInv_i.multiply(task.t_i).mod(mod);
-        for (BigInteger alpha : task.stAlphas.values()) {
-            s = s.add(alpha);
-        }
-        for (BigInteger beta : task.stBetas.values()) {
-            s = s.add(beta);
-        }
-        return s.mod(mod);
     }
 
     private CompletableFuture<Void> sendUShare(Gg20SignatureTask task, BigInteger u_i) {
@@ -1483,22 +1335,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         data.put("u", u_i.toString(16));
         data.put("r", r.toString(16));
         return nodeService.sendMessage(task.initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_U_SHARE, data));
-    }
-
-    private CompletableFuture<Void> sendUCommit(Gg20SignatureTask task, BigInteger u_i, BigInteger r) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("taskId", task.taskId);
-        data.put("senderId", nodeId);
-        data.put("commit", commitU(task.taskId, nodeId, task.messageHash, u_i, r));
-        return nodeService.sendMessage(task.initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_U_COMMIT, data));
-    }
-
-    private CompletableFuture<Void> broadcastUOpen(Gg20SignatureTask task, BigInteger u) {
-        Map<String, Object> data = new HashMap<>();
-        data.put("taskId", task.taskId);
-        data.put("u", u.toString(16));
-        data.put("senderId", nodeId);
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_U_OPEN, data));
     }
 
     private CompletableFuture<Void> sendSShare(Gg20SignatureTask task, BigInteger s_i) {
@@ -1538,22 +1374,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return out;
     }
 
-    private static final class SignatureBundle {
-        private final String signatureBase64;
-        private final boolean verified;
-
-        private SignatureBundle(String signatureBase64, boolean verified) {
-            this.signatureBase64 = signatureBase64;
-            this.verified = verified;
-        }
-    }
-
     private KeyShare loadKeyShareByGroupPublicKeySync(String groupPublicKey) {
         return keyShareDao.findByGroupPublicKeySync(nodeId, groupPublicKey);
-    }
-
-    private ECPoint decodeECPoint(byte[] encoded) {
-        return Secp256k1CurveUtils.decodePoint(encoded);
     }
 
     private boolean validatePaillierPublicKey(PaillierEncryption.PublicKey publicKey) {
@@ -3604,26 +3426,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private static final class AuxContext {
-        final CggmpAuxTask task;
-        final PaillierEncryption paillier;
-        final PiPrmProof prmProof;
-        final byte[] rho;
-        final byte[] u;
-
-        private AuxContext(CggmpAuxTask task,
-                           PaillierEncryption paillier,
-                           PiPrmProof prmProof,
-                           byte[] rho,
-                           byte[] u) {
-            this.task = task;
-            this.paillier = paillier;
-            this.prmProof = prmProof;
-            this.rho = rho;
-            this.u = u;
-        }
-    }
-
     private static final class OnlineContext {
         final Gg20SignatureTask task;
         final BigInteger curveOrder;
@@ -3668,13 +3470,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     logger.error("Failed to init CGGMP signature service: {}", ex.getMessage(), ex);
                     throw new RuntimeException(ex);
                 });
-    }
-
-    private CompletableFuture<Boolean> waitForNetworkReadyAsync(long timeoutSeconds) {
-        return nodeService.waitForNetworkReady()
-                .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                .thenApply(v -> true)
-                .exceptionally(ex -> false);
     }
 
     private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
