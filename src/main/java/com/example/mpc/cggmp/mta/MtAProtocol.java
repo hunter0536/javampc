@@ -1,9 +1,26 @@
 package com.example.mpc.cggmp.mta;
 
 import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.proof.*;
-import com.example.mpc.cggmp.util.BigIntegerUtils;
-import com.example.mpc.cggmp.zk.*;
+import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
+import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
+import com.example.mpc.cggmp.proof.BiPrimeProofValidator;
+import com.example.mpc.cggmp.proof.NoSmallFactorProof;
+import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
+import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
+import com.example.mpc.cggmp.proof.PaillierRangeEncryptionWitness;
+import com.example.mpc.cggmp.proof.PaillierRangeProof;
+import com.example.mpc.cggmp.proof.PaillierRangeProofContext;
+import com.example.mpc.cggmp.proof.PaillierRangeProofGenerator;
+import com.example.mpc.cggmp.proof.PaillierRangeProofValidator;
+import com.example.mpc.cggmp.proof.PaillierRespondentEncryptionWitness;
+import com.example.mpc.cggmp.proof.PaillierRespondentProof;
+import com.example.mpc.cggmp.proof.PaillierRespondentProofContext;
+import com.example.mpc.cggmp.proof.PaillierRespondentProofGenerator;
+import com.example.mpc.cggmp.proof.PaillierRespondentProofValidator;
+import com.example.mpc.cggmp.zk.RangeProofGenerator;
+import com.example.mpc.cggmp.zk.RangeProofValidator;
+import com.example.mpc.cggmp.zk.RespondentProofGenerator;
+import com.example.mpc.cggmp.zk.RespondentProofValidator;
 import com.example.mpc.cggmp.zk.ZKSetup;
 
 import java.math.BigInteger;

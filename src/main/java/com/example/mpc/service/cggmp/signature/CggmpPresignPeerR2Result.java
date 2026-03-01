@@ -1,4 +1,4 @@
-package com.example.mpc.service.cggmp;
+package com.example.mpc.service.cggmp.signature;
 
 import com.example.mpc.cggmp.proof.PiAffGProof;
 

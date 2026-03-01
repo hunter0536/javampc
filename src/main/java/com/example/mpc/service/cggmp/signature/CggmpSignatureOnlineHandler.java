@@ -1,38 +1,54 @@
-package com.example.mpc.service;
+package com.example.mpc.service.cggmp.signature;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
 import com.example.mpc.cggmp.mta.MtAProtocol;
 import com.example.mpc.cggmp.sign.CggmpIntegrityChecker;
 import com.example.mpc.cggmp.sign.EcChaumPedersenProof;
-import com.example.mpc.cggmp.util.CggmpCodecUtils;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.Gg20SignatureTask;
-import com.example.mpc.service.cggmp.CggmpOnlineContext;
+import com.example.mpc.service.CggmpSignatureService;
+import com.example.mpc.service.NodeService;
+import com.example.mpc.service.cggmp.CggmpCodecUtils;
+import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import com.example.mpc.util.PresignUsageStore;
+import org.bouncycastle.asn1.ASN1EncodableVector;
+import org.bouncycastle.asn1.ASN1Integer;
+import org.bouncycastle.asn1.DERSequence;
+import org.bouncycastle.crypto.params.ECDomainParameters;
+import org.bouncycastle.crypto.params.ECPublicKeyParameters;
+import org.bouncycastle.crypto.signers.ECDSASigner;
 import org.bouncycastle.math.ec.ECPoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
+import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
-final class CggmpSignatureOnlineHandler {
+public final class CggmpSignatureOnlineHandler {
+    private static final Logger logger = LoggerFactory.getLogger(CggmpSignatureOnlineHandler.class);
     private final CggmpSignatureService svc;
 
-    CggmpSignatureOnlineHandler(CggmpSignatureService svc) {
+    public CggmpSignatureOnlineHandler(CggmpSignatureService svc) {
         this.svc = svc;
     }
 
-    CompletableFuture<Void> runOnlinePhase(Gg20SignatureTask task) {
-        svc.logger.debug("Signature online phase start for task {} (node={}, initiator={})",
+    public CompletableFuture<Void> runOnlinePhase(Gg20SignatureTask task) {
+        logger.debug("Signature online phase start for task {} (node={}, initiator={})",
                 task.taskId, svc.nodeId, task.initiatorId);
         return svc.waitForLatchAsync(task.offlineDoneLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "offline phase")
                 .thenCompose(v -> svc.waitForLatchAsync(task.presignatureLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "local presignature"))
@@ -63,7 +79,7 @@ final class CggmpSignatureOnlineHandler {
 
                         BigInteger e = new BigInteger(1, task.messageHash).mod(curveOrder);
                         BigInteger chiTilde = task.presignature.chiTilde();
-                        BigInteger shift = svc.resolveSignShift(task, curveOrder);
+                        BigInteger shift = resolveSignShift(task, curveOrder);
                         if (shift.signum() != 0) {
                             chiTilde = chiTilde.add(task.presignature.kTilde().multiply(shift)).mod(curveOrder);
                         }
@@ -78,7 +94,7 @@ final class CggmpSignatureOnlineHandler {
                 }, ThreadPoolUtil.getIoThreadPool()))
                 .thenCompose(ctx -> {
                     if (svc.nodeId == ctx.task().initiatorId) {
-                        if (svc.verifySigmaShare(ctx.task(), svc.nodeId, ctx.sigma_i())) {
+                        if (verifySigmaShare(ctx.task(), svc.nodeId, ctx.sigma_i())) {
                             svc.failSignatureTask(ctx.task(), "Local signature share verification failed");
                             svc.signatureInProgress.set(false);
                             svc.clearPresignAll(ctx.task());
@@ -86,10 +102,10 @@ final class CggmpSignatureOnlineHandler {
                         }
                         ctx.task().sShares.put(svc.nodeId, ctx.sigma_i());
                         return svc.waitForLatchAsync(ctx.task().sShareLatch, Constants.SIGNATURE_SHARE_TIMEOUT_SECONDS, "signature shares")
-                                .thenRunAsync(() -> svc.finalizeSignatureAsInitiator(ctx), ThreadPoolUtil.getIoThreadPool());
+                                .thenRunAsync(() -> finalizeSignatureAsInitiator(ctx), ThreadPoolUtil.getIoThreadPool());
                     }
                     return CompletableFuture.runAsync(() -> {
-                        svc.fireAndForget(svc.sendSShare(ctx.task(), ctx.sigma_i()), "CGGMP_SIGN_S_SHARE");
+                        CggmpProtocolUtils.fireAndForget(sendSShare(ctx.task(), ctx.sigma_i()), logger, "CGGMP_SIGN_S_SHARE");
                         ctx.task().complete();
                         svc.signatureInProgress.set(false);
                         svc.clearPresignLocal(ctx.task());
@@ -97,7 +113,7 @@ final class CggmpSignatureOnlineHandler {
                 })
                 .whenComplete((v, ex) -> {
                     if (ex == null) {
-                        svc.logger.debug("Signature online phase completed for task {}", task.taskId);
+                        logger.debug("Signature online phase completed for task {}", task.taskId);
                         return;
                     }
                     Throwable cause = ex instanceof CompletionException ? ex.getCause() : ex;
@@ -126,9 +142,26 @@ final class CggmpSignatureOnlineHandler {
             return;
         }
         runOnlinePhase(task).exceptionally(ex -> {
-            svc.logger.error("Failed online phase for signature task {}: {}", signatureTaskId, ex.getMessage());
+            logger.error("Failed online phase for signature task {}: {}", signatureTaskId, ex.getMessage());
             return null;
         });
+    }
+
+    public CompletableFuture<Void> broadcastOnlineInit(Gg20SignatureTask task) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("signatureTaskId", task.taskId);
+        data.put("senderId", svc.nodeId);
+        data.put("messageHash", Base64.getEncoder().encodeToString(task.messageHash));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                        () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_ONLINE_INIT, data)),
+                        Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
+                        Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
+                        "CGGMP_SIGN_ONLINE_INIT")
+                .whenComplete((v, ex) -> {
+                    if (ex != null) {
+                        logger.warn("Failed to broadcast CGGMP_SIGN_ONLINE_INIT, proceeding: {}", ex.getMessage());
+                    }
+                });
     }
 
     void handleCggmpSignGammaCommit(int senderId, Object data) {
@@ -158,21 +191,21 @@ final class CggmpSignatureOnlineHandler {
             BigInteger proofR = new BigInteger(proofRHex, 16);
             BigInteger proofS = new BigInteger(proofSHex, 16);
             EcChaumPedersenProof proof = new EcChaumPedersenProof(proofA, proofR, proofS);
-            byte[] ctx = SignUtils.buildSignContext(task.taskId, senderId, task.messageHash, "GAMMA-COMMIT");
+            byte[] ctx = CggmpProtocolUtils.buildSignContext(task.taskId, senderId, task.messageHash, "GAMMA-COMMIT");
             if (!CggmpIntegrityChecker.verifyGammaCommitment(proof, commitment, ctx)) {
-                svc.logger.warn("Invalid gamma commitment proof from node {} for task {}", senderId, taskId);
+                logger.warn("Invalid gamma commitment proof from node {} for task {}", senderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("commit", commitHex);
                 evidence.put("proofA", proofAHex);
                 evidence.put("proofR", proofRHex);
                 evidence.put("proofS", proofSHex);
-                svc.fireAndForget(svc.broadcastComplaint(task, senderId, "Invalid gamma commitment proof", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "Invalid gamma commitment proof", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Invalid gamma commitment proof");
                 return;
             }
             if (task.gammaCommitments.containsKey(senderId)) {
-                svc.logger.warn("Duplicate gamma commitment from node {} for task {}", senderId, taskId);
+                logger.warn("Duplicate gamma commitment from node {} for task {}", senderId, taskId);
                 return;
             }
             task.gammaCommitments.put(senderId, commitment);
@@ -180,7 +213,7 @@ final class CggmpSignatureOnlineHandler {
                 task.gammaCommitLatch.countDown();
             }
         } catch (Exception e) {
-            svc.logger.error("Failed to handle CGGMP_SIGN_GAMMA_COMMIT from node {}: {}", senderId, e.getMessage());
+            logger.error("Failed to handle CGGMP_SIGN_GAMMA_COMMIT from node {}: {}", senderId, e.getMessage());
         }
     }
 
@@ -208,35 +241,35 @@ final class CggmpSignatureOnlineHandler {
             BigInteger r = new BigInteger(rHex, 16);
             ECPoint commitment = task.gammaCommitments.get(senderId);
             if (commitment == null) {
-                svc.logger.warn("Missing gamma commitment for node {} in task {}", senderId, taskId);
+                logger.warn("Missing gamma commitment for node {} in task {}", senderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("gamma", gammaHex);
-                svc.fireAndForget(svc.broadcastComplaint(task, senderId, "Missing gamma commitment", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "Missing gamma commitment", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Missing gamma commitment");
                 return;
             }
             if (!CggmpIntegrityChecker.isValidGammaPoint(gamma)) {
-                svc.logger.warn("Invalid gamma point from node {} for task {}", senderId, taskId);
+                logger.warn("Invalid gamma point from node {} for task {}", senderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("gamma", gammaHex);
-                svc.fireAndForget(svc.broadcastComplaint(task, senderId, "Invalid gamma point", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "Invalid gamma point", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Invalid gamma point");
                 return;
             }
             if (!CggmpIntegrityChecker.verifyGammaOpen(commitment, gamma, r)) {
-                svc.logger.warn("Invalid gamma commitment opening from node {} for task {}", senderId, taskId);
+                logger.warn("Invalid gamma commitment opening from node {} for task {}", senderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("gamma", gammaHex);
                 evidence.put("r", rHex);
-                svc.fireAndForget(svc.broadcastComplaint(task, senderId, "Invalid gamma commitment opening", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "Invalid gamma commitment opening", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Invalid gamma commitment opening");
                 return;
             }
             if (task.gammaPoints.containsKey(senderId)) {
-                svc.logger.warn("Duplicate gamma open from node {} for task {}", senderId, taskId);
+                logger.warn("Duplicate gamma open from node {} for task {}", senderId, taskId);
                 return;
             }
             task.gammaPoints.put(senderId, gamma);
@@ -244,7 +277,7 @@ final class CggmpSignatureOnlineHandler {
                 task.gammaLatch.countDown();
             }
         } catch (Exception e) {
-            svc.logger.error("Failed to handle CGGMP_SIGN_GAMMA_OPEN from node {}: {}", senderId, e.getMessage());
+            logger.error("Failed to handle CGGMP_SIGN_GAMMA_OPEN from node {}: {}", senderId, e.getMessage());
         }
     }
 
@@ -277,45 +310,45 @@ final class CggmpSignatureOnlineHandler {
             PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
             ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
             MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
-            if (svc.validatePaillierPublicKey(publicKey)) {
-                svc.logger.warn("Invalid Paillier public key for KA from node {} task {}", initiatorId, taskId);
+            if (CggmpSignatureKeyValidator.validatePaillierPublicKey(publicKey)) {
+                logger.warn("Invalid Paillier public key for KA from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Invalid Paillier public key (KA)", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Invalid Paillier public key (KA)", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Invalid Paillier public key (KA)");
                 return;
             }
             if (initiatorMessage.rangeProof() == null || initiatorMessage.biPrimeProof() == null || initiatorMessage.factorProof() == null) {
-                svc.logger.warn("Missing KA MtA initiator proofs for task {}", taskId);
+                logger.warn("Missing KA MtA initiator proofs for task {}", taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("initiatorMessage", msgMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Missing KA MtA initiator proofs", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Missing KA MtA initiator proofs", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Missing KA MtA initiator proofs");
                 return;
             }
-            if (svc.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
-                svc.logger.warn("Inconsistent Paillier key/zkSetup for KA from node {} task {}", initiatorId, taskId);
+            if (CggmpSignatureKeyValidator.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
+                logger.warn("Inconsistent Paillier key/zkSetup for KA from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
                 evidence.put("zkSetup", zkMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Inconsistent Paillier key/zkSetup (KA)", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Inconsistent Paillier key/zkSetup (KA)", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Inconsistent Paillier key/zkSetup (KA)");
                 return;
             }
 
             MtAProtocol protocol = new MtAProtocol(null, Secp256k1CurveUtils.n());
-            byte[] mtaContext = SignUtils.buildMtaContext(taskId + ":KA", initiatorId, receiverId);
+            byte[] mtaContext = CggmpProtocolUtils.buildMtaContext(taskId + ":KA", initiatorId, receiverId);
             if (!protocol.verifyInitiatorRangeProof(initiatorMessage, publicKey, zkSetup, mtaContext)
                     || !protocol.verifyInitiatorBiPrimeProof(initiatorMessage, publicKey, mtaContext)
                     || !protocol.verifyInitiatorFactorProof(initiatorMessage, publicKey, zkSetup, mtaContext)) {
-                svc.logger.warn("Invalid KA MtA initiator proofs for task {}", taskId);
+                logger.warn("Invalid KA MtA initiator proofs for task {}", taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("initiatorMessage", msgMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Invalid KA MtA initiator proofs", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Invalid KA MtA initiator proofs", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Invalid KA MtA initiator proofs");
                 return;
             }
@@ -333,10 +366,10 @@ final class CggmpSignatureOnlineHandler {
             resp.put("responderId", svc.nodeId);
             com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
             resp.put("result", CggmpCodecUtils.encodeMtAResult(publicResult));
-            svc.fireAndForget(svc.nodeService.sendMessage(initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_MTA_KA_RESPONSE, resp)),
-                    "CGGMP_SIGN_MTA_KA_RESPONSE");
+            CggmpProtocolUtils.fireAndForget(svc.nodeService.sendMessage(initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_MTA_KA_RESPONSE, resp)),
+                    logger, "CGGMP_SIGN_MTA_KA_RESPONSE");
         } catch (Exception e) {
-            svc.logger.error("Failed to handle CGGMP_SIGN_MTA_KA_INIT from node {}: {}", senderId, e.getMessage());
+            logger.error("Failed to handle CGGMP_SIGN_MTA_KA_INIT from node {}: {}", senderId, e.getMessage());
         }
     }
 
@@ -370,22 +403,22 @@ final class CggmpSignatureOnlineHandler {
                 return;
             }
             if (result.c_j() == null || result.proof() == null) {
-                svc.logger.warn("Missing KA MtA respondent proof from node {} for task {}", responderId, taskId);
+                logger.warn("Missing KA MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("result", resultMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, responderId, "Missing KA MtA respondent proof", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, responderId, "Missing KA MtA respondent proof", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Missing KA MtA respondent proof");
                 return;
             }
             MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
-            byte[] mtaContext = SignUtils.buildMtaContext(taskId + ":KA", initiatorId, responderId);
+            byte[] mtaContext = CggmpProtocolUtils.buildMtaContext(taskId + ":KA", initiatorId, responderId);
             if (!protocol.verifyRespondentProof(result, initiatorMessage.cA(), task.paillier.getPublicKeyInfo(), task.zkSetup, mtaContext)) {
-                svc.logger.warn("Invalid KA MtA respondent proof from node {} for task {}", responderId, taskId);
+                logger.warn("Invalid KA MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("result", resultMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, responderId, "Invalid KA MtA respondent proof", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, responderId, "Invalid KA MtA respondent proof", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Invalid KA MtA respondent proof");
                 return;
             }
@@ -395,7 +428,7 @@ final class CggmpSignatureOnlineHandler {
                 task.kaResponseLatch.countDown();
             }
         } catch (Exception e) {
-            svc.logger.error("Failed to handle CGGMP_SIGN_MTA_KA_RESPONSE from node {}: {}", senderId, e.getMessage());
+            logger.error("Failed to handle CGGMP_SIGN_MTA_KA_RESPONSE from node {}: {}", senderId, e.getMessage());
         }
     }
 
@@ -423,12 +456,12 @@ final class CggmpSignatureOnlineHandler {
             BigInteger r = new BigInteger(rHex, 16);
             String commit = task.uCommitments.get(senderId);
             if (commit == null) {
-                svc.logger.warn("Missing u commitment from node {} for task {}", senderId, taskId);
+                logger.warn("Missing u commitment from node {} for task {}", senderId, taskId);
                 return;
             }
-            String expected = svc.commitU(taskId, senderId, task.messageHash, u, r);
+            String expected = commitU(taskId, senderId, task.messageHash, u, r);
             if (!commit.equals(expected)) {
-                svc.logger.warn("Invalid u commitment opening from node {} for task {}", senderId, taskId);
+                logger.warn("Invalid u commitment opening from node {} for task {}", senderId, taskId);
                 return;
             }
             task.uShares.put(senderId, u);
@@ -436,7 +469,7 @@ final class CggmpSignatureOnlineHandler {
                 task.uShareLatch.countDown();
             }
         } catch (Exception e) {
-            svc.logger.error("Failed to handle CGGMP_SIGN_U_SHARE from node {}: {}", senderId, e.getMessage());
+            logger.error("Failed to handle CGGMP_SIGN_U_SHARE from node {}: {}", senderId, e.getMessage());
         }
     }
 
@@ -517,45 +550,45 @@ final class CggmpSignatureOnlineHandler {
             PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
             ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
             MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
-            if (svc.validatePaillierPublicKey(publicKey)) {
-                svc.logger.warn("Invalid Paillier public key for ST from node {} task {}", initiatorId, taskId);
+            if (CggmpSignatureKeyValidator.validatePaillierPublicKey(publicKey)) {
+                logger.warn("Invalid Paillier public key for ST from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Invalid Paillier public key (ST)", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Invalid Paillier public key (ST)", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Invalid Paillier public key (ST)");
                 return;
             }
             if (initiatorMessage.rangeProof() == null || initiatorMessage.biPrimeProof() == null || initiatorMessage.factorProof() == null) {
-                svc.logger.warn("Missing ST MtA initiator proofs for task {}", taskId);
+                logger.warn("Missing ST MtA initiator proofs for task {}", taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("initiatorMessage", msgMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Missing ST MtA initiator proofs", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Missing ST MtA initiator proofs", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Missing ST MtA initiator proofs");
                 return;
             }
-            if (svc.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
-                svc.logger.warn("Inconsistent Paillier key/zkSetup for ST from node {} task {}", initiatorId, taskId);
+            if (CggmpSignatureKeyValidator.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
+                logger.warn("Inconsistent Paillier key/zkSetup for ST from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
                 evidence.put("zkSetup", zkMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Inconsistent Paillier key/zkSetup (ST)", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Inconsistent Paillier key/zkSetup (ST)", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Inconsistent Paillier key/zkSetup (ST)");
                 return;
             }
 
             MtAProtocol protocol = new MtAProtocol(null, Secp256k1CurveUtils.n());
-            byte[] mtaContext = SignUtils.buildMtaContext(taskId + ":ST", initiatorId, receiverId);
+            byte[] mtaContext = CggmpProtocolUtils.buildMtaContext(taskId + ":ST", initiatorId, receiverId);
             if (!protocol.verifyInitiatorRangeProof(initiatorMessage, publicKey, zkSetup, mtaContext)
                     || !protocol.verifyInitiatorBiPrimeProof(initiatorMessage, publicKey, mtaContext)
                     || !protocol.verifyInitiatorFactorProof(initiatorMessage, publicKey, zkSetup, mtaContext)) {
-                svc.logger.warn("Invalid ST MtA initiator proofs for task {}", taskId);
+                logger.warn("Invalid ST MtA initiator proofs for task {}", taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("initiatorMessage", msgMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Invalid ST MtA initiator proofs", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "Invalid ST MtA initiator proofs", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Invalid ST MtA initiator proofs");
                 return;
             }
@@ -573,10 +606,10 @@ final class CggmpSignatureOnlineHandler {
             resp.put("responderId", svc.nodeId);
             com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
             resp.put("result", CggmpCodecUtils.encodeMtAResult(publicResult));
-            svc.fireAndForget(svc.nodeService.sendMessage(initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_MTA_ST_RESPONSE, resp)),
-                    "CGGMP_SIGN_MTA_ST_RESPONSE");
+            CggmpProtocolUtils.fireAndForget(svc.nodeService.sendMessage(initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_MTA_ST_RESPONSE, resp)),
+                    logger, "CGGMP_SIGN_MTA_ST_RESPONSE");
         } catch (Exception e) {
-            svc.logger.error("Failed to handle CGGMP_SIGN_MTA_ST_INIT from node {}: {}", senderId, e.getMessage());
+            logger.error("Failed to handle CGGMP_SIGN_MTA_ST_INIT from node {}: {}", senderId, e.getMessage());
         }
     }
 
@@ -610,22 +643,22 @@ final class CggmpSignatureOnlineHandler {
                 return;
             }
             if (result.c_j() == null || result.proof() == null) {
-                svc.logger.warn("Missing ST MtA respondent proof from node {} for task {}", responderId, taskId);
+                logger.warn("Missing ST MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("result", resultMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, responderId, "Missing ST MtA respondent proof", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, responderId, "Missing ST MtA respondent proof", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Missing ST MtA respondent proof");
                 return;
             }
             MtAProtocol protocol = new MtAProtocol(task.paillier, Secp256k1CurveUtils.n());
-            byte[] mtaContext = SignUtils.buildMtaContext(taskId + ":ST", initiatorId, responderId);
+            byte[] mtaContext = CggmpProtocolUtils.buildMtaContext(taskId + ":ST", initiatorId, responderId);
             if (!protocol.verifyRespondentProof(result, initiatorMessage.cA(), task.paillier.getPublicKeyInfo(), task.zkSetup, mtaContext)) {
-                svc.logger.warn("Invalid ST MtA respondent proof from node {} for task {}", responderId, taskId);
+                logger.warn("Invalid ST MtA respondent proof from node {} for task {}", responderId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("result", resultMap);
-                svc.fireAndForget(svc.broadcastComplaint(task, responderId, "Invalid ST MtA respondent proof", evidence),
-                        "CGGMP_SIGN_COMPLAINT");
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, responderId, "Invalid ST MtA respondent proof", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
                 svc.failSignatureTask(task, "Invalid ST MtA respondent proof");
                 return;
             }
@@ -635,7 +668,7 @@ final class CggmpSignatureOnlineHandler {
                 task.stResponseLatch.countDown();
             }
         } catch (Exception e) {
-            svc.logger.error("Failed to handle CGGMP_SIGN_MTA_ST_RESPONSE from node {}: {}", senderId, e.getMessage());
+            logger.error("Failed to handle CGGMP_SIGN_MTA_ST_RESPONSE from node {}: {}", senderId, e.getMessage());
         }
     }
 
@@ -658,20 +691,167 @@ final class CggmpSignatureOnlineHandler {
             return;
         }
         BigInteger sigma = new BigInteger(sHex, 16);
-        if (svc.verifySigmaShare(task, senderId, sigma)) {
+        if (verifySigmaShare(task, senderId, sigma)) {
             Map<String, Object> ev = new HashMap<>();
             ev.put("sigma", sHex);
             ev.put("r", task.r == null ? null : HexUtils.toHex(task.r));
             ev.put("DeltaTilde", task.presignDeltaTilde.get(senderId) == null ? null : HexUtils.bytesToHex(task.presignDeltaTilde.get(senderId).getEncoded(false)));
             ev.put("STilde", task.presignSTilde.get(senderId) == null ? null : HexUtils.bytesToHex(task.presignSTilde.get(senderId).getEncoded(false)));
-            svc.fireAndForget(svc.broadcastComplaint(task, senderId, "Invalid signature share (Figure 10)", ev),
-                    "CGGMP_SIGN_COMPLAINT");
+            CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "Invalid signature share (Figure 10)", ev),
+                    logger, "CGGMP_SIGN_COMPLAINT");
             svc.failSignatureTask(task, "Invalid signature share from node " + senderId);
             return;
         }
         task.sShares.put(senderId, sigma);
         if (task.sShareLatch.getCount() > 0) {
             task.sShareLatch.countDown();
+        }
+    }
+
+    private void finalizeSignatureAsInitiator(CggmpOnlineContext ctx) {
+        if (ctx == null) {
+            return;
+        }
+        List<Integer> offenders = findInvalidSigmaShares(ctx.task());
+        if (!offenders.isEmpty()) {
+            for (int offender : offenders) {
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(ctx.task(), offender, "Invalid signature share (Figure 10)", Map.of("r", HexUtils.toHex(ctx.task().r))),
+                        logger, "CGGMP_SIGN_SHARE_COMPLAINT");
+            }
+            svc.failSignatureTask(ctx.task(), "Invalid signature shares: " + offenders);
+            svc.signatureInProgress.set(false);
+            svc.clearPresignAll(ctx.task());
+            return;
+        }
+        BigInteger s = CggmpProtocolUtils.sumShares(ctx.task().sShares, ctx.curveOrder());
+        if (s.compareTo(ctx.curveOrder().shiftRight(1)) > 0) {
+            s = ctx.curveOrder().subtract(s);
+        }
+        byte[] der = derEncodeSignature(ctx.task().r, s);
+        boolean verified = verifySignature(ctx.task().groupPublicKeyPoint, ctx.task().messageHash, ctx.task().r, s, buildDomain());
+        if (!verified) {
+            List<Integer> suspects = findInvalidSigmaShares(ctx.task());
+            for (int offender : suspects) {
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(ctx.task(), offender, "Aggregate signature verification failed (Figure 10)", Map.of("r", HexUtils.toHex(ctx.task().r))),
+                        logger, "CGGMP_SIGN_AGG_COMPLAINT");
+            }
+            svc.failSignatureTask(ctx.task(), "Aggregate signature verification failed");
+            svc.signatureInProgress.set(false);
+            svc.clearPresignAll(ctx.task());
+            return;
+        }
+        ctx.task().signature = Base64.getEncoder().encodeToString(der);
+        ctx.task().verified = verified;
+        ctx.task().complete();
+        svc.signatureInProgress.set(false);
+        svc.clearPresignAll(ctx.task());
+        logger.info("CGGMP signature task {} completed successfully, verified: {}", ctx.task().taskId, verified);
+    }
+
+    private List<Integer> findInvalidSigmaShares(Gg20SignatureTask task) {
+        List<Integer> offenders = new ArrayList<>();
+        for (Map.Entry<Integer, BigInteger> e : task.sShares.entrySet()) {
+            if (!verifySigmaShare(task, e.getKey(), e.getValue())) {
+                offenders.add(e.getKey());
+            }
+        }
+        return offenders;
+    }
+
+    private BigInteger resolveSignShift(Gg20SignatureTask task, BigInteger q) {
+        if (!svc.hdEnabled) {
+            return BigInteger.ZERO;
+        }
+        return deriveShiftFromChainCode(task, q);
+    }
+
+    private BigInteger deriveShiftFromChainCode(Gg20SignatureTask task, BigInteger q) {
+        if (task == null || task.chainCode == null || task.messageHash == null) {
+            return BigInteger.ZERO;
+        }
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            javax.crypto.spec.SecretKeySpec key = new javax.crypto.spec.SecretKeySpec(task.chainCode, "HmacSHA256");
+            mac.init(key);
+            byte[] out = mac.doFinal(task.messageHash);
+            return new BigInteger(1, out).mod(q);
+        } catch (Exception e) {
+            logger.warn("Failed to derive HD shift for task {}: {}", task.taskId, e.getMessage());
+            return BigInteger.ZERO;
+        }
+    }
+
+    private boolean verifySigmaShare(Gg20SignatureTask task, int senderId, BigInteger sigma) {
+        if (task.presignature == null || task.messageHash == null) {
+            return false;
+        }
+        BigInteger curveOrder = Secp256k1CurveUtils.n();
+        ECPoint Gamma = task.presignature.Gamma();
+        BigInteger r = task.r != null ? task.r : Gamma.getAffineXCoord().toBigInteger().mod(curveOrder);
+        BigInteger m = new BigInteger(1, task.messageHash).mod(curveOrder);
+        ECPoint deltaTilde = task.presignDeltaTilde.get(senderId);
+        ECPoint sTilde = task.presignSTilde.get(senderId);
+        if (deltaTilde == null || sTilde == null) {
+            return false;
+        }
+        BigInteger shift = resolveSignShift(task, curveOrder);
+        if (shift.signum() != 0) {
+            sTilde = sTilde.add(deltaTilde.multiply(shift)).normalize();
+        }
+        ECPoint left = Gamma.multiply(sigma).normalize();
+        ECPoint right = deltaTilde.multiply(m).add(sTilde.multiply(r)).normalize();
+        return left.equals(right);
+    }
+
+    private ECDomainParameters buildDomain() {
+        return new ECDomainParameters(
+                Secp256k1CurveUtils.G().getCurve(),
+                Secp256k1CurveUtils.G(),
+                Secp256k1CurveUtils.n(),
+                BigInteger.ONE
+        );
+    }
+
+    private boolean verifySignature(ECPoint publicKey, byte[] messageHash, BigInteger r, BigInteger s, ECDomainParameters domain) {
+        ECDSASigner verifier = new ECDSASigner();
+        ECPublicKeyParameters pub = new ECPublicKeyParameters(publicKey, domain);
+        verifier.init(false, pub);
+        return verifier.verifySignature(messageHash, r, s);
+    }
+
+    private byte[] derEncodeSignature(BigInteger r, BigInteger s) {
+        ASN1EncodableVector v = new ASN1EncodableVector();
+        v.add(new ASN1Integer(r));
+        v.add(new ASN1Integer(s));
+        try {
+            return new DERSequence(v).getEncoded();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to encode DER signature", e);
+        }
+    }
+
+    private CompletableFuture<Void> sendSShare(Gg20SignatureTask task, BigInteger s_i) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("senderId", svc.nodeId);
+        data.put("s", s_i.toString(16));
+        return svc.nodeService.sendMessage(task.initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_S_SHARE, data));
+    }
+
+    private String commitU(String taskId, int senderId, byte[] messageHash, BigInteger u, BigInteger r) {
+        int nLen = (Secp256k1CurveUtils.n().bitLength() + 7) / 8;
+        byte[] uBytes = BigIntegerUtils.toUnsignedBytes(u, nLen);
+        byte[] rBytes = BigIntegerUtils.toUnsignedBytes(r, nLen);
+        byte[] ctx = CggmpProtocolUtils.buildSignContext(taskId, senderId, messageHash, "U-COMMIT");
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(ctx);
+            digest.update(uBytes);
+            digest.update(rBytes);
+            byte[] out = digest.digest();
+            return HexUtils.bytesToHex(out);
+        } catch (Exception e) {
+            throw new RuntimeException("U commit hash failed", e);
         }
     }
 }

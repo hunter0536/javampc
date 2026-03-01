@@ -1,17 +1,12 @@
 package com.example.mpc.cggmp.proof;
 
 import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.proof.PaillierRangeEncryptionWitness;
-import com.example.mpc.cggmp.proof.PaillierRangeProof;
-import com.example.mpc.cggmp.proof.PaillierRangeProofContext;
-import com.example.mpc.cggmp.proof.PaillierRangeProofGenerator;
-import com.example.mpc.cggmp.proof.PaillierRangeProofValidator;
-import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import org.bouncycastle.math.ec.ECPoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.security.MessageDigest;
@@ -19,7 +14,6 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 public final class PresignProofs {
@@ -123,6 +117,7 @@ public final class PresignProofs {
         return createAffGProofInternal(g, X, N0, N1, C, D, Y, x, y, rho, mu, true, kappa, epsBits, context);
     }
 
+    @SuppressWarnings("PMD.UnusedFormalParameter")
     private static PiAffGProof createAffGProofInternal(ECPoint g,
                                                        ECPoint X,
                                                        BigInteger N0,
@@ -349,7 +344,6 @@ public final class PresignProofs {
 
     public static boolean verifyLogStarProof(PiLogStarProof proof, ECPoint base, ECPoint X, byte[] context) {
         if (proof == null || proof.A() == null || proof.z() == null) return false;
-        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger c = challenge("PI_LOGSTAR", base, X, proof.A(), context);
         ECPoint left = base.multiply(proof.z()).normalize();
         ECPoint right = proof.A().add(X.multiply(c)).normalize();

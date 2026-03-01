@@ -2,6 +2,7 @@ package com.example.mpc.service;
 
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.MapUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
@@ -682,8 +683,8 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         }
         Map<?, ?> dataMap = (Map<?, ?>) message.data;
         String taskId = (String) dataMap.get("taskId");
-        List<String> encodedVerificationPoints = (List<String>) dataMap.get("verificationPoints");
-        List<String> encodedMaskingVerificationPoints = (List<String>) dataMap.get("maskingVerificationPoints");
+        List<String> encodedVerificationPoints = MapUtils.toStringList(dataMap.get("verificationPoints"));
+        List<String> encodedMaskingVerificationPoints = MapUtils.toStringList(dataMap.get("maskingVerificationPoints"));
 
         GennaroDkgTask task = dkgTasks.get(taskId);
         if (task == null && taskId != null) {
@@ -715,6 +716,8 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             logger.info("Received commitment from node {} for task: {}", senderId, taskId);
         }
     }
+
+ 
 
     private void handleShareMessage(int senderId, NodeService.Message message) {
         if (!(message.data instanceof Map)) {

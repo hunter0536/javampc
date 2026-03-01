@@ -1,0 +1,185 @@
+package com.example.mpc.service.cggmp.auxiliary;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.example.mpc.cggmp.PaillierEncryption;
+import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
+import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
+import com.example.mpc.cggmp.proof.NoSmallFactorProof;
+import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
+import com.example.mpc.cggmp.proof.PiPrmProof;
+import com.example.mpc.cggmp.proof.RefreshProofs;
+import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.constant.Constants;
+import com.example.mpc.enums.MessageType;
+import com.example.mpc.model.CggmpAuxTask;
+import com.example.mpc.service.CggmpAuxService;
+import com.example.mpc.service.NodeService;
+import com.example.mpc.service.cggmp.CggmpCodecUtils;
+import com.example.mpc.service.cggmp.CggmpProtocolUtils;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+
+public final class CggmpAuxProtocolHandler {
+    private static final Logger logger = LoggerFactory.getLogger(CggmpAuxProtocolHandler.class);
+    private static final ExecutorService auxExecutorService = com.example.mpc.common.util.ThreadPoolUtil.getAuxThreadPool();
+
+    private final CggmpAuxService svc;
+
+    public CggmpAuxProtocolHandler(CggmpAuxService svc) {
+        this.svc = svc;
+    }
+
+    public CompletableFuture<Void> runAuxProtocolAsync(CggmpAuxTask task) {
+        final long auxStartNs = System.nanoTime();
+        logger.debug("AUX protocol starting: taskId={}, executionId={}", task.taskId, task.executionId);
+        return CompletableFuture.supplyAsync(() -> {
+            logger.debug("AUX protocol running: taskId={}, executionId={}", task.taskId, task.executionId);
+            long paillierStart = System.nanoTime();
+            PaillierEncryption paillier = new PaillierEncryption(svc.auxPaillierBits);
+            logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, svc.auxPaillierBits);
+            task.paillier = paillier;
+            long pedStart = System.nanoTime();
+            ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength);
+            logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength);
+            task.hatN = ped.zk().hatN();
+            task.s = ped.zk().h1();
+            task.t = ped.zk().h2();
+            task.pedersenLambda = ped.lambda();
+
+            byte[] rho_i = CggmpProtocolUtils.randomBytes(32);
+            byte[] u_i = CggmpProtocolUtils.randomBytes(32);
+            task.rho.put(svc.nodeId, rho_i);
+            task.u.put(svc.nodeId, u_i);
+
+            PiPrmProof prmProof = RefreshProofs.createPrmProof(task.hatN, task.s, task.t, task.pedersenLambda,
+                    CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "PRM"));
+            task.prmProof = prmProof;
+
+            String vCommit = CggmpProtocolUtils.computeAuxCommitHash(task.executionId, task.taskId, svc.nodeId,
+                    CggmpCodecUtils.encodePaillierPublicKey(paillier.getPublicKeyInfo()),
+                    task.hatN.toString(16), task.s.toString(16), task.t.toString(16),
+                    CggmpCodecUtils.encodePiPrmProof(prmProof), rho_i, u_i);
+            task.commitHashes.put(svc.nodeId, vCommit);
+
+            Map<String, Object> r1 = new HashMap<>();
+            r1.put("taskId", task.taskId);
+            r1.put("executionId", task.executionId);
+            r1.put("senderId", svc.nodeId);
+            r1.put("V", vCommit);
+            CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1, r1)),
+                    logger, "CGGMP_AUX_R1_RBC");
+            return new AuxContext(task, paillier, prmProof, rho_i, u_i);
+        }, auxExecutorService)
+                .thenCompose(ctx -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.commitLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1")
+                        .exceptionally(ex -> {
+                            CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1, Map.of(
+                                    "taskId", task.taskId,
+                                    "executionId", task.executionId,
+                                    "senderId", svc.nodeId,
+                                    "V", task.commitHashes.get(svc.nodeId)
+                            ))), logger, "CGGMP_AUX_R1_RBC_RETRY");
+                            throw new java.util.concurrent.CompletionException(ex);
+                        })
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    String echo = CggmpProtocolUtils.computeAuxEchoHash(task);
+                    Map<String, Object> r1Echo = new HashMap<>();
+                    r1Echo.put("taskId", task.taskId);
+                    r1Echo.put("executionId", task.executionId);
+                    r1Echo.put("senderId", svc.nodeId);
+                    r1Echo.put("hash", echo);
+                    CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
+                            logger, "CGGMP_AUX_R1_ECHO");
+                }, auxExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.echoLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1 echo")
+                        .exceptionally(ex -> {
+                    String echo = CggmpProtocolUtils.computeAuxEchoHash(task);
+                    if (echo != null) {
+                        Map<String, Object> r1Echo = new HashMap<>();
+                                r1Echo.put("taskId", task.taskId);
+                                r1Echo.put("executionId", task.executionId);
+                                r1Echo.put("senderId", svc.nodeId);
+                                r1Echo.put("hash", echo);
+                                CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
+                                        logger, "CGGMP_AUX_R1_ECHO_RETRY");
+                            }
+                            throw new java.util.concurrent.CompletionException(ex);
+                        })
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    Map<String, Object> r2 = new HashMap<>();
+                    r2.put("taskId", task.taskId);
+                    r2.put("executionId", task.executionId);
+                    r2.put("senderId", svc.nodeId);
+                    r2.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(ctx.paillier.getPublicKeyInfo()));
+                    r2.put("hatN", task.hatN.toString(16));
+                    r2.put("s", task.s.toString(16));
+                    r2.put("t", task.t.toString(16));
+                    r2.put("prmProof", CggmpCodecUtils.encodePiPrmProof(ctx.prmProof));
+                    r2.put("rho", HexUtils.bytesToHex(ctx.rho));
+                    r2.put("u", HexUtils.bytesToHex(ctx.u));
+                    CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R2, r2)),
+                            logger, "CGGMP_AUX_R2");
+                }, auxExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.revealLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R2")
+                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                    byte[] rho = CggmpAuxUtils.xorAuxRho(svc.nodeId, task);
+                    byte[] modCtx = CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "MOD", rho);
+                    long modProofStart = System.nanoTime();
+                    BiPrimeBlumProof modProof = new BiPrimeProofGenerator().createProof(ctx.paillier.getPrivateKeyInfo(), modCtx);
+                    logger.debug("AUX mod proof generated in {} ms", (System.nanoTime() - modProofStart) / 1_000_000);
+                    Map<String, Object> facProofs = new HashMap<>();
+                    for (int peerId : task.participants) {
+                        if (peerId == svc.nodeId) continue;
+                        java.math.BigInteger hatN = task.peerHatN.get(peerId);
+                        java.math.BigInteger s = task.peerS.get(peerId);
+                        java.math.BigInteger t = task.peerT.get(peerId);
+                        if (hatN == null || s == null || t == null) {
+                            continue;
+                        }
+                        ZKSetup zk = new ZKSetup(hatN, s, t);
+                        long facStart = System.nanoTime();
+                        NoSmallFactorProof facProof = new NoSmallFactorProofGenerator(zk).createProof(ctx.paillier.getPrivateKeyInfo(), modCtx);
+                        logger.debug("AUX fac proof generated for peer {} in {} ms", peerId, (System.nanoTime() - facStart) / 1_000_000);
+                        facProofs.put(String.valueOf(peerId), CggmpCodecUtils.encodeNoSmallFactorProof(facProof));
+                    }
+                    Map<String, Object> r3 = new HashMap<>();
+                    r3.put("taskId", task.taskId);
+                    r3.put("executionId", task.executionId);
+                    r3.put("senderId", svc.nodeId);
+                    r3.put("modProof", CggmpCodecUtils.encodeBiPrimeProof(modProof));
+                    r3.put("facProofs", facProofs);
+                    CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R3, r3)),
+                            logger, "CGGMP_AUX_R3");
+                }, auxExecutorService).thenApply(v -> ctx))
+                .thenCompose(ctx -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.proofLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R3")
+                        .thenApply(v -> ctx))
+                .thenRunAsync(() -> {
+                    CggmpAuxUtils.saveAuxInfo(svc, task);
+                    logger.debug("AUX protocol completed in {} ms", (System.nanoTime() - auxStartNs) / 1_000_000);
+                }, auxExecutorService);
+    }
+
+    private static final class AuxContext {
+        final CggmpAuxTask task;
+        final PaillierEncryption paillier;
+        final PiPrmProof prmProof;
+        final byte[] rho;
+        final byte[] u;
+
+        AuxContext(CggmpAuxTask task, PaillierEncryption paillier, PiPrmProof prmProof, byte[] rho, byte[] u) {
+            this.task = task;
+            this.paillier = paillier;
+            this.prmProof = prmProof;
+            this.rho = rho;
+            this.u = u;
+        }
+    }
+}

@@ -1,11 +1,11 @@
-package com.example.mpc.service.cggmp;
+package com.example.mpc.service.cggmp.signature;
 
 import com.example.mpc.model.Gg20SignatureTask;
 
 import java.math.BigInteger;
 
-public record CggmpOnlineContext(
+public record CggmpPresignR1Context(
         Gg20SignatureTask task,
         BigInteger curveOrder,
-        BigInteger sigma_i) {
+        BigInteger gamma_i) {
 }

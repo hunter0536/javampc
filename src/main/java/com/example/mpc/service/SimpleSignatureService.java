@@ -2,6 +2,7 @@ package com.example.mpc.service;
 
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.MapUtils;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
@@ -442,7 +443,11 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     }
 
     private void handleInitMessage(int senderId, Object data) {
-        Map<String, Object> map = (Map<String, Object>) data;
+        Map<String, Object> map = MapUtils.asStringObjectMap(data);
+        if (map == null) {
+            logger.warn("Invalid INIT payload from node {}", senderId);
+            return;
+        }
         String taskId = (String) map.get("taskId");
         String groupPublicKey = (String) map.get("groupPublicKey");
         String message = (String) map.get("message");
@@ -510,7 +515,11 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     }
 
     private void handleOfflineData(int senderId, Object data) {
-        Map<String, String> map = (Map<String, String>) data;
+        Map<String, String> map = MapUtils.asStringStringMap(data);
+        if (map == null) {
+            logger.warn("Invalid OFFLINE payload from node {}", senderId);
+            return;
+        }
         String taskId = map.get("taskId");
         String groupPublicKey = map.get("groupPublicKey");
         String message = map.get("message");
@@ -633,7 +642,11 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     }
 
     private void handleSigmaShare(int senderId, Object data) {
-        Map<String, String> map = (Map<String, String>) data;
+        Map<String, String> map = MapUtils.asStringStringMap(data);
+        if (map == null) {
+            logger.warn("Invalid SIGMA payload from node {}", senderId);
+            return;
+        }
         String taskId = map.get("taskId");
         String groupPublicKey = map.get("groupPublicKey");
         String message = map.get("message");
@@ -680,7 +693,11 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     }
 
     private void handleOfflineRequest(int senderId, Object data) {
-        Map<String, String> map = (Map<String, String>) data;
+        Map<String, String> map = MapUtils.asStringStringMap(data);
+        if (map == null) {
+            logger.warn("Invalid OFFLINE_REQUEST payload from node {}", senderId);
+            return;
+        }
         String taskId = map.get("taskId");
 
         SimpleSignatureTask task = tasks.get(taskId);
@@ -714,7 +731,11 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     }
 
     private void handleSigmaRequest(int senderId, Object data) {
-        Map<String, String> map = (Map<String, String>) data;
+        Map<String, String> map = MapUtils.asStringStringMap(data);
+        if (map == null) {
+            logger.warn("Invalid SIGMA_REQUEST payload from node {}", senderId);
+            return;
+        }
         String taskId = map.get("taskId");
 
         SimpleSignatureTask task = tasks.get(taskId);
@@ -757,6 +778,8 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         }
         return sum;
     }
+
+ 
 
     private BigInteger hashMessage(String message, BigInteger curveOrder) {
         try {

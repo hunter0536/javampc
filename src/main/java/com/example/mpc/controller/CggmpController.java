@@ -11,6 +11,7 @@ import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStartResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.service.CggmpAuxService;
+import com.example.mpc.service.CggmpDiagnosticsService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.CggmpSignatureService;
@@ -33,6 +34,8 @@ public class CggmpController {
 
     @Autowired
     private CggmpSignatureService cggmpSignatureService;
+    @Autowired
+    private CggmpDiagnosticsService cggmpDiagnosticsService;
 
     @Autowired
     private CggmpDkgService cggmpDkgService;
@@ -377,7 +380,7 @@ public class CggmpController {
     @GetMapping("/proof/self-check")
     public ApiResponse<Map<String, Object>> proofSelfCheck() {
         try {
-            Map<String, Object> result = cggmpSignatureService.runProofSelfCheck();
+            Map<String, Object> result = cggmpDiagnosticsService.runProofSelfCheck();
             return ApiResponse.success(result);
         } catch (Exception e) {
             logger.error("Failed to run proof self-check", e);
