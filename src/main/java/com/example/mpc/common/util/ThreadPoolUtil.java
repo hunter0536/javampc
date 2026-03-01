@@ -12,8 +12,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ThreadPoolUtil {
-    private static final int CORE_POOL_SIZE = Runtime.getRuntime().availableProcessors();
-    private static final int MAX_POOL_SIZE = CORE_POOL_SIZE;
+    private static final int CORE_POOL_SIZE = Math.max(2, Runtime.getRuntime().availableProcessors());
+    private static final int MAX_POOL_SIZE = Math.max(4, CORE_POOL_SIZE * 2);
     private static final long KEEP_ALIVE_TIME = 60L;
     private static final TimeUnit KEEP_ALIVE_TIME_UNIT = TimeUnit.SECONDS;
     private static final BlockingQueue<Runnable> WORK_QUEUE = new LinkedBlockingQueue<>(1000);
