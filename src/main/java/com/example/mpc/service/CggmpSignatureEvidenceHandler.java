@@ -212,6 +212,10 @@ final class CggmpSignatureEvidenceHandler {
             Map<Integer, BigInteger> D = new HashMap<>();
             Map<Integer, BigInteger> F = new HashMap<>();
             Map<Integer, PiAffGProof> proofs = new HashMap<>();
+            ECPoint Gamma = task.presignGamma.get(svc.nodeId);
+            if (Gamma == null) {
+                Gamma = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), gamma_i);
+            }
             for (int peerId : task.participants) {
                 if (peerId == svc.nodeId) {
                     continue;
@@ -225,9 +229,12 @@ final class CggmpSignatureEvidenceHandler {
                 F.put(peerId, F_ji);
                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
                         Secp256k1CurveUtils.G(),
+                        Gamma,
                         task.peerPaillierKeys.get(peerId).n,
                         task.paillier.getPublicKeyInfo().n,
                         task.presignK.get(peerId),
+                        D_ji,
+                        F_ji,
                         gamma_i,
                         task.presignBeta.get(peerId),
                         task.presignRho.get(peerId),
@@ -254,6 +261,7 @@ final class CggmpSignatureEvidenceHandler {
             Map<Integer, BigInteger> D = new HashMap<>();
             Map<Integer, BigInteger> F = new HashMap<>();
             Map<Integer, PiAffGProof> proofs = new HashMap<>();
+            ECPoint X_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x_i);
             for (int peerId : task.participants) {
                 if (peerId == svc.nodeId) {
                     continue;
@@ -267,9 +275,12 @@ final class CggmpSignatureEvidenceHandler {
                 F.put(peerId, F_ji);
                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
                         Secp256k1CurveUtils.G(),
+                        X_i,
                         task.peerPaillierKeys.get(peerId).n,
                         task.paillier.getPublicKeyInfo().n,
                         task.presignK.get(peerId),
+                        D_ji,
+                        F_ji,
                         x_i,
                         task.presignBetaHat.get(peerId),
                         task.presignRhoHat.get(peerId),

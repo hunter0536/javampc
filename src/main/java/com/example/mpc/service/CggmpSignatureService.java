@@ -24,6 +24,10 @@ import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.CggmpAuxTask;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.model.KeyShare;
+import com.example.mpc.service.cggmp.CggmpOnlineContext;
+import com.example.mpc.service.cggmp.CggmpPresignR2Bundle;
+import com.example.mpc.service.cggmp.CggmpPresignR2Context;
+import com.example.mpc.service.cggmp.CggmpPresignPeerR2Result;
 import com.example.mpc.util.PresignUsageStore;
 import com.example.mpc.service.SignUtils;
 import org.bouncycastle.asn1.ASN1EncodableVector;
@@ -54,10 +58,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class CggmpSignatureService implements NodeService.MessageHandler {
-    private static final Logger logger = LoggerFactory.getLogger(CggmpSignatureService.class);
+    static final Logger logger = LoggerFactory.getLogger(CggmpSignatureService.class);
 
     @Autowired
-    private NodeService nodeService;
+    NodeService nodeService;
 
     @Autowired
     private KeyShareDao keyShareDao;
@@ -65,35 +69,35 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     private ComplaintDao complaintDao;
 
     @Value("${node.id}")
-    private int nodeId;
+    int nodeId;
 
     @Value("${app.cggmp.proof.kappa:128}")
-    private int proofKappa;
+    int proofKappa;
 
     @Value("${app.cggmp.proof.epsBits:16}")
-    private int proofEpsBits;
+    int proofEpsBits;
 
     @Value("${app.cggmp.presign.retentionDays:30}")
     private long presignRetentionDays;
     @Value("${app.cggmp.presign.usagePath:databases/node-{nodeId}/presign-usage.jsonl}")
     private String presignUsagePath;
     @Value("${app.cggmp.presign.echoEnabled:true}")
-    private boolean presignEchoEnabled;
+    boolean presignEchoEnabled;
     @Value("${app.cggmp.presign.useRbc:false}")
     private boolean presignUseRbc;
     @Value("${app.cggmp.hdEnabled:false}")
     private boolean hdEnabled;
     @Value("${app.cggmp.complaint.logPath:logs/complaints.jsonl}")
     private String complaintLogPath;
-    private final Map<String, Gg20SignatureTask> signatureTasks = new ConcurrentHashMap<>();
+    final Map<String, Gg20SignatureTask> signatureTasks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ConcurrentHashMap<Integer, Map<String, Object>>> pendingPresignR1ByTask =
             new ConcurrentHashMap<>();
-    private static final ExecutorService dkgExecutorService = ThreadPoolUtil.getComputationThreadPool();
+    static final ExecutorService dkgExecutorService = ThreadPoolUtil.getComputationThreadPool();
 
-    private final AtomicBoolean signatureInProgress = new AtomicBoolean(false);
+    final AtomicBoolean signatureInProgress = new AtomicBoolean(false);
     private final int nodesCount = Constants.NODES_COUNT;
     private final int threshold = Constants.THRESHOLD;
-    private final ScheduledExecutorService cggmpScheduler = Executors.newSingleThreadScheduledExecutor();
+    final ScheduledExecutorService cggmpScheduler = Executors.newSingleThreadScheduledExecutor();
 
     static {
         Security.addProvider(new BouncyCastleProvider());
@@ -106,7 +110,19 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         logger.info("CGGMP service initialized successfully");
     }
 
-    private CompletableFuture<Void> delayMs(long delayMs) {
+    static Map<?, ?> asMap(Object value) {
+        return value instanceof Map<?, ?> map ? map : null;
+    }
+
+    static String asString(Object value) {
+        return value instanceof String s ? s : null;
+    }
+
+    static Integer asInt(Object value) {
+        return value instanceof Number n ? n.intValue() : null;
+    }
+
+    CompletableFuture<Void> delayMs(long delayMs) {
         if (delayMs <= 0) {
             return CompletableFuture.completedFuture(null);
         }
@@ -115,7 +131,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return future;
     }
 
-    private void cachePendingPresignR1(String taskId, int senderId, Map<?, ?> dataMap) {
+    void cachePendingPresignR1(String taskId, int senderId, Map<?, ?> dataMap) {
         if (taskId == null) {
             return;
         }
@@ -131,7 +147,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         logger.debug("Cached presign R1 from node {} for task {} (waiting for task creation)", senderId, taskId);
     }
 
-    private void drainPendingPresignR1(Gg20SignatureTask task) {
+    void drainPendingPresignR1(Gg20SignatureTask task) {
         ConcurrentHashMap<Integer, Map<String, Object>> pending = pendingPresignR1ByTask.remove(task.taskId);
         if (pending == null || pending.isEmpty()) {
             return;
@@ -148,7 +164,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
 
-    private void fireAndForget(CompletableFuture<Void> future, String name) {
+    void fireAndForget(CompletableFuture<Void> future, String name) {
         future.whenComplete((v, ex) -> {
             if (ex != null) {
                 logger.warn("{} failed: {}", name, ex.getMessage());
@@ -335,7 +351,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private void initSignatureContext(Gg20SignatureTask task) {
+    void initSignatureContext(Gg20SignatureTask task) {
         if (task.messageHash == null) {
             task.messageHash = hashMessage(task.message);
         }
@@ -368,7 +384,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private CompletableFuture<Void> runOfflinePhase(Gg20SignatureTask task) {
+    CompletableFuture<Void> runOfflinePhase(Gg20SignatureTask task) {
         logger.debug("Signature offline phase start for task {} (node={}, participants={})",
                 task.taskId, nodeId, task.participants);
         CompletableFuture<PresignR1Context> r1Future = CompletableFuture.supplyAsync(() -> {
@@ -698,7 +714,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 });
     }
 
-    private CompletableFuture<Void> broadcastOfflineInit(Gg20SignatureTask task) {
+    CompletableFuture<Void> broadcastOfflineInit(Gg20SignatureTask task) {
         logger.debug("Broadcasting CGGMP_SIGN_OFFLINE_INIT for task {} (participants={})", task.taskId, task.participants);
         Map<String, Object> initData = new HashMap<>();
         initData.put("signatureTaskId", task.taskId);
@@ -735,7 +751,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         });
     }
 
-    private CompletableFuture<Void> broadcastPresignR1(Gg20SignatureTask task,
+    CompletableFuture<Void> broadcastPresignR1(Gg20SignatureTask task,
                                                        BigInteger K,
                                                        BigInteger G,
                                                        ECPoint Y,
@@ -770,7 +786,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         });
     }
 
-    private CompletableFuture<Void> broadcastPresignR1Echo(Gg20SignatureTask task) {
+    CompletableFuture<Void> broadcastPresignR1Echo(Gg20SignatureTask task) {
         String hash = computePresignR1EchoHash(task);
         if (hash == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Missing presign R1 data for echo"));
@@ -786,7 +802,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return nodeService.broadcastMessage(msg);
     }
 
-    private CompletableFuture<Void> broadcastPresignR2(Gg20SignatureTask task, ECPoint Gamma,
+    CompletableFuture<Void> broadcastPresignR2(Gg20SignatureTask task, ECPoint Gamma,
                                                        Map<Integer, BigInteger> D,
                                                        Map<Integer, BigInteger> Dhat,
                                                        Map<Integer, BigInteger> F,
@@ -823,7 +839,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
 
 
-    private Map<String, Object> encodeAffGProofMap(Map<Integer, PiAffGProof> map) {
+    Map<String, Object> encodeAffGProofMap(Map<Integer, PiAffGProof> map) {
         Map<String, Object> out = new HashMap<>();
         for (Map.Entry<Integer, PiAffGProof> e : map.entrySet()) {
             out.put(String.valueOf(e.getKey()), CggmpCodecUtils.encodePiAffGProof(e.getValue()));
@@ -831,7 +847,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return out;
     }
 
-    private Map<Integer, PiAffGProof> decodeAffGProofMap(Map<?, ?> map) {
+    Map<Integer, PiAffGProof> decodeAffGProofMap(Map<?, ?> map) {
         Map<Integer, PiAffGProof> out = new HashMap<>();
         for (Map.Entry<?, ?> e : map.entrySet()) {
             int key = Integer.parseInt(String.valueOf(e.getKey()));
@@ -849,7 +865,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return CggmpCodecUtils.decodePiSchProof(map);
     }
 
-    private ECPoint sumPresignGamma(Gg20SignatureTask task) {
+    ECPoint sumPresignGamma(Gg20SignatureTask task) {
         ECPoint sum = Secp256k1CurveUtils.G().getCurve().getInfinity();
         for (ECPoint p : task.presignGamma.values()) {
             sum = sum.add(p).normalize();
@@ -858,7 +874,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
 
-    private BigInteger resolveSignShift(Gg20SignatureTask task, BigInteger q) {
+    BigInteger resolveSignShift(Gg20SignatureTask task, BigInteger q) {
         if (!hdEnabled) {
             return BigInteger.ZERO;
         }
@@ -881,7 +897,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private static String computePresignR1EchoHash(Gg20SignatureTask task) {
+    static String computePresignR1EchoHash(Gg20SignatureTask task) {
         try {
             String sid = buildSignSid(task.taskId);
             java.util.List<Integer> ids = new java.util.ArrayList<>(task.participants);
@@ -1004,7 +1020,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private void initSignaturePaillier(Gg20SignatureTask task) {
+    void initSignaturePaillier(Gg20SignatureTask task) {
         if (task.paillier == null) {
             long startNs = System.nanoTime();
             task.paillier = new PaillierEncryption();
@@ -1125,7 +1141,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return result;
     }
 
-    private BigInteger loadLocalShare(String groupPublicKey) {
+    BigInteger loadLocalShare(String groupPublicKey) {
         KeyShare keyShare = loadKeyShareByGroupPublicKeySync(groupPublicKey);
         if (keyShare == null) {
             throw new RuntimeException("Key share not found");
@@ -1180,7 +1196,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         );
     }
 
-    private BigInteger randomNonZero(BigInteger n) {
+    BigInteger randomNonZero(BigInteger n) {
         SecureRandom rnd = new SecureRandom();
         BigInteger r;
         do {
@@ -1220,7 +1236,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return task.threshold < task.nodesCount;
     }
 
-    private static BigInteger computeSignatureLagrange(Gg20SignatureTask task, int signerId, BigInteger mod) {
+    static BigInteger computeSignatureLagrange(Gg20SignatureTask task, int signerId, BigInteger mod) {
         if (task == null) {
             return BigInteger.ONE;
         }
@@ -1235,7 +1251,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return value.compareTo(half) > 0 ? value.subtract(n) : value;
     }
 
-    private ECPoint resolvePublicShare(Gg20SignatureTask task, int signerId, BigInteger lambda, BigInteger x_i) {
+    ECPoint resolvePublicShare(Gg20SignatureTask task, int signerId, BigInteger lambda, BigInteger x_i) {
         if (task.publicShares != null) {
             ECPoint base = task.publicShares.get(signerId);
             if (base != null) {
@@ -1245,7 +1261,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return Secp256k1CurveUtils.G().multiply(x_i).normalize();
     }
 
-    private ECPoint resolvePublicShareFromMap(Gg20SignatureTask task, int signerId, BigInteger lambda) {
+    ECPoint resolvePublicShareFromMap(Gg20SignatureTask task, int signerId, BigInteger lambda) {
         if (task.publicShares == null) {
             return null;
         }
@@ -1479,7 +1495,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_U_OPEN, data));
     }
 
-    private CompletableFuture<Void> sendSShare(Gg20SignatureTask task, BigInteger s_i) {
+    CompletableFuture<Void> sendSShare(Gg20SignatureTask task, BigInteger s_i) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", nodeId);
@@ -1487,7 +1503,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return nodeService.sendMessage(task.initiatorId, new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_S_SHARE, data));
     }
 
-    private String commitU(String taskId, int senderId, byte[] messageHash, BigInteger u, BigInteger r) {
+    String commitU(String taskId, int senderId, byte[] messageHash, BigInteger u, BigInteger r) {
         int nLen = (Secp256k1CurveUtils.n().bitLength() + 7) / 8;
         byte[] uBytes = BigIntegerUtils.toUnsignedBytes(u, nLen);
         byte[] rBytes = BigIntegerUtils.toUnsignedBytes(r, nLen);
@@ -1534,7 +1550,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return Secp256k1CurveUtils.decodePoint(encoded);
     }
 
-    private boolean validatePaillierPublicKey(PaillierEncryption.PublicKey publicKey) {
+    boolean validatePaillierPublicKey(PaillierEncryption.PublicKey publicKey) {
         if (publicKey == null || publicKey.n == null || publicKey.nSquared == null || publicKey.g == null) {
             return false;
         }
@@ -1542,7 +1558,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return publicKey.n.compareTo(q.pow(8)) >= 0;
     }
 
-    private boolean ensurePeerKeyConsistency(Gg20SignatureTask task, int peerId, PaillierEncryption.PublicKey publicKey, ZKSetup zkSetup) {
+    boolean ensurePeerKeyConsistency(Gg20SignatureTask task, int peerId, PaillierEncryption.PublicKey publicKey, ZKSetup zkSetup) {
         PaillierEncryption.PublicKey existingKey = task.peerPaillierKeys.putIfAbsent(peerId, publicKey);
         if (existingKey != null && !paillierPublicKeyEquals(existingKey, publicKey)) {
             return false;
@@ -1560,7 +1576,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return a.n.equals(b.n) && a.nSquared.equals(b.nSquared) && a.g.equals(b.g) && a.bitLength == b.bitLength;
     }
 
-    private void failSignatureTask(Gg20SignatureTask task, String reason) {
+    void failSignatureTask(Gg20SignatureTask task, String reason) {
         if (task == null || task.isCompleted() || task.isFailed()) {
             return;
         }
@@ -2218,11 +2234,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private CompletableFuture<Void> broadcastComplaint(Gg20SignatureTask task, int offenderId, String reason) {
+    CompletableFuture<Void> broadcastComplaint(Gg20SignatureTask task, int offenderId, String reason) {
         return broadcastComplaint(task, offenderId, reason, null);
     }
 
-    private CompletableFuture<Void> broadcastComplaint(Gg20SignatureTask task, int offenderId, String reason, Map<String, Object> evidence) {
+    CompletableFuture<Void> broadcastComplaint(Gg20SignatureTask task, int offenderId, String reason, Map<String, Object> evidence) {
         Map<String, Object> data = new HashMap<>();
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", nodeId);
@@ -2234,7 +2250,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_COMPLAINT, data));
     }
 
-    private CompletableFuture<Void> broadcastComplaint(Gg20SignatureTask task, Integer offenderId, String reason, Map<String, Object> evidence) {
+    CompletableFuture<Void> broadcastComplaint(Gg20SignatureTask task, Integer offenderId, String reason, Map<String, Object> evidence) {
         Map<String, Object> data = new HashMap<>();
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", nodeId);
@@ -2683,7 +2699,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return true;
     }
 
-    private void logComplaintToFile(String taskId, int senderId, Integer offenderId, String reason, Object evidence) {
+    void logComplaintToFile(String taskId, int senderId, Integer offenderId, String reason, Object evidence) {
         try {
             String evidenceJson = evidence == null ? null : JsonUtils.encodeAsJson(evidence);
             complaintDao.save(System.currentTimeMillis(), taskId, senderId, offenderId, reason, evidenceJson);
@@ -3354,7 +3370,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private boolean verifySigmaShare(Gg20SignatureTask task, int senderId, BigInteger sigma) {
+    boolean verifySigmaShare(Gg20SignatureTask task, int senderId, BigInteger sigma) {
         if (task.presignature == null || task.messageHash == null) {
             return false;
         }
@@ -3386,7 +3402,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return offenders;
     }
 
-    private void clearPresignLocal(Gg20SignatureTask task) {
+    void clearPresignLocal(Gg20SignatureTask task) {
         task.presignature = null;
         task.presignatureUsed = false;
         task.k_i = null;
@@ -3398,7 +3414,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         task.presignSPoint.remove(nodeId);
     }
 
-    private void clearPresignAll(Gg20SignatureTask task) {
+    void clearPresignAll(Gg20SignatureTask task) {
         clearPresignLocal(task);
         task.presignK.clear();
         task.presignG.clear();
@@ -3652,7 +3668,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 .exceptionally(ex -> false);
     }
 
-    private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
+    CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds);
         CompletableFuture<Void> future = new CompletableFuture<>();
         ScheduledFuture<?> tick = cggmpScheduler.scheduleAtFixedRate(() -> {
@@ -3666,6 +3682,45 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }, 0, 50, TimeUnit.MILLISECONDS);
         future.whenComplete((v, ex) -> tick.cancel(false));
         return future;
+    }
+
+    CompletableFuture<Void> continuePresignAfterR2(CggmpPresignR2Bundle bundle) {
+        if (bundle == null || bundle.ctx() == null) {
+            return CompletableFuture.failedFuture(new RuntimeException("Missing presign R2 bundle"));
+        }
+        PresignR2Context ctx = toPresignR2Context(bundle.ctx());
+        return continuePresignAfterR2(new PresignR2Bundle(ctx, bundle.D(), bundle.Dhat(), bundle.F(), bundle.Fhat()));
+    }
+
+    private PresignR2Context toPresignR2Context(CggmpPresignR2Context ctx) {
+        List<CompletableFuture<PeerR2Result>> mapped = new ArrayList<>(ctx.r2Futures().size());
+        for (CompletableFuture<CggmpPresignPeerR2Result> future : ctx.r2Futures()) {
+            mapped.add(future.thenApply(result -> {
+                if (result == null) {
+                    return null;
+                }
+                if (result.skipped()) {
+                    return PeerR2Result.skipped(result.peerId());
+                }
+                return PeerR2Result.done(
+                        result.peerId(),
+                        result.beta(),
+                        result.betaHat(),
+                        result.d(),
+                        result.dhat(),
+                        result.f(),
+                        result.fhat(),
+                        result.rho(),
+                        result.mu(),
+                        result.rhoHat(),
+                        result.muHat(),
+                        result.proof(),
+                        result.proofHat(),
+                        result.peerMs()
+                );
+            }));
+        }
+        return new PresignR2Context(ctx.task(), ctx.curveOrder(), ctx.gamma_i(), ctx.x_i(), ctx.Gamma_i(), ctx.X_i(), mapped, ctx.r2StartNs());
     }
 
     private CompletableFuture<Void> continuePresignAfterR2(PresignR2Bundle bundle) {
@@ -3817,7 +3872,14 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
     }
 
-    private void finalizeSignatureAsInitiator(OnlineContext ctx) {
+    void finalizeSignatureAsInitiator(CggmpOnlineContext ctx) {
+        if (ctx == null) {
+            return;
+        }
+        finalizeSignatureAsInitiator(new OnlineContext(ctx.task(), ctx.curveOrder(), ctx.sigma_i()));
+    }
+
+    void finalizeSignatureAsInitiator(OnlineContext ctx) {
         List<Integer> offenders = findInvalidSigmaShares(ctx.task);
         if (!offenders.isEmpty()) {
             for (int offender : offenders) {

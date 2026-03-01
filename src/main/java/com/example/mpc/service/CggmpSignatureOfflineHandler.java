@@ -182,9 +182,12 @@ final class CggmpSignatureOfflineHandler {
                                 BigInteger Fhat_ji = encBetaHat.c;
                                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
                                         Secp256k1CurveUtils.G(),
+                                        Gamma_i,
                                         pk.n,
                                         task.paillier.getPublicKeyInfo().n,
                                         K_peer,
+                                        D_ji,
+                                        F_ji,
                                         ctx.gamma_i(),
                                         beta,
                                         encNegBeta.r,
@@ -195,9 +198,12 @@ final class CggmpSignatureOfflineHandler {
                                 );
                                 PiAffGProof proofHat = PresignProofs.createAffGProofNegY(
                                         Secp256k1CurveUtils.G(),
+                                        X_i,
                                         pk.n,
                                         task.paillier.getPublicKeyInfo().n,
                                         K_peer,
+                                        Dhat_ji,
+                                        Fhat_ji,
                                         x_i,
                                         betaHat,
                                         encNegBetaHat.r,
