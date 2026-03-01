@@ -362,8 +362,17 @@ public final class CggmpSignatureOfflineHandler {
         data.put("B2", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(B2)));
         data.put("encElgProofK", CggmpCodecUtils.encodePiEncElgProof(encElgK));
         data.put("encElgProofG", CggmpCodecUtils.encodePiEncElgProof(encElgG));
-        data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(task.paillier.getPublicKeyInfo()));
-        data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(task.zkSetup));
+        Map<String, Object> pkMap = CggmpCodecUtils.encodePaillierPublicKey(task.paillier.getPublicKeyInfo());
+        Map<String, Object> zkMap = CggmpCodecUtils.encodeZkSetup(task.zkSetup);
+        data.put("paillierPublicKey", pkMap);
+        data.put("zkSetup", zkMap);
+        if (logger.isDebugEnabled()) {
+            String pkHash = CggmpSignaturePresignHandler.hashJsonMap(pkMap);
+            String zkHash = CggmpSignaturePresignHandler.hashJsonMap(zkMap);
+            int pkBits = task.paillier == null || task.paillier.getPublicKeyInfo() == null ? -1 : task.paillier.getPublicKeyInfo().bitLength;
+            logger.debug("Presign R1 send: taskId={}, senderId={}, pkHash={}, zkHash={}, pkBits={}",
+                    task.taskId, svc.nodeId, pkHash, zkHash, pkBits);
+        }
         return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
                         () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_PRESIGN_R1, data)),
                         Constants.SIGNATURE_BROADCAST_RETRY_COUNT,

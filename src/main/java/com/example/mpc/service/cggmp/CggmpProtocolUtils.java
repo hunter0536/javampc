@@ -69,11 +69,20 @@ public final class CggmpProtocolUtils {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             md.update(task.executionId.getBytes(StandardCharsets.UTF_8));
             md.update(task.taskId.getBytes(StandardCharsets.UTF_8));
-            for (Map.Entry<Integer, String> e : task.commitHashes.entrySet()) {
+            int count = 0;
+            java.util.SortedMap<Integer, String> ordered = new java.util.TreeMap<>(task.commitHashes);
+            for (Map.Entry<Integer, String> e : ordered.entrySet()) {
+                count++;
                 md.update(String.valueOf(e.getKey()).getBytes(StandardCharsets.UTF_8));
                 md.update(e.getValue().getBytes(StandardCharsets.UTF_8));
             }
-            return HexUtils.bytesToHex(md.digest());
+            String out = HexUtils.bytesToHex(md.digest());
+            if (count < task.participants.size()) {
+                org.slf4j.LoggerFactory.getLogger(CggmpProtocolUtils.class)
+                        .debug("AUX echo hash computed with incomplete commits: taskId={}, executionId={}, commits={}/{}",
+                                task.taskId, task.executionId, count, task.participants.size());
+            }
+            return out;
         } catch (Exception e) {
             throw new RuntimeException("Failed to compute AUX echo hash", e);
         }

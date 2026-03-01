@@ -94,7 +94,7 @@ public final class CggmpSignatureOnlineHandler {
                 }, ThreadPoolUtil.getIoThreadPool()))
                 .thenCompose(ctx -> {
                     if (svc.nodeId == ctx.task().initiatorId) {
-                        if (verifySigmaShare(ctx.task(), svc.nodeId, ctx.sigma_i())) {
+                        if (!verifySigmaShare(ctx.task(), svc.nodeId, ctx.sigma_i())) {
                             svc.failSignatureTask(ctx.task(), "Local signature share verification failed");
                             svc.signatureInProgress.set(false);
                             svc.clearPresignAll(ctx.task());
@@ -310,7 +310,7 @@ public final class CggmpSignatureOnlineHandler {
             PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
             ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
             MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
-            if (CggmpSignatureKeyValidator.validatePaillierPublicKey(publicKey)) {
+            if (!CggmpSignatureKeyValidator.validatePaillierPublicKey(publicKey)) {
                 logger.warn("Invalid Paillier public key for KA from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
@@ -328,7 +328,7 @@ public final class CggmpSignatureOnlineHandler {
                 svc.failSignatureTask(task, "Missing KA MtA initiator proofs");
                 return;
             }
-            if (CggmpSignatureKeyValidator.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
+            if (!CggmpSignatureKeyValidator.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
                 logger.warn("Inconsistent Paillier key/zkSetup for KA from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
@@ -550,7 +550,7 @@ public final class CggmpSignatureOnlineHandler {
             PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
             ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
             MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
-            if (CggmpSignatureKeyValidator.validatePaillierPublicKey(publicKey)) {
+            if (!CggmpSignatureKeyValidator.validatePaillierPublicKey(publicKey)) {
                 logger.warn("Invalid Paillier public key for ST from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
@@ -568,7 +568,7 @@ public final class CggmpSignatureOnlineHandler {
                 svc.failSignatureTask(task, "Missing ST MtA initiator proofs");
                 return;
             }
-            if (CggmpSignatureKeyValidator.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
+            if (!CggmpSignatureKeyValidator.ensurePeerKeyConsistency(task, initiatorId, publicKey, zkSetup)) {
                 logger.warn("Inconsistent Paillier key/zkSetup for ST from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
                 evidence.put("paillierPublicKey", pkMap);
@@ -691,7 +691,7 @@ public final class CggmpSignatureOnlineHandler {
             return;
         }
         BigInteger sigma = new BigInteger(sHex, 16);
-        if (verifySigmaShare(task, senderId, sigma)) {
+        if (!verifySigmaShare(task, senderId, sigma)) {
             Map<String, Object> ev = new HashMap<>();
             ev.put("sigma", sHex);
             ev.put("r", task.r == null ? null : HexUtils.toHex(task.r));

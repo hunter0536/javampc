@@ -64,8 +64,8 @@ app:
     refresh:
       paillierBits: 3072 # Paillier 密钥位数（生产环境推荐值：≥3072，提供足够安全强度）
     aux:
-      paillierBits: 3072 # Paillier 密钥位数（生产环境推荐值：≥3072，提供足够安全强度）
-      minPaillierBitsForProof: 3071 # 允许的最小 Paillier 模数位数（配合 3072 位目标）
+      paillierBits: 1536 # Paillier 密钥位数（生产环境推荐值：≥3072，提供足够安全强度）
+      minPaillierBitsForProof: 1535 # =paillierBits-1 允许的最小 Paillier 模数位数（配合 3072 位目标）
       autoCheckIntervalSeconds: 60 # 自动 AUX 轮询间隔（秒）
 
 # MPC 全局参数

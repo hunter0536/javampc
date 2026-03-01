@@ -437,6 +437,7 @@ public class NodeService {
         RbcState state = rbcStates.get(messageId);
         if (state == null) {
             pendingRbcEchoes.computeIfAbsent(messageId, k -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(senderId);
+            logger.debug("RBC echo pending: msgId={}, senderId={}, type={}", messageId, senderId, typeObj);
             return;
         }
         state.echoes.add(senderId);
@@ -444,6 +445,7 @@ public class NodeService {
         int quorum = reliableBroadcastQuorum > 0 ? reliableBroadcastQuorum : (2 * f + 1);
         if (!state.deliveredOnce && state.echoes.size() >= quorum) {
             state.deliveredOnce = true;
+            logger.debug("RBC delivered: msgId={}, type={}, echoes={}, quorum={}", messageId, typeObj, state.echoes.size(), quorum);
             state.delivered.complete(null);
         }
     }
@@ -465,6 +467,7 @@ public class NodeService {
         if (message.rbc) {
             String expected = message.rbcHash != null ? message.rbcHash : computeRbcHash(message);
             if (message.rbcHash != null && !message.rbcHash.equals(expected)) {
+                logger.warn("RBC hash mismatch: msgId={}, type={}, senderId={}", message.messageId, message.type, senderId);
                 return CompletableFuture.completedFuture(null);
             }
             RbcState state = rbcStates.computeIfAbsent(message.messageId, id -> new RbcState(message));
@@ -474,6 +477,16 @@ public class NodeService {
             java.util.Set<Integer> pending = pendingRbcEchoes.remove(message.messageId);
             if (pending != null && state != null) {
                 state.echoes.addAll(pending);
+            }
+            if (state != null) {
+                logger.debug("RBC received: msgId={}, type={}, senderId={}, echoes={}", message.messageId, message.type, senderId, state.echoes.size());
+                int f = Math.max(0, (nodesCount - 1) / 3);
+                int quorum = reliableBroadcastQuorum > 0 ? reliableBroadcastQuorum : (2 * f + 1);
+                if (!state.deliveredOnce && state.echoes.size() >= quorum) {
+                    state.deliveredOnce = true;
+                    logger.debug("RBC delivered: msgId={}, type={}, echoes={}, quorum={}", message.messageId, message.type, state.echoes.size(), quorum);
+                    state.delivered.complete(null);
+                }
             }
             broadcastRbcEcho(message);
             return state == null ? CompletableFuture.completedFuture(null) : state.delivered.thenCompose(v -> dispatchToHandlers(senderId, message));

@@ -109,8 +109,10 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             if (!auxAutoTriggered.compareAndSet(false, true)) {
                 return;
             }
+            logAuxExecutorStats("AUX init");
             nodeService.waitForNetworkReady()
                     .thenRun(() -> {
+                        logAuxExecutorStats("AUX network ready");
                         runAuxAutoCheck();
                         long interval = Math.max(5, auxAutoCheckIntervalSeconds);
                         auxScheduler.scheduleWithFixedDelay(this::runAuxAutoCheck, interval, interval, TimeUnit.SECONDS);
@@ -128,6 +130,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         }
         boolean asyncStarted = false;
         try {
+            logAuxExecutorStats("AUX auto check");
             int leaderId = resolveAuxAutoLeaderId();
 
             boolean hasAux = loadLatestAuxInfo(nodeId) != null;
@@ -148,6 +151,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             asyncStarted = true;
             waitForAuxStatusAsync()
                     .thenRun(() -> {
+                        logAuxExecutorStats("AUX status gathered");
                         long nowMs = System.currentTimeMillis();
                         List<Integer> missing = new ArrayList<>();
                         List<Integer> noAux = new ArrayList<>();
@@ -299,6 +303,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     public CompletableFuture<Void> startAuxProcess(String taskId) {
         logger.info("=================== startAuxProcess START: taskId={} ===================", taskId);
         final long auxStartNs = System.nanoTime();
+        logAuxExecutorStats("AUX start task " + taskId);
         CggmpAuxTask task = auxTasks.get(taskId);
         if (task == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Aux task not found"));
@@ -331,6 +336,16 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                 logger.error("Error in CGGMP AUX process", ex);
             }
         });
+    }
+
+    private void logAuxExecutorStats(String stage) {
+        java.util.concurrent.ExecutorService pool = ThreadPoolUtil.getAuxThreadPool();
+        if (pool instanceof java.util.concurrent.ThreadPoolExecutor tpe) {
+            logger.debug("AUX executor stats [{}]: poolSize={}, active={}, queued={}, completed={}",
+                    stage, tpe.getPoolSize(), tpe.getActiveCount(), tpe.getQueue().size(), tpe.getCompletedTaskCount());
+        } else {
+            logger.debug("AUX executor stats [{}]: poolType={}", stage, pool.getClass().getName());
+        }
     }
 
     public AuxTaskStatusResponse getAuxTaskStatus(String taskId) {

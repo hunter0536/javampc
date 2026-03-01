@@ -45,6 +45,8 @@ public final class CggmpAuxProtocolHandler {
             logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, svc.auxPaillierBits);
             task.paillier = paillier;
             long pedStart = System.nanoTime();
+            logger.debug("AUX Pedersen/ZK setup start: taskId={}, executionId={}, bits={}",
+                    task.taskId, task.executionId, paillier.getPublicKeyInfo().bitLength);
             ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength);
             logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength);
             task.hatN = ped.zk().hatN();
@@ -57,8 +59,12 @@ public final class CggmpAuxProtocolHandler {
             task.rho.put(svc.nodeId, rho_i);
             task.u.put(svc.nodeId, u_i);
 
+            long prmStart = System.nanoTime();
+            logger.debug("AUX PRM proof start: taskId={}, executionId={}, senderId={}", task.taskId, task.executionId, svc.nodeId);
             PiPrmProof prmProof = RefreshProofs.createPrmProof(task.hatN, task.s, task.t, task.pedersenLambda,
                     CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "PRM"));
+            logger.debug("AUX PRM proof generated in {} ms (taskId={}, executionId={}, senderId={})",
+                    (System.nanoTime() - prmStart) / 1_000_000, task.taskId, task.executionId, svc.nodeId);
             task.prmProof = prmProof;
 
             String vCommit = CggmpProtocolUtils.computeAuxCommitHash(task.executionId, task.taskId, svc.nodeId,
@@ -72,6 +78,8 @@ public final class CggmpAuxProtocolHandler {
             r1.put("executionId", task.executionId);
             r1.put("senderId", svc.nodeId);
             r1.put("V", vCommit);
+            logger.debug("AUX R1 broadcast: taskId={}, executionId={}, senderId={}, V.len={}",
+                    task.taskId, task.executionId, svc.nodeId, vCommit == null ? -1 : vCommit.length());
             CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1, r1)),
                     logger, "CGGMP_AUX_R1_RBC");
             return new AuxContext(task, paillier, prmProof, rho_i, u_i);
@@ -106,6 +114,8 @@ public final class CggmpAuxProtocolHandler {
                                 r1Echo.put("executionId", task.executionId);
                                 r1Echo.put("senderId", svc.nodeId);
                                 r1Echo.put("hash", echo);
+                                logger.debug("AUX R1 echo retry: taskId={}, executionId={}, senderId={}, hash.len={}",
+                                        task.taskId, task.executionId, svc.nodeId, echo.length());
                                 CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
                                         logger, "CGGMP_AUX_R1_ECHO_RETRY");
                             }
@@ -124,6 +134,7 @@ public final class CggmpAuxProtocolHandler {
                     r2.put("prmProof", CggmpCodecUtils.encodePiPrmProof(ctx.prmProof));
                     r2.put("rho", HexUtils.bytesToHex(ctx.rho));
                     r2.put("u", HexUtils.bytesToHex(ctx.u));
+                    logger.debug("AUX R2 broadcast: taskId={}, executionId={}, senderId={}", task.taskId, task.executionId, svc.nodeId);
                     CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R2, r2)),
                             logger, "CGGMP_AUX_R2");
                 }, auxExecutorService).thenApply(v -> ctx))
@@ -156,6 +167,8 @@ public final class CggmpAuxProtocolHandler {
                     r3.put("senderId", svc.nodeId);
                     r3.put("modProof", CggmpCodecUtils.encodeBiPrimeProof(modProof));
                     r3.put("facProofs", facProofs);
+                    logger.debug("AUX R3 broadcast: taskId={}, executionId={}, senderId={}, facProofs={}",
+                            task.taskId, task.executionId, svc.nodeId, facProofs.size());
                     CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R3, r3)),
                             logger, "CGGMP_AUX_R3");
                 }, auxExecutorService).thenApply(v -> ctx))

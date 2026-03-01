@@ -24,6 +24,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 public final class CggmpSignaturePresignHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpSignaturePresignHandler.class);
@@ -86,6 +88,19 @@ public final class CggmpSignaturePresignHandler {
         }
     }
 
+    static String hashJsonMap(Object map) {
+        if (map == null) {
+            return "null";
+        }
+        try {
+            String json = JsonUtils.encodeAsJson(map);
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return HexUtils.bytesToHex(md.digest(json.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            return "error";
+        }
+    }
+
     void handlePresignR1(int senderId, Object data) {
         Map<?, ?> dataMap = CggmpProtocolUtils.asMap(data);
         if (dataMap == null) {
@@ -136,7 +151,23 @@ public final class CggmpSignaturePresignHandler {
         PiEncElgProof encElgG = encElgGMap == null ? null : CggmpCodecUtils.decodePiEncElgProof(encElgGMap);
         PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
         ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
-        if (CggmpSignatureKeyValidator.ensurePeerKeyConsistency(task, senderId, publicKey, zkSetup)) {
+        if (logger.isDebugEnabled()) {
+            String pkHash = hashJsonMap(pkMap);
+            String zkHash = hashJsonMap(zkMap);
+            logger.debug("Presign R1 recv: taskId={}, senderId={}, pkHash={}, zkHash={}, pkBits={}",
+                    signatureTaskId, senderId, pkHash, zkHash, publicKey == null ? -1 : publicKey.bitLength);
+        }
+        if (!CggmpSignatureKeyValidator.ensurePeerKeyConsistency(task, senderId, publicKey, zkSetup)) {
+            if (logger.isDebugEnabled()) {
+                String pkHash = hashJsonMap(pkMap);
+                String zkHash = hashJsonMap(zkMap);
+                PaillierEncryption.PublicKey existingKey = task.peerPaillierKeys.get(senderId);
+                ZKSetup existingZk = task.peerZkSetups.get(senderId);
+                String existingPkHash = hashJsonMap(existingKey == null ? null : CggmpCodecUtils.encodePaillierPublicKey(existingKey));
+                String existingZkHash = hashJsonMap(existingZk == null ? null : CggmpCodecUtils.encodeZkSetup(existingZk));
+                logger.debug("Presign R1 key mismatch: taskId={}, senderId={}, existingPkHash={}, recvPkHash={}, existingZkHash={}, recvZkHash={}",
+                        signatureTaskId, senderId, existingPkHash, pkHash, existingZkHash, zkHash);
+            }
             CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "Inconsistent Paillier key/zkSetup (presign R1)", Map.of("paillierPublicKey", pkMap, "zkSetup", zkMap)),
                     logger, "CGGMP_PRESIGN_COMPLAINT");
             svc.failSignatureTask(task, "Inconsistent Paillier key/zkSetup (presign R1)");

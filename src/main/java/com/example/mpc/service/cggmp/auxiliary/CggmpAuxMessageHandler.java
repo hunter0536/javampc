@@ -98,6 +98,9 @@ public final class CggmpAuxMessageHandler {
         }
         task.commitHashes.put(senderIdVal, vCommit);
         task.commitLatch.countDown();
+        String vShort = vCommit.length() > 12 ? vCommit.substring(0, 12) : vCommit;
+        logger.debug("AUX R1 received: taskId={}, senderId={}, V={}, commitReceived={}, commitLatch={}",
+                taskId, senderIdVal, vShort, task.commitHashes.size(), task.commitLatch.getCount());
     }
 
     void handleCggmpAuxR1Echo(int senderId, Object data) {
@@ -129,14 +132,16 @@ public final class CggmpAuxMessageHandler {
             return;
         }
         if (!expected.equals(hash)) {
-            logger.warn("AUX echo mismatch from node {} (task {}): expected={}, received={}",
-                    senderNodeId, taskId, expected, hash);
+            logger.warn("AUX echo mismatch from node {} (task {}): expected={}, received={}, commits={}/{}",
+                    senderNodeId, taskId, expected, hash, task.commitHashes.size(), task.participants.size());
             task.fail("AUX echo mismatch");
             task.errorMessage = "AUX echo mismatch from node " + senderNodeId + " expected=" + expected + " received=" + hash;
             return;
         }
         task.echoReceived.put(senderNodeId, Boolean.TRUE);
         task.echoLatch.countDown();
+        logger.debug("AUX R1 echo received: taskId={}, senderId={}, echoReceived={}, echoLatch={}",
+                taskId, senderNodeId, task.echoReceived.size(), task.echoLatch.getCount());
     }
 
     void handleCggmpAuxR2(int senderId, Object data) {
@@ -169,6 +174,8 @@ public final class CggmpAuxMessageHandler {
         task.peerS.put(senderIdVal, new BigInteger(sStr, 16));
         task.peerT.put(senderIdVal, new BigInteger(tStr, 16));
         task.revealLatch.countDown();
+        logger.debug("AUX R2 received: taskId={}, senderId={}, revealReceived={}, revealLatch={}",
+                taskId, senderIdVal, task.peerHatN.size(), task.revealLatch.getCount());
     }
 
     void handleCggmpAuxR3(int senderId, Object data) {
@@ -233,6 +240,8 @@ public final class CggmpAuxMessageHandler {
         task.peerModProofs.put(senderNodeId, modProof);
         task.peerFacProofs.put(senderNodeId, facProof);
         task.proofLatch.countDown();
+        logger.debug("AUX R3 received: taskId={}, senderId={}, proofsReceived={}, proofLatch={}",
+                taskId, senderNodeId, task.peerModProofs.size(), task.proofLatch.getCount());
     }
 
     void handleCggmpAuxStatus(int senderId, Object data) {
