@@ -8,6 +8,7 @@
 
 - ✅ **完整的 Gennaro DKG**：使用 Gennaro 分布式密钥生成算法，添加遮蔽多项式，提高隐私性和安全性
 - ✅ **CGGMP 分布式签名**：实现完整的 CGGMP/GG20 分布式签名协议
+- ✅ **CGGMP Refresh（份额刷新）**：仅更新私钥份额，群公钥不变（不重新生成 Paillier/Pedersen）
 - ✅ **真正的 CGGMP DKG**：包含 Paillier 同态加密和 Pedersen 承诺的完整 CGGMP 实现
 - ✅ **3-of-5 门限方案**：将私钥分割成 5 个份额，至少需要 3 个份额才能签名
 - ✅ **Netty 高性能 P2P 网络**：使用 Netty 实现高性能 P2P 通信，支持异步非阻塞IO

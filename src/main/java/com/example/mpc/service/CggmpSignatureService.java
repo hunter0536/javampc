@@ -5,6 +5,7 @@ import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.ComplaintDao;
+import com.example.mpc.dao.AuxInfoDao;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.service.cggmp.signature.CggmpSignatureControlHandler;
@@ -38,6 +39,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import com.example.mpc.model.AuxInfo;
 
 @Service
 public class CggmpSignatureService implements NodeService.MessageHandler {
@@ -50,6 +52,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     public KeyShareService keyShareService;
     @Autowired
     public ComplaintDao complaintDao;
+    @Autowired
+    public AuxInfoDao auxInfoDao;
 
     @Value("${node.id}")
     public int nodeId;
@@ -198,6 +202,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         logger.debug("Signature task {} started on node {}", taskId, nodeId);
 
         try {
+            ensureLocalAuxReady(task);
             offlineHandler.initSignatureContext(task);
             logger.debug("Signature task {} context initialized (groupPublicKey={})", taskId, task.groupPublicKey);
         } catch (Exception e) {
@@ -226,6 +231,60 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 logger.debug("CGGMP signature process finished for task {} (status={})", taskId, task.status.get());
             }
         });
+    }
+
+    public AuxInfo ensureLocalAuxReady(Gg20SignatureTask task) {
+        AuxInfo info = auxInfoDao.loadLatestSync(nodeId);
+        if (info == null) {
+            String msg = "Missing auxiliary info on local node " + nodeId;
+            if (task != null) {
+                broadcastComplaint(task, null, msg, java.util.Map.of("nodeId", nodeId));
+                failSignatureTask(task, msg);
+            }
+            throw new RuntimeException(msg);
+        }
+        try {
+            java.util.Map<String, String> auxParams = com.example.mpc.common.util.DbMapUtils.buildAuxParams(info);
+            String auxHash = hashJsonMap(auxParams);
+            String taskId = task == null ? "null" : task.taskId;
+            logger.debug("Loaded local AUX for signature task {} (nodeId={}, auxHash={})", taskId, nodeId, auxHash);
+        } catch (Exception e) {
+            logger.warn("Failed to compute local AUX hash (nodeId={}): {}", nodeId, e.getMessage());
+        }
+        return info;
+    }
+
+    public boolean ensurePeerAuxConsistency(Gg20SignatureTask task, int peerId, java.util.Map<String, String> auxParams) {
+        if (task == null || auxParams == null) {
+            return false;
+        }
+        java.util.Map<String, String> existing = task.peerAuxParams.putIfAbsent(peerId, new java.util.HashMap<>(auxParams));
+        if (existing == null) {
+            String auxHash = hashJsonMap(auxParams);
+            logger.debug("Recorded peer AUX params (taskId={}, peerId={}, auxHash={})", task.taskId, peerId, auxHash);
+            return true;
+        }
+        boolean ok = existing.equals(auxParams);
+        if (!ok) {
+            String incomingHash = hashJsonMap(auxParams);
+            String existingHash = hashJsonMap(existing);
+            logger.warn("Peer AUX mismatch (taskId={}, peerId={}, existingHash={}, incomingHash={})",
+                    task.taskId, peerId, existingHash, incomingHash);
+        }
+        return ok;
+    }
+
+    private static String hashJsonMap(Object map) {
+        if (map == null) {
+            return "null";
+        }
+        try {
+            String json = com.example.mpc.common.util.JsonCodec.toJson(map);
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            return com.example.mpc.common.util.HexUtils.bytesToHex(md.digest(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            return "error";
+        }
     }
 
     public SignatureTaskStatusResponse getSignatureTaskStatus(String taskId) {
@@ -286,9 +345,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public CompletableFuture<Void> broadcastComplaint(Gg20SignatureTask task,
-                                               int offenderId,
-                                               String reason,
-                                               Map<String, Object> evidence) {
+                                                      int offenderId,
+                                                      String reason,
+                                                      Map<String, Object> evidence) {
         return broadcastComplaint(task, Integer.valueOf(offenderId), reason, evidence);
     }
 

@@ -9,7 +9,6 @@ import com.example.mpc.cggmp.proof.PiDecProof;
 import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
-import com.example.mpc.common.util.JsonUtils;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.service.CggmpSignatureService;
@@ -189,8 +188,8 @@ public final class CggmpSignatureEvidenceHandler {
                                            BigInteger claimedD,
                                            Map<?, ?> dMap,
                                            Map<?, ?> fMap) {
-        Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
-        Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
+        Map<Integer, BigInteger> D = CggmpCodecUtils.decodeBigIntegerMap(dMap);
+        Map<Integer, BigInteger> F = CggmpCodecUtils.decodeBigIntegerMap(fMap);
         if (!allPeersPresent(task, senderId, D, F)) {
             return false;
         }
@@ -254,8 +253,8 @@ public final class CggmpSignatureEvidenceHandler {
                 proofs.put(peerId, proof);
             }
             ev.put("affGProofs", CggmpSignaturePresignHandler.encodeAffGProofMap(proofs));
-            ev.put("D_map", JsonUtils.encodeBigIntegerMap(D));
-            ev.put("F_map", JsonUtils.encodeBigIntegerMap(F));
+            ev.put("D_map", CggmpCodecUtils.encodeBigIntegerMap(D));
+            ev.put("F_map", CggmpCodecUtils.encodeBigIntegerMap(F));
             return ev;
         } catch (Exception e) {
             logger.warn("Failed to build AffG delta evidence: {}", e.getMessage());
@@ -300,8 +299,8 @@ public final class CggmpSignatureEvidenceHandler {
                 proofs.put(peerId, proof);
             }
             ev.put("affGProofsHat", CggmpSignaturePresignHandler.encodeAffGProofMap(proofs));
-            ev.put("Dhat_map", JsonUtils.encodeBigIntegerMap(D));
-            ev.put("Fhat_map", JsonUtils.encodeBigIntegerMap(F));
+            ev.put("Dhat_map", CggmpCodecUtils.encodeBigIntegerMap(D));
+            ev.put("Fhat_map", CggmpCodecUtils.encodeBigIntegerMap(F));
             return ev;
         } catch (Exception e) {
             logger.warn("Failed to build AffG chi evidence: {}", e.getMessage());
@@ -322,8 +321,8 @@ public final class CggmpSignatureEvidenceHandler {
                 if (dMap == null || fMap == null) {
                     return false;
                 }
-                Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
-                Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
+                Map<Integer, BigInteger> D = CggmpCodecUtils.decodeBigIntegerMap(dMap);
+                Map<Integer, BigInteger> F = CggmpCodecUtils.decodeBigIntegerMap(fMap);
                 if (allPeersPresent(task, senderId, proofs, D, F)) {
                     return false;
                 }
@@ -360,8 +359,8 @@ public final class CggmpSignatureEvidenceHandler {
                 if (dMap == null || fMap == null) {
                     return false;
                 }
-                Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
-                Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
+                Map<Integer, BigInteger> D = CggmpCodecUtils.decodeBigIntegerMap(dMap);
+                Map<Integer, BigInteger> F = CggmpCodecUtils.decodeBigIntegerMap(fMap);
                 if (allPeersPresent(task, senderId, proofsHat, D, F)) {
                     return false;
                 }

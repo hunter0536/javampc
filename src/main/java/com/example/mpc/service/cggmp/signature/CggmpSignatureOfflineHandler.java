@@ -9,7 +9,6 @@ import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
-import com.example.mpc.common.util.JsonUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
@@ -17,7 +16,7 @@ import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.model.KeyShare;
 import com.example.mpc.service.CggmpSignatureService;
-import com.example.mpc.service.KeyShareCodec;
+import com.example.mpc.common.util.DbMapUtils;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
@@ -329,6 +328,12 @@ public final class CggmpSignatureOfflineHandler {
         initData.put("message", task.message);
         initData.put("initiatorId", task.initiatorId);
         initData.put("participants", new ArrayList<>(task.participants));
+        try {
+            var auxInfo = svc.ensureLocalAuxReady(task);
+            initData.put("auxParams", DbMapUtils.buildAuxParams(auxInfo));
+        } catch (Exception e) {
+            logger.warn("Missing local AUX when broadcasting OFFLINE_INIT for task {}: {}", task.taskId, e.getMessage());
+        }
         return RetryUtils.retryAsync(svc.cggmpScheduler, logger, () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_OFFLINE_INIT, initData)),
                 Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
                 Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
@@ -366,6 +371,12 @@ public final class CggmpSignatureOfflineHandler {
         Map<String, Object> zkMap = CggmpCodecUtils.encodeZkSetup(task.zkSetup);
         data.put("paillierPublicKey", pkMap);
         data.put("zkSetup", zkMap);
+        try {
+            var auxInfo = svc.ensureLocalAuxReady(task);
+            data.put("auxParams", DbMapUtils.buildAuxParams(auxInfo));
+        } catch (Exception e) {
+            logger.warn("Missing local AUX when broadcasting PRESIGN_R1 for task {}: {}", task.taskId, e.getMessage());
+        }
         if (logger.isDebugEnabled()) {
             String pkHash = CggmpSignaturePresignHandler.hashJsonMap(pkMap);
             String zkHash = CggmpSignaturePresignHandler.hashJsonMap(zkMap);
@@ -415,10 +426,10 @@ public final class CggmpSignatureOfflineHandler {
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", svc.nodeId);
         data.put("Gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Gamma)));
-        data.put("D", JsonUtils.encodeBigIntegerMap(D));
-        data.put("Dhat", JsonUtils.encodeBigIntegerMap(Dhat));
-        data.put("F", JsonUtils.encodeBigIntegerMap(F));
-        data.put("Fhat", JsonUtils.encodeBigIntegerMap(Fhat));
+        data.put("D", CggmpCodecUtils.encodeBigIntegerMap(D));
+        data.put("Dhat", CggmpCodecUtils.encodeBigIntegerMap(Dhat));
+        data.put("F", CggmpCodecUtils.encodeBigIntegerMap(F));
+        data.put("Fhat", CggmpCodecUtils.encodeBigIntegerMap(Fhat));
         data.put("affGProofs", CggmpSignaturePresignHandler.encodeAffGProofMap(affG));
         data.put("affGProofsHat", CggmpSignaturePresignHandler.encodeAffGProofMap(affGhat));
         data.put("logProof", CggmpCodecUtils.encodePiLogProof(logProof));
@@ -444,17 +455,32 @@ public final class CggmpSignatureOfflineHandler {
     private void initSignaturePaillier(Gg20SignatureTask task) {
         if (task.paillier == null) {
             long startNs = System.nanoTime();
-            task.paillier = new PaillierEncryption();
+            var auxInfo = svc.ensureLocalAuxReady(task);
+            java.math.BigInteger p = new java.math.BigInteger(auxInfo.getPaillierP(), 16);
+            java.math.BigInteger q = new java.math.BigInteger(auxInfo.getPaillierQ(), 16);
+            java.math.BigInteger n = new java.math.BigInteger(auxInfo.getPaillierN(), 16);
+            java.math.BigInteger g = new java.math.BigInteger(auxInfo.getPaillierG(), 16);
+            task.paillier = new PaillierEncryption(p, q);
+            if (!task.paillier.getPublicKeyInfo().n.equals(n)) {
+                throw new RuntimeException("AUX Paillier n mismatch");
+            }
+            if (!task.paillier.getPublicKeyInfo().g.equals(g)) {
+                throw new RuntimeException("AUX Paillier g mismatch");
+            }
             long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
-            logger.debug("Signature Paillier keygen complete for task {} in {} ms (bitLength={})",
+            logger.debug("Signature Paillier loaded from AUX for task {} in {} ms (bitLength={})",
                     task.taskId, elapsedMs, task.paillier.getPublicKeyInfo().bitLength);
         }
         if (task.zkSetup == null) {
             long startNs = System.nanoTime();
-            task.zkSetup = ZKSetup.generate(task.paillier.getPublicKeyInfo().bitLength);
+            var auxInfo = svc.ensureLocalAuxReady(task);
+            java.math.BigInteger hatN = new java.math.BigInteger(auxInfo.getPedersenHatN(), 16);
+            java.math.BigInteger s = new java.math.BigInteger(auxInfo.getPedersenS(), 16);
+            java.math.BigInteger t = new java.math.BigInteger(auxInfo.getPedersenT(), 16);
+            task.zkSetup = new ZKSetup(hatN, s, t);
             long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
-            logger.debug("Signature ZKSetup generate complete for task {} in {} ms (bitLength={})",
-                    task.taskId, elapsedMs, task.paillier.getPublicKeyInfo().bitLength);
+            logger.debug("Signature ZKSetup loaded from AUX for task {} in {} ms (hatNBits={})",
+                    task.taskId, elapsedMs, hatN.bitLength());
         }
     }
 
@@ -477,14 +503,14 @@ public final class CggmpSignatureOfflineHandler {
             throw new RuntimeException("Key share not found");
         }
         if (task.publicShares == null) {
-            task.publicShares = KeyShareCodec.parsePublicShares(keyShare.getPublicShares());
+            task.publicShares = DbMapUtils.parsePublicShares(keyShare.getPublicShares());
         }
         if (task.indexMap == null) {
-            task.indexMap = KeyShareCodec.parseIndexMap(keyShare.getIndexMap());
+            task.indexMap = DbMapUtils.parseIndexMap(keyShare.getIndexMap());
         }
         if (task.chainCode == null && keyShare.getChainCode() != null) {
             try {
-                task.chainCode = KeyShareCodec.decodeChainCode(keyShare.getChainCode());
+                task.chainCode = DbMapUtils.decodeChainCode(keyShare.getChainCode());
             } catch (Exception e) {
                 logger.warn("Failed to decode chain code for task {}: {}", task.taskId, e.getMessage());
             }
@@ -511,10 +537,21 @@ public final class CggmpSignatureOfflineHandler {
             String signatureTaskId = (String) dataMap.get("signatureTaskId");
             String groupPublicKey = (String) dataMap.get("groupPublicKey");
             String msg = (String) dataMap.get("message");
+            Map<?, ?> auxParams = null;
+            Object auxValue = dataMap.get("auxParams");
+            if (auxValue instanceof Map<?, ?> m) {
+                auxParams = m;
+            }
+            final Map<?, ?> auxParamsFinal = auxParams;
             Integer initiatorId = null;
             Object initiatorValue = dataMap.get("initiatorId");
             if (initiatorValue instanceof Number) {
                 initiatorId = ((Number) initiatorValue).intValue();
+            }
+            if (auxParamsFinal != null) {
+                String auxHash = CggmpSignaturePresignHandler.hashJsonMap(auxParamsFinal);
+                logger.debug("Received OFFLINE_INIT AUX params (taskId={}, senderId={}, initiatorId={}, auxHash={})",
+                        signatureTaskId, senderId, initiatorId, auxHash);
             }
             List<Integer> participants = null;
             Object participantsValue = dataMap.get("participants");
@@ -545,6 +582,20 @@ public final class CggmpSignatureOfflineHandler {
                         }
                         logger.debug("Starting offline phase from OFFLINE_INIT for task {} on node {}", signatureTaskId, svc.nodeId);
                         task.start();
+                        if (auxParamsFinal == null) {
+                            svc.broadcastComplaint(task, resolvedInitiatorId, "Missing AUX params (signature offline init)", Map.of("senderId", senderId));
+                            svc.failSignatureTask(task, "Missing AUX params from initiator " + resolvedInitiatorId);
+                            svc.signatureInProgress.set(false);
+                            return;
+                        }
+                        Map<String, String> auxParamStrings = CggmpSignaturePresignHandler.coerceAuxParams(auxParamsFinal);
+                        if (!svc.ensurePeerAuxConsistency(task, resolvedInitiatorId, auxParamStrings)) {
+                            svc.broadcastComplaint(task, resolvedInitiatorId, "Inconsistent AUX params (signature offline init)", Map.of("auxParams", auxParamsFinal));
+                            svc.failSignatureTask(task, "Inconsistent AUX params from initiator " + resolvedInitiatorId);
+                            svc.signatureInProgress.set(false);
+                            return;
+                        }
+                        svc.ensureLocalAuxReady(task);
                         initSignatureContext(task);
                         svc.presignHandler.drainPendingPresignR1(task);
                         runOfflinePhase(task).exceptionally(ex -> {

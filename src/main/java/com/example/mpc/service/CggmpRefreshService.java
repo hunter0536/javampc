@@ -1,8 +1,6 @@
 package com.example.mpc.service;
 
-import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
-import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.response.RefreshTaskStatusResponse;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
@@ -58,16 +56,12 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     @Value("${app.cggmp.hdEnabled:false}")
     public boolean hdEnabled;
 
-    @Value("${app.cggmp.refresh.paillierBits:3072}")
-    public int refreshPaillierBits;
 
     @Value("${app.cggmp.complaint.logPath:logs/complaints.jsonl}")
     public String complaintLogPath;
 
     public final Map<String, CggmpRefreshTask> refreshTasks = new ConcurrentHashMap<>();
 
-    public volatile PaillierEncryption refreshPaillier;
-    public volatile ZKSetup refreshZkSetup;
 
     public final int nodesCount = Constants.NODES_COUNT;
     public final int threshold = Constants.THRESHOLD;

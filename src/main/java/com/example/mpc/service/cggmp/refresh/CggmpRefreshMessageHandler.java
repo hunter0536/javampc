@@ -3,18 +3,11 @@ package com.example.mpc.service.cggmp.refresh;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
-import com.example.mpc.cggmp.proof.BiPrimeProofValidator;
-import com.example.mpc.cggmp.proof.NoSmallFactorProof;
-import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
-import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
-import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
-import com.example.mpc.common.util.JsonUtils;
+import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.CggmpRefreshTask;
 import com.example.mpc.service.CggmpRefreshService;
@@ -57,12 +50,6 @@ public final class CggmpRefreshMessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", svc.nodeId);
-        data.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(r2.paillierKey));
-        data.put("zkSetup", CggmpCodecUtils.encodeZkSetup(r2.zkSetup));
-        data.put("hatN", r2.hatN.toString(16));
-        data.put("s", r2.s.toString(16));
-        data.put("t", r2.t.toString(16));
-        data.put("prmProof", CggmpCodecUtils.encodePiPrmProof(r2.prmProof));
         data.put("Y", Secp256k1CurveUtils.encodeECPointMap(r2.Y));
         data.put("X", Secp256k1CurveUtils.encodeECPointMap(r2.X));
         data.put("A", Secp256k1CurveUtils.encodeECPointMap(r2.A));
@@ -76,10 +63,8 @@ public final class CggmpRefreshMessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", svc.nodeId);
-        data.put("C", JsonUtils.encodeBigIntegerMap(r3.C));
+        data.put("C", CggmpCodecUtils.encodeBigIntegerMap(r3.C));
         data.put("schProofs", CggmpCodecUtils.encodeSchProofMap(r3.schProofs));
-        data.put("biPrimeProof", CggmpCodecUtils.encodeBiPrimeProof(r3.biPrimeProof));
-        data.put("factorProof", CggmpCodecUtils.encodeNoSmallFactorProof(r3.factorProof));
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R3, data));
     }
 
@@ -124,6 +109,7 @@ public final class CggmpRefreshMessageHandler {
         if (taskId == null || groupPublicKey == null || commit == null) {
             return;
         }
+        logger.debug("Refresh R1 received (taskId={}, senderId={}, commit={})", taskId, senderId, commit);
         int initiatorId = initiatorValue instanceof Number n ? n.intValue() : senderId;
         Set<Integer> participants = new LinkedHashSet<>();
         if (participantsValue instanceof List<?> list) {
@@ -149,6 +135,8 @@ public final class CggmpRefreshMessageHandler {
         if (task.round1Commit.putIfAbsent(senderId, commit) == null && task.round1Latch.getCount() > 0) {
             task.round1Latch.countDown();
         }
+        logger.debug("Refresh R1 stored (taskId={}, senderId={}, round1Latch={})",
+                taskId, senderId, task.round1Latch.getCount());
         if (task.participants.contains(svc.nodeId) && !task.isInProgress() && !task.isCompleted()) {
             svc.startRefreshTask(taskId).exceptionally(ex -> {
                 logger.error("Failed to auto-start refresh task {}: {}", taskId, ex.getMessage());
@@ -173,12 +161,6 @@ public final class CggmpRefreshMessageHandler {
             return;
         }
         try {
-            Map<?, ?> pkMap = (Map<?, ?>) dataMap.get("paillierPublicKey");
-            Map<?, ?> zkMap = (Map<?, ?>) dataMap.get("zkSetup");
-            String hatNHex = (String) dataMap.get("hatN");
-            String sHex = (String) dataMap.get("s");
-            String tHex = (String) dataMap.get("t");
-            Map<?, ?> prmMap = (Map<?, ?>) dataMap.get("prmProof");
             Map<?, ?> yMap = (Map<?, ?>) dataMap.get("Y");
             Map<?, ?> xMap = (Map<?, ?>) dataMap.get("X");
             Map<?, ?> aMap = (Map<?, ?>) dataMap.get("A");
@@ -186,23 +168,18 @@ public final class CggmpRefreshMessageHandler {
             String ridB64 = (String) dataMap.get("rid");
             String uB64 = (String) dataMap.get("u");
 
-            if (pkMap == null || zkMap == null || hatNHex == null || sHex == null || tHex == null || prmMap == null
-                    || yMap == null || xMap == null || aMap == null || xiHex == null || ridB64 == null || uB64 == null) {
+            if (yMap == null || xMap == null || aMap == null || xiHex == null || ridB64 == null || uB64 == null) {
                 return;
             }
 
-            PaillierEncryption.PublicKey pk = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
-            ZKSetup zk = CggmpCodecUtils.decodeZkSetup(zkMap);
-            BigInteger hatN = new BigInteger(hatNHex, 16);
-            BigInteger s = new BigInteger(sHex, 16);
-            BigInteger t = new BigInteger(tHex, 16);
-            PiPrmProof prmProof = CggmpCodecUtils.decodePiPrmProof(prmMap);
             Map<Integer, ECPoint> Y = Secp256k1CurveUtils.decodeECPointMap(yMap);
             Map<Integer, ECPoint> X = Secp256k1CurveUtils.decodeECPointMap(xMap);
             Map<Integer, ECPoint> A = Secp256k1CurveUtils.decodeECPointMap(aMap);
             ECPoint Xi = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(xiHex));
             byte[] rid = Base64.getDecoder().decode(ridB64);
             byte[] u = Base64.getDecoder().decode(uB64);
+            logger.debug("Refresh R2 received (taskId={}, senderId={}, X.size={}, Y.size={}, A.size={}, ridLen={}, uLen={})",
+                    taskId, senderId, X.size(), Y.size(), A.size(), rid.length, u.length);
 
             String commit = task.round1Commit.get(senderId);
             if (commit == null) {
@@ -212,7 +189,7 @@ public final class CggmpRefreshMessageHandler {
                 return;
             }
 
-            String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, senderId, X, Y, A, Xi, pk, zk, hatN, s, t, prmProof, rid, u);
+            String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, senderId, X, Y, A, Xi, rid, u);
             if (!commit.equals(expected)) {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("expectedCommit", expected);
@@ -223,28 +200,14 @@ public final class CggmpRefreshMessageHandler {
                 return;
             }
 
-            if (!CggmpRefreshUtils.validatePaillierPublicKey(pk)) {
-                CggmpProtocolUtils.fireAndForget(broadcastRefreshComplaint(task, senderId, "Invalid Paillier public key",
-                                refreshEvidence(task, senderId, "Invalid Paillier public key", Map.of("n", pk.n.toString(16)))),
-                        logger, "CGGMP_REFRESH_COMPLAINT");
-                task.fail("Invalid Paillier key");
-                return;
-            }
-
-            if (!RefreshProofs.verifyPrmProof(prmProof, hatN, s, t, CggmpRefreshUtils.buildRefreshContext(task.taskId, null, senderId, "PRM"))) {
-                CggmpProtocolUtils.fireAndForget(broadcastRefreshComplaint(task, senderId, "Invalid PiPrm proof",
-                                refreshEvidence(task, senderId, "Invalid PiPrm proof", Map.of("hatN", hatN.toString(16)))),
-                        logger, "CGGMP_REFRESH_COMPLAINT");
-                task.fail("Invalid PiPrm proof");
-                return;
-            }
-
             CggmpRefreshTask.RefreshRound2Data r2 = new CggmpRefreshTask.RefreshRound2Data(
-                    pk, zk, hatN, s, t, prmProof, Y, X, A, Xi, rid, u
+                    Y, X, A, Xi, rid, u
             );
             if (task.round2Data.putIfAbsent(senderId, r2) == null && task.round2Latch.getCount() > 0) {
                 task.round2Latch.countDown();
             }
+            logger.debug("Refresh R2 stored (taskId={}, senderId={}, round2Latch={})",
+                    taskId, senderId, task.round2Latch.getCount());
         } catch (Exception e) {
             logger.error("Failed to handle refresh R2", e);
         }
@@ -268,20 +231,20 @@ public final class CggmpRefreshMessageHandler {
         try {
             Map<?, ?> cMap = (Map<?, ?>) dataMap.get("C");
             Map<?, ?> schMap = (Map<?, ?>) dataMap.get("schProofs");
-            Map<?, ?> biPrimeMap = (Map<?, ?>) dataMap.get("biPrimeProof");
-            Map<?, ?> factorMap = (Map<?, ?>) dataMap.get("factorProof");
-            if (cMap == null || schMap == null || biPrimeMap == null || factorMap == null) {
+            if (cMap == null || schMap == null) {
                 return;
             }
-            Map<Integer, BigInteger> C = JsonUtils.decodeBigIntegerMap(cMap);
+            Map<Integer, BigInteger> C = CggmpCodecUtils.decodeBigIntegerMap(cMap);
             Map<Integer, PiSchProof> schProofs = CggmpCodecUtils.decodeSchProofMap(schMap);
-            BiPrimeBlumProof biPrime = CggmpCodecUtils.decodeBiPrimeProof(biPrimeMap);
-            NoSmallFactorProof factor = CggmpCodecUtils.decodeNoSmallFactorProof(factorMap);
+            logger.debug("Refresh R3 received (taskId={}, senderId={}, C.size={}, schProofs.size={})",
+                    taskId, senderId, C.size(), schProofs.size());
 
-            CggmpRefreshTask.RefreshRound3Data r3 = new CggmpRefreshTask.RefreshRound3Data(C, schProofs, biPrime, factor);
+            CggmpRefreshTask.RefreshRound3Data r3 = new CggmpRefreshTask.RefreshRound3Data(C, schProofs);
             if (task.round3Data.putIfAbsent(senderId, r3) == null && task.round3Latch.getCount() > 0) {
                 task.round3Latch.countDown();
             }
+            logger.debug("Refresh R3 stored (taskId={}, senderId={}, round3Latch={})",
+                    taskId, senderId, task.round3Latch.getCount());
         } catch (Exception e) {
             logger.error("Failed to handle refresh R3", e);
         }
@@ -432,8 +395,7 @@ public final class CggmpRefreshMessageHandler {
             }
             if (r.startsWith("Refresh R1 commit mismatch") || r.startsWith("Refresh commit mismatch")) {
                 if (commit == null || r2 == null) return false;
-                String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, offenderId, r2.X, r2.Y, r2.A, r2.Xi, r2.paillierKey,
-                        r2.zkSetup, r2.hatN, r2.s, r2.t, r2.prmProof, r2.rid, r2.u);
+                String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, offenderId, r2.X, r2.Y, r2.A, r2.Xi, r2.rid, r2.u);
                 if (evidence != null) {
                     Object evCommit = evidence.get("commit");
                     Object evExpected = evidence.get("expectedCommit");
@@ -446,27 +408,8 @@ public final class CggmpRefreshMessageHandler {
                 }
                 return !commit.equals(expected);
             }
-            if (r.startsWith("Invalid Paillier public key")) {
-                return r2 != null && !CggmpRefreshUtils.validatePaillierPublicKey(r2.paillierKey);
-            }
-            if (r.startsWith("Invalid PiPrm proof")) {
-                return r2 != null && !RefreshProofs.verifyPrmProof(r2.prmProof, r2.hatN, r2.s, r2.t,
-                        CggmpRefreshUtils.buildRefreshContext(task.taskId, null, offenderId, "PRM"));
-            }
             if (r.startsWith("Sum of X not identity")) {
                 return r2 != null && !Secp256k1CurveUtils.sumPoints(r2.X).isInfinity();
-            }
-            if (r.startsWith("Invalid Blum proof")) {
-                if (r2 == null || r3 == null) return false;
-                BiPrimeProofValidator biPrimeValidator = new BiPrimeProofValidator();
-                return !biPrimeValidator.verifyProof(r3.biPrimeProof, r2.paillierKey,
-                        CggmpRefreshUtils.buildRefreshContext(task.taskId, task.rid, offenderId, "MOD"));
-            }
-            if (r.startsWith("Invalid NoSmallFactor proof")) {
-                if (r2 == null || r3 == null) return false;
-                NoSmallFactorProofValidator factorValidator = new NoSmallFactorProofValidator(r2.zkSetup);
-                return !factorValidator.verifyProof(r3.factorProof, r2.paillierKey,
-                        CggmpRefreshUtils.buildRefreshContext(task.taskId, task.rid, offenderId, "FAC"));
             }
             if (r.startsWith("Missing Schnorr proof")) {
                 if (r2 == null || r3 == null) return false;
@@ -520,14 +463,14 @@ public final class CggmpRefreshMessageHandler {
     private boolean isRefreshEvidenceKeyAllowed(String key) {
         return switch (key) {
             case "v", "taskId", "offenderId", "reason", "rid",
-                 "expectedCommit", "commit", "peerId", "k", "missingFor", "xSum", "n" -> true;
+                 "expectedCommit", "commit", "peerId", "k", "missingFor", "xSum" -> true;
             default -> false;
         };
     }
 
     private void logComplaintToFile(String taskId, int senderId, Integer offenderId, String reason, Object evidence) {
         try {
-            String evidenceJson = evidence == null ? null : JsonUtils.encodeAsJson(evidence);
+            String evidenceJson = evidence == null ? null : JsonCodec.toJson(evidence);
             svc.complaintDao.save(System.currentTimeMillis(), taskId, senderId, offenderId, reason, evidenceJson);
         } catch (Exception e) {
             logger.warn("Failed to persist complaint: {}", e.getMessage());
@@ -538,19 +481,17 @@ public final class CggmpRefreshMessageHandler {
             if (dir != null) {
                 java.nio.file.Files.createDirectories(dir);
             }
-            StringBuilder sb = new StringBuilder();
-            sb.append('{');
-            sb.append("\"ts\":").append(System.currentTimeMillis()).append(',');
-            sb.append("\"taskId\":\"").append(JsonUtils.escapeJson(taskId)).append("\",");
-            sb.append("\"senderId\":").append(senderId).append(',');
-            sb.append("\"offenderId\":").append(offenderId == null ? "null" : offenderId).append(',');
-            sb.append("\"reason\":\"").append(JsonUtils.escapeJson(reason)).append("\"");
+            java.util.Map<String, Object> line = new java.util.LinkedHashMap<>();
+            line.put("ts", System.currentTimeMillis());
+            line.put("taskId", taskId);
+            line.put("senderId", senderId);
+            line.put("offenderId", offenderId);
+            line.put("reason", reason);
             if (evidence != null) {
-                sb.append(",\"evidence\":").append(JsonUtils.encodeAsJson(evidence));
+                line.put("evidence", evidence);
             }
-            sb.append('}');
-            String line = sb.append(System.lineSeparator()).toString();
-            java.nio.file.Files.writeString(complaintFile, line, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            String lineJson = JsonCodec.toJson(line) + System.lineSeparator();
+            java.nio.file.Files.writeString(complaintFile, lineJson, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
         } catch (Exception e) {
             logger.warn("Failed to log complaint to file: {}", e.getMessage());
         }

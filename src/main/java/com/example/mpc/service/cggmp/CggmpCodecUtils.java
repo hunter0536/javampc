@@ -353,6 +353,24 @@ public final class CggmpCodecUtils {
         return new PiDecProof(A, B, C, z, w, nu);
     }
 
+    public static Map<String, String> encodeBigIntegerMap(Map<Integer, BigInteger> map) {
+        Map<String, String> out = new HashMap<>();
+        for (Map.Entry<Integer, BigInteger> e : map.entrySet()) {
+            out.put(String.valueOf(e.getKey()), e.getValue().toString(16));
+        }
+        return out;
+    }
+
+    public static Map<Integer, BigInteger> decodeBigIntegerMap(Map<?, ?> map) {
+        Map<Integer, BigInteger> out = new HashMap<>();
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            Integer key = Integer.parseInt(String.valueOf(e.getKey()));
+            BigInteger value = new BigInteger(String.valueOf(e.getValue()), 16);
+            out.put(key, value);
+        }
+        return out;
+    }
+
     private static List<String> encodeBigIntegerList(List<BigInteger> list) {
         List<String> out = new ArrayList<>(list.size());
         for (BigInteger v : list) {

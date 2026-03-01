@@ -84,12 +84,22 @@ public final class CggmpDkgProtocolHandler {
                     if (!broadcastInit) {
                         return CompletableFuture.completedFuture(null);
                     }
+                    final long initBroadcastStartNs = System.nanoTime();
                     return delayMs(Constants.DKG_INIT_WAIT_MS)
                             .thenCompose(x -> RetryUtils.retryAsync(svc.dkgScheduler, logger,
                                     () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_INIT, initData)),
                                     Constants.DKG_BROADCAST_RETRY_COUNT,
                                     Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
-                                    "Broadcast CGGMP_DKG_INIT"));
+                                    "Broadcast CGGMP_DKG_INIT"))
+                            .whenComplete((x, ex) -> {
+                                if (ex == null) {
+                                    logger.debug("DKG INIT broadcast completed in {} ms (taskId={})",
+                                            (System.nanoTime() - initBroadcastStartNs) / 1_000_000, taskId);
+                                } else {
+                                    logger.warn("DKG INIT broadcast failed after {} ms (taskId={}): {}",
+                                            (System.nanoTime() - initBroadcastStartNs) / 1_000_000, taskId, ex.getMessage());
+                                }
+                            });
                 })
                 .thenCompose(v -> {
                     long roundsStart = System.nanoTime();
@@ -182,8 +192,23 @@ public final class CggmpDkgProtocolHandler {
         }, dkgExecutorService);
 
         return r1Future
-                .thenCompose(ctx -> waitForDkgLatch(task, task.round1ReceivedLatch, "DKG Round 1 messages")
-                        .thenApply(v -> ctx))
+                .thenCompose(ctx -> {
+                    final long waitStartNs = System.nanoTime();
+                    logger.debug("DKG Round1 wait start (taskId={}, expectedPeers={})",
+                            task.taskId, task.participants.size() - 1);
+                    return waitForDkgLatch(task, task.round1ReceivedLatch, "DKG Round 1 messages")
+                            .whenComplete((v, ex) -> {
+                                long waitMs = (System.nanoTime() - waitStartNs) / 1_000_000;
+                                if (ex == null) {
+                                    logger.debug("DKG Round1 wait done in {} ms (taskId={}, remaining={})",
+                                            waitMs, task.taskId, task.round1ReceivedLatch.getCount());
+                                } else {
+                                    logger.warn("DKG Round1 wait failed after {} ms (taskId={}, remaining={}): {}",
+                                            waitMs, task.taskId, task.round1ReceivedLatch.getCount(), ex.getMessage());
+                                }
+                            })
+                            .thenApply(v -> ctx);
+                })
                 .thenCompose(ctx -> {
                     if (!svc.dkgEchoEnabled) {
                         return CompletableFuture.completedFuture(ctx);

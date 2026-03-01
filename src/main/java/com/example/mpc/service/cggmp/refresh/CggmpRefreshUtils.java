@@ -1,9 +1,6 @@
 package com.example.mpc.service.cggmp.refresh;
 
-import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
-import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.CggmpRefreshTask;
@@ -11,7 +8,6 @@ import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
 import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -33,36 +29,12 @@ public final class CggmpRefreshUtils {
         return out;
     }
 
-    public static BigInteger[] generateRefreshPedersen(int bitLength) {
-        SecureRandom rnd = new SecureRandom();
-        BigInteger p = BigInteger.probablePrime(bitLength / 2, rnd);
-        BigInteger q = BigInteger.probablePrime(bitLength / 2, rnd);
-        while (p.equals(q)) {
-            q = BigInteger.probablePrime(bitLength / 2, rnd);
-        }
-        BigInteger hatN = p.multiply(q);
-        BigInteger t;
-        do {
-            t = new BigInteger(hatN.bitLength(), rnd).mod(hatN);
-        } while (t.signum() == 0 || !t.gcd(hatN).equals(BigInteger.ONE));
-        t = t.modPow(BigInteger.TWO, hatN);
-        BigInteger lambda = new BigInteger(hatN.bitLength(), rnd).mod(hatN);
-        BigInteger s = t.modPow(lambda, hatN);
-        return new BigInteger[]{hatN, s, t, lambda};
-    }
-
     public static String computeRefreshCommit(String taskId,
                                        int senderId,
                                        Map<Integer, ECPoint> X,
                                        Map<Integer, ECPoint> Y,
                                        Map<Integer, ECPoint> A,
                                        ECPoint Xi,
-                                       PaillierEncryption.PublicKey pk,
-                                       ZKSetup zkSetup,
-                                       BigInteger hatN,
-                                       BigInteger s,
-                                       BigInteger t,
-                                       PiPrmProof prmProof,
                                        byte[] rid,
                                        byte[] u) {
         try {
@@ -73,15 +45,6 @@ public final class CggmpRefreshUtils {
             updatePointMap(md, Y);
             updatePointMap(md, A);
             md.update(Secp256k1CurveUtils.encodePoint(Xi));
-            md.update(pk.n.toByteArray());
-            md.update(zkSetup.hatN().toByteArray());
-            md.update(zkSetup.h1().toByteArray());
-            md.update(zkSetup.h2().toByteArray());
-            md.update(hatN.toByteArray());
-            md.update(s.toByteArray());
-            md.update(t.toByteArray());
-            md.update(prmProof.A().toByteArray());
-            md.update(prmProof.z().toByteArray());
             md.update(rid);
             md.update(u);
             return HexUtils.bytesToHex(md.digest());
@@ -117,14 +80,6 @@ public final class CggmpRefreshUtils {
             }
         }
         return rid == null ? new byte[0] : rid;
-    }
-
-    public static boolean validatePaillierPublicKey(PaillierEncryption.PublicKey publicKey) {
-        if (publicKey == null || publicKey.n == null || publicKey.nSquared == null || publicKey.g == null) {
-            return false;
-        }
-        BigInteger q = Secp256k1CurveUtils.n();
-        return publicKey.n.compareTo(q.pow(8)) >= 0;
     }
 
     public static Object maybeDecompressPayload(MessageType type, byte[] bytes) {

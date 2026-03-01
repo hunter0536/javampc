@@ -35,6 +35,7 @@ public class Gg20SignatureTask {
     public final ConcurrentHashMap<Integer, MtAInitiatorMessage> mtaStInitiatorMessages = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.math.BigInteger> peerShares = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.math.BigInteger> mtaBetas = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, java.util.Map<String, String>> peerAuxParams = new ConcurrentHashMap<>();
 
     // 预签名状态 (CGGMP21 三轮预签名)
     public final ConcurrentHashMap<Integer, BigInteger> presignK = new ConcurrentHashMap<>();

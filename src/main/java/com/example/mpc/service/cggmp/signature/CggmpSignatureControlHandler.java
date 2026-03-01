@@ -3,7 +3,7 @@ package com.example.mpc.service.cggmp.signature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.example.mpc.common.util.JsonUtils;
+import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.service.CggmpSignatureService;
 
@@ -82,7 +82,7 @@ public final class CggmpSignatureControlHandler {
 
     private void logComplaintToFile(String taskId, int senderId, Integer offenderId, String reason, Object evidence) {
         try {
-            String evidenceJson = evidence == null ? null : JsonUtils.encodeAsJson(evidence);
+            String evidenceJson = evidence == null ? null : JsonCodec.toJson(evidence);
             svc.complaintDao.save(System.currentTimeMillis(), taskId, senderId, offenderId, reason, evidenceJson);
         } catch (Exception e) {
             logger.warn("Failed to persist complaint: {}", e.getMessage());
@@ -93,19 +93,17 @@ public final class CggmpSignatureControlHandler {
             if (dir != null) {
                 java.nio.file.Files.createDirectories(dir);
             }
-            StringBuilder sb = new StringBuilder();
-            sb.append('{');
-            sb.append("\"ts\":").append(System.currentTimeMillis()).append(',');
-            sb.append("\"taskId\":\"").append(JsonUtils.escapeJson(taskId)).append("\",");
-            sb.append("\"senderId\":").append(senderId).append(',');
-            sb.append("\"offenderId\":").append(offenderId == null ? "null" : offenderId).append(',');
-            sb.append("\"reason\":\"").append(JsonUtils.escapeJson(reason)).append("\"");
+            java.util.Map<String, Object> line = new java.util.LinkedHashMap<>();
+            line.put("ts", System.currentTimeMillis());
+            line.put("taskId", taskId);
+            line.put("senderId", senderId);
+            line.put("offenderId", offenderId);
+            line.put("reason", reason);
             if (evidence != null) {
-                sb.append(",\"evidence\":").append(JsonUtils.encodeAsJson(evidence));
+                line.put("evidence", evidence);
             }
-            sb.append('}');
-            String line = sb.append(System.lineSeparator()).toString();
-            java.nio.file.Files.writeString(complaintFile, line,
+            String lineJson = JsonCodec.toJson(line) + System.lineSeparator();
+            java.nio.file.Files.writeString(complaintFile, lineJson,
                     java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
         } catch (Exception e) {
             logger.warn("Failed to log complaint to file: {}", e.getMessage());

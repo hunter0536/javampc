@@ -1,17 +1,33 @@
-package com.example.mpc.service;
+package com.example.mpc.common.util;
 
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
-import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.model.AuxInfo;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-public final class KeyShareCodec {
-    private KeyShareCodec() {
+public final class DbMapUtils {
+
+    private DbMapUtils() {
+    }
+
+    public static Map<String, String> buildAuxParams(AuxInfo info) {
+        if (info == null) {
+            return null;
+        }
+        Map<String, String> out = new HashMap<>();
+        out.put("paillierN", info.getPaillierN());
+        out.put("paillierG", info.getPaillierG());
+        out.put("paillierBitLength", info.getPaillierBitLength() == null ? null : String.valueOf(info.getPaillierBitLength()));
+        out.put("pedersenHatN", info.getPedersenHatN());
+        out.put("pedersenS", info.getPedersenS());
+        out.put("pedersenT", info.getPedersenT());
+        return out;
     }
 
     public static Map<Integer, ECPoint> parsePublicShares(String json) {
@@ -34,7 +50,11 @@ public final class KeyShareCodec {
         return out;
     }
 
-    public static Map<String, String> parseStringMap(String json) {
+    public static byte[] decodeChainCode(String hex) {
+        return HexUtils.hexToBytes(hex);
+    }
+
+    private static Map<String, String> parseStringMap(String json) {
         Map<String, String> out = new LinkedHashMap<>();
         if (json == null) {
             return out;
@@ -60,10 +80,6 @@ public final class KeyShareCodec {
             out.put(k, v);
         }
         return out;
-    }
-
-    public static byte[] decodeChainCode(String hex) {
-        return HexUtils.hexToBytes(hex);
     }
 
     private static List<String> splitTopLevel(String s) {

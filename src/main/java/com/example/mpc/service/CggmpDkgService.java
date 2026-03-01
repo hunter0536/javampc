@@ -2,7 +2,7 @@ package com.example.mpc.service;
 
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
-import com.example.mpc.common.util.JsonUtils;
+import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.AuxInfoDao;
@@ -199,18 +199,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     }
 
     private String encodeStringMapAsJson(Map<String, String> map) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{");
-        boolean first = true;
-        for (Map.Entry<String, String> e : map.entrySet()) {
-            if (!first) {
-                sb.append(",");
-            }
-            first = false;
-            sb.append("\"").append(JsonUtils.escapeJson(e.getKey())).append("\":");
-            sb.append("\"").append(JsonUtils.escapeJson(e.getValue())).append("\"");
-        }
-        sb.append("}");
-        return sb.toString();
+        return JsonCodec.toJson(map);
     }
 }

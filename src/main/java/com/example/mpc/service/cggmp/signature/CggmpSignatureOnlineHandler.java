@@ -47,6 +47,40 @@ public final class CggmpSignatureOnlineHandler {
         this.svc = svc;
     }
 
+    private void logProgress(Gg20SignatureTask task, String stage) {
+        if (task == null || !logger.isDebugEnabled()) {
+            return;
+        }
+        int participants = Math.max(0, task.participants.size() - 1);
+        long gammaCommit = participants - task.gammaCommitLatch.getCount();
+        long gammaOpen = participants - task.gammaLatch.getCount();
+        long presignR1Echo = participants - task.presignR1EchoLatch.getCount();
+        long presignR2 = participants - task.presignR2Latch.getCount();
+        long kaInit = participants - task.kaInitLatch.getCount();
+        long kaResp = participants - task.kaResponseLatch.getCount();
+        long uCommit = participants - task.uCommitLatch.getCount();
+        long uShare = participants - task.uShareLatch.getCount();
+        long uOpen = participants - task.uOpenLatch.getCount();
+        long stInit = participants - task.stInitLatch.getCount();
+        long stResp = participants - task.stResponseLatch.getCount();
+        long sShare = participants - task.sShareLatch.getCount();
+        logger.debug("Signature progress [{}] taskId={} gammaCommit={}/{}, gammaOpen={}/{}, presignR1Echo={}/{}, presignR2={}/{}, kaInit={}/{}, kaResp={}/{}, uCommit={}/{}, uShare={}/{}, uOpen={}/{}, stInit={}/{}, stResp={}/{}, sShare={}/{}",
+                stage,
+                task.taskId,
+                gammaCommit, participants,
+                gammaOpen, participants,
+                presignR1Echo, participants,
+                presignR2, participants,
+                kaInit, participants,
+                kaResp, participants,
+                uCommit, participants,
+                uShare, participants,
+                uOpen, participants,
+                stInit, participants,
+                stResp, participants,
+                sShare, participants);
+    }
+
     public CompletableFuture<Void> runOnlinePhase(Gg20SignatureTask task) {
         logger.debug("Signature online phase start for task {} (node={}, initiator={})",
                 task.taskId, svc.nodeId, task.initiatorId);
@@ -56,6 +90,13 @@ public final class CggmpSignatureOnlineHandler {
                     try {
                         if (task.messageHash == null) {
                             throw new RuntimeException("Missing message hash for online phase");
+                        }
+                        if (logger.isDebugEnabled()) {
+                            logger.debug("Online phase inputs: taskId={}, messageHash={}, presignatureReady={}, offlineDoneLatch={}",
+                                    task.taskId,
+                                    HexUtils.bytesToHex(task.messageHash),
+                                    task.presignature != null,
+                                    task.offlineDoneLatch.getCount());
                         }
 
                         BigInteger curveOrder = Secp256k1CurveUtils.n();
@@ -76,6 +117,7 @@ public final class CggmpSignatureOnlineHandler {
                         if (task.r.signum() == 0) {
                             throw new RuntimeException("Invalid r (zero), restart signature");
                         }
+                        logger.debug("Online phase r computed for task {} (r={})", task.taskId, task.r.toString(16));
 
                         BigInteger e = new BigInteger(1, task.messageHash).mod(curveOrder);
                         BigInteger chiTilde = task.presignature.chiTilde();
@@ -138,9 +180,12 @@ public final class CggmpSignatureOnlineHandler {
             return;
         }
         task.messageHash = Base64.getDecoder().decode(hashString);
+        logger.debug("Received ONLINE_INIT (taskId={}, senderId={}, messageHash={})",
+                signatureTaskId, senderId, HexUtils.bytesToHex(task.messageHash));
         if (!task.participants.contains(svc.nodeId)) {
             return;
         }
+        logProgress(task, "online_init");
         runOnlinePhase(task).exceptionally(ex -> {
             logger.error("Failed online phase for signature task {}: {}", signatureTaskId, ex.getMessage());
             return null;
@@ -212,6 +257,9 @@ public final class CggmpSignatureOnlineHandler {
             if (task.gammaCommitLatch.getCount() > 0) {
                 task.gammaCommitLatch.countDown();
             }
+            logger.debug("Gamma commit stored (taskId={}, senderId={}, gammaCommitLatch={})",
+                    taskId, senderId, task.gammaCommitLatch.getCount());
+            logProgress(task, "gamma_commit");
         } catch (Exception e) {
             logger.error("Failed to handle CGGMP_SIGN_GAMMA_COMMIT from node {}: {}", senderId, e.getMessage());
         }
@@ -276,6 +324,9 @@ public final class CggmpSignatureOnlineHandler {
             if (task.gammaLatch.getCount() > 0) {
                 task.gammaLatch.countDown();
             }
+            logger.debug("Gamma open stored (taskId={}, senderId={}, gammaLatch={})",
+                    taskId, senderId, task.gammaLatch.getCount());
+            logProgress(task, "gamma_open");
         } catch (Exception e) {
             logger.error("Failed to handle CGGMP_SIGN_GAMMA_OPEN from node {}: {}", senderId, e.getMessage());
         }
@@ -307,9 +358,21 @@ public final class CggmpSignatureOnlineHandler {
             if (pkMap == null || zkMap == null || msgMap == null) {
                 return;
             }
+            logger.debug("KA init received (taskId={}, initiatorId={}, receiverId={})", taskId, initiatorId, receiverId);
             PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
             ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
             MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
+            if (!CggmpSignatureKeyValidator.ensurePeerKeyMatchesAux(task, initiatorId, publicKey, zkSetup)) {
+                logger.warn("AUX params mismatch with Paillier/zkSetup for KA from node {} task {}", initiatorId, taskId);
+                Map<String, Object> evidence = new HashMap<>();
+                evidence.put("auxHash", CggmpSignatureKeyValidator.computeAuxHash(task.peerAuxParams.get(initiatorId)));
+                evidence.put("pkHash", CggmpSignatureKeyValidator.computePkHash(publicKey));
+                evidence.put("zkHash", CggmpSignatureKeyValidator.computeZkHash(zkSetup));
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "AUX params mismatch with Paillier/zkSetup (KA)", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
+                svc.failSignatureTask(task, "AUX params mismatch with Paillier/zkSetup (KA)");
+                return;
+            }
             if (!CggmpSignatureKeyValidator.validatePaillierPublicKey(publicKey)) {
                 logger.warn("Invalid Paillier public key for KA from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
@@ -359,6 +422,9 @@ public final class CggmpSignatureOnlineHandler {
             if (task.kaInitLatch.getCount() > 0) {
                 task.kaInitLatch.countDown();
             }
+            logger.debug("KA init stored (taskId={}, initiatorId={}, kaInitLatch={})",
+                    taskId, initiatorId, task.kaInitLatch.getCount());
+            logProgress(task, "ka_init");
 
             Map<String, Object> resp = new HashMap<>();
             resp.put("taskId", taskId);
@@ -427,6 +493,9 @@ public final class CggmpSignatureOnlineHandler {
             if (task.kaResponseLatch.getCount() > 0) {
                 task.kaResponseLatch.countDown();
             }
+            logger.debug("KA response stored (taskId={}, responderId={}, kaResponseLatch={})",
+                    taskId, responderId, task.kaResponseLatch.getCount());
+            logProgress(task, "ka_resp");
         } catch (Exception e) {
             logger.error("Failed to handle CGGMP_SIGN_MTA_KA_RESPONSE from node {}: {}", senderId, e.getMessage());
         }
@@ -468,6 +537,9 @@ public final class CggmpSignatureOnlineHandler {
             if (task.uShareLatch.getCount() > 0) {
                 task.uShareLatch.countDown();
             }
+            logger.debug("U share stored (taskId={}, senderId={}, uShareLatch={})",
+                    taskId, senderId, task.uShareLatch.getCount());
+            logProgress(task, "u_share");
         } catch (Exception e) {
             logger.error("Failed to handle CGGMP_SIGN_U_SHARE from node {}: {}", senderId, e.getMessage());
         }
@@ -495,6 +567,9 @@ public final class CggmpSignatureOnlineHandler {
         if (task.uOpenLatch.getCount() > 0) {
             task.uOpenLatch.countDown();
         }
+        logger.debug("U open stored (taskId={}, senderId={}, uOpenLatch={})",
+                taskId, senderId, task.uOpenLatch.getCount());
+        logProgress(task, "u_open");
     }
 
     void handleCggmpSignUCommit(int senderId, Object data) {
@@ -519,6 +594,9 @@ public final class CggmpSignatureOnlineHandler {
         if (task.uCommitLatch.getCount() > 0) {
             task.uCommitLatch.countDown();
         }
+        logger.debug("U commit stored (taskId={}, senderId={}, uCommitLatch={})",
+                taskId, senderId, task.uCommitLatch.getCount());
+        logProgress(task, "u_commit");
     }
 
     void handleCggmpSignMtaStInit(int senderId, Object data) {
@@ -547,9 +625,21 @@ public final class CggmpSignatureOnlineHandler {
             if (pkMap == null || zkMap == null || msgMap == null) {
                 return;
             }
+            logger.debug("ST init received (taskId={}, initiatorId={}, receiverId={})", taskId, initiatorId, receiverId);
             PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
             ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
             MtAInitiatorMessage initiatorMessage = CggmpCodecUtils.decodeMtAInitiatorMessage(msgMap);
+            if (!CggmpSignatureKeyValidator.ensurePeerKeyMatchesAux(task, initiatorId, publicKey, zkSetup)) {
+                logger.warn("AUX params mismatch with Paillier/zkSetup for ST from node {} task {}", initiatorId, taskId);
+                Map<String, Object> evidence = new HashMap<>();
+                evidence.put("auxHash", CggmpSignatureKeyValidator.computeAuxHash(task.peerAuxParams.get(initiatorId)));
+                evidence.put("pkHash", CggmpSignatureKeyValidator.computePkHash(publicKey));
+                evidence.put("zkHash", CggmpSignatureKeyValidator.computeZkHash(zkSetup));
+                CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, initiatorId, "AUX params mismatch with Paillier/zkSetup (ST)", evidence),
+                        logger, "CGGMP_SIGN_COMPLAINT");
+                svc.failSignatureTask(task, "AUX params mismatch with Paillier/zkSetup (ST)");
+                return;
+            }
             if (!CggmpSignatureKeyValidator.validatePaillierPublicKey(publicKey)) {
                 logger.warn("Invalid Paillier public key for ST from node {} task {}", initiatorId, taskId);
                 Map<String, Object> evidence = new HashMap<>();
@@ -599,6 +689,9 @@ public final class CggmpSignatureOnlineHandler {
             if (task.stInitLatch.getCount() > 0) {
                 task.stInitLatch.countDown();
             }
+            logger.debug("ST init stored (taskId={}, initiatorId={}, stInitLatch={})",
+                    taskId, initiatorId, task.stInitLatch.getCount());
+            logProgress(task, "st_init");
 
             Map<String, Object> resp = new HashMap<>();
             resp.put("taskId", taskId);
@@ -667,6 +760,9 @@ public final class CggmpSignatureOnlineHandler {
             if (task.stResponseLatch.getCount() > 0) {
                 task.stResponseLatch.countDown();
             }
+            logger.debug("ST response stored (taskId={}, responderId={}, stResponseLatch={})",
+                    taskId, responderId, task.stResponseLatch.getCount());
+            logProgress(task, "st_resp");
         } catch (Exception e) {
             logger.error("Failed to handle CGGMP_SIGN_MTA_ST_RESPONSE from node {}: {}", senderId, e.getMessage());
         }
@@ -706,6 +802,9 @@ public final class CggmpSignatureOnlineHandler {
         if (task.sShareLatch.getCount() > 0) {
             task.sShareLatch.countDown();
         }
+        logger.debug("S share stored (taskId={}, senderId={}, sShareLatch={})",
+                taskId, senderId, task.sShareLatch.getCount());
+        logProgress(task, "s_share");
     }
 
     private void finalizeSignatureAsInitiator(CggmpOnlineContext ctx) {

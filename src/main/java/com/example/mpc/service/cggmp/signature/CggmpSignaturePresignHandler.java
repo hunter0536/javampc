@@ -8,7 +8,7 @@ import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
-import com.example.mpc.common.util.JsonUtils;
+import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -93,12 +93,26 @@ public final class CggmpSignaturePresignHandler {
             return "null";
         }
         try {
-            String json = JsonUtils.encodeAsJson(map);
+            String json = JsonCodec.toJson(map);
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             return HexUtils.bytesToHex(md.digest(json.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             return "error";
         }
+    }
+
+    static Map<String, String> coerceAuxParams(Map<?, ?> map) {
+        if (map == null) {
+            return null;
+        }
+        Map<String, String> out = new HashMap<>();
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            if (e.getKey() == null) {
+                continue;
+            }
+            out.put(String.valueOf(e.getKey()), e.getValue() == null ? null : String.valueOf(e.getValue()));
+        }
+        return out;
     }
 
     void handlePresignR1(int senderId, Object data) {
@@ -119,6 +133,11 @@ public final class CggmpSignaturePresignHandler {
         Map<?, ?> encElgGMap = CggmpProtocolUtils.asMap(dataMap.get("encElgProofG"));
         Map<?, ?> pkMap = CggmpProtocolUtils.asMap(dataMap.get("paillierPublicKey"));
         Map<?, ?> zkMap = CggmpProtocolUtils.asMap(dataMap.get("zkSetup"));
+        Map<?, ?> auxMap = CggmpProtocolUtils.asMap(dataMap.get("auxParams"));
+        if (auxMap != null) {
+            String auxHash = hashJsonMap(auxMap);
+            logger.debug("Received PRESIGN_R1 AUX params (taskId={}, senderId={}, auxHash={})", signatureTaskId, senderId, auxHash);
+        }
         if (signatureTaskId == null || senderNodeId == null || kHex == null || gHex == null
                 || yHex == null || a1Hex == null || a2Hex == null || b1Hex == null || b2Hex == null) {
             return;
@@ -140,6 +159,12 @@ public final class CggmpSignaturePresignHandler {
         if (pkMap == null || zkMap == null) {
             return;
         }
+        if (auxMap == null) {
+            CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "Missing AUX params (presign R1)", Map.of("senderId", senderId)),
+                    logger, "CGGMP_PRESIGN_COMPLAINT");
+            svc.failSignatureTask(task, "Missing AUX params from node " + senderId);
+            return;
+        }
         BigInteger K = new BigInteger(kHex, 16);
         BigInteger G = new BigInteger(gHex, 16);
         ECPoint Y = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(yHex));
@@ -151,6 +176,23 @@ public final class CggmpSignaturePresignHandler {
         PiEncElgProof encElgG = encElgGMap == null ? null : CggmpCodecUtils.decodePiEncElgProof(encElgGMap);
         PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
         ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
+        Map<String, String> auxParams = coerceAuxParams(auxMap);
+        if (!svc.ensurePeerAuxConsistency(task, senderId, auxParams)) {
+            CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "Inconsistent AUX params (presign R1)", Map.of("auxParams", auxMap)),
+                    logger, "CGGMP_PRESIGN_COMPLAINT");
+            svc.failSignatureTask(task, "Inconsistent AUX params from node " + senderId);
+            return;
+        }
+        if (!CggmpSignatureKeyValidator.ensurePeerKeyMatchesAux(task, senderId, publicKey, zkSetup)) {
+            String auxHash = CggmpSignatureKeyValidator.computeAuxHash(auxParams);
+            String pkHash = CggmpSignatureKeyValidator.computePkHash(publicKey);
+            String zkHash = CggmpSignatureKeyValidator.computeZkHash(zkSetup);
+            CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "AUX params mismatch with Paillier/zkSetup (presign R1)",
+                            Map.of("auxHash", auxHash, "pkHash", pkHash, "zkHash", zkHash)),
+                    logger, "CGGMP_PRESIGN_COMPLAINT");
+            svc.failSignatureTask(task, "AUX params mismatch with Paillier/zkSetup (presign R1)");
+            return;
+        }
         if (logger.isDebugEnabled()) {
             String pkHash = hashJsonMap(pkMap);
             String zkHash = hashJsonMap(zkMap);
@@ -332,10 +374,10 @@ public final class CggmpSignaturePresignHandler {
         BigInteger curveOrder = Secp256k1CurveUtils.n();
         ECPoint Gamma = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(gammaHex));
         task.presignGamma.put(senderId, Gamma);
-        Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
-        Map<Integer, BigInteger> Dhat = JsonUtils.decodeBigIntegerMap(dhMap);
-        Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
-        Map<Integer, BigInteger> Fhat = JsonUtils.decodeBigIntegerMap(fhMap);
+        Map<Integer, BigInteger> D = CggmpCodecUtils.decodeBigIntegerMap(dMap);
+        Map<Integer, BigInteger> Dhat = CggmpCodecUtils.decodeBigIntegerMap(dhMap);
+        Map<Integer, BigInteger> F = CggmpCodecUtils.decodeBigIntegerMap(fMap);
+        Map<Integer, BigInteger> Fhat = CggmpCodecUtils.decodeBigIntegerMap(fhMap);
         BigInteger dForNode = D.get(svc.nodeId);
         BigInteger dhatForNode = Dhat.get(svc.nodeId);
         logger.info("Presign R2 received for task {} from {}: D keys={}, Dhat keys={}, D[node]={}, Dhat[node]={}",

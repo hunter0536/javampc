@@ -10,6 +10,7 @@ import com.example.mpc.common.response.RefreshTaskStatusResponse;
 import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStartResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
+import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDiagnosticsService;
 import com.example.mpc.service.CggmpDkgService;
@@ -161,13 +162,20 @@ public class CggmpController {
                     cggmpSignatureService.getComplaints(taskId, reason, reasonLike, senderId, offenderId, fromTs, toTs, limit, offset);
             StringBuilder sb = new StringBuilder();
             for (com.example.mpc.dao.ComplaintDao.ComplaintRecord r : records) {
-                sb.append("{\"ts\":").append(r.ts())
-                        .append(",\"taskId\":\"").append(escapeJson(r.taskId())).append("\"")
-                        .append(",\"senderId\":").append(r.senderId())
-                        .append(",\"offenderId\":").append(r.offenderId() == null ? "null" : r.offenderId())
-                        .append(",\"reason\":\"").append(escapeJson(r.reason())).append("\"")
-                        .append(",\"evidence\":").append(r.evidence() == null ? "null" : r.evidence())
-                        .append("}\n");
+                java.util.Map<String, Object> line = new java.util.LinkedHashMap<>();
+                line.put("ts", r.ts());
+                line.put("taskId", r.taskId());
+                line.put("senderId", r.senderId());
+                line.put("offenderId", r.offenderId());
+                line.put("reason", r.reason());
+                String evidenceJson = r.evidence();
+                if (evidenceJson != null) {
+                    Object parsed = JsonCodec.parse(evidenceJson);
+                    line.put("evidence", parsed == null ? evidenceJson : parsed);
+                } else {
+                    line.put("evidence", null);
+                }
+                sb.append(JsonCodec.toJson(line)).append("\n");
             }
             return sb.toString();
         });
@@ -213,37 +221,6 @@ public class CggmpController {
             return "\"" + v + "\"";
         }
         return v;
-    }
-
-    private static String escapeJson(String value) {
-        if (value == null) {
-            return "";
-        }
-        StringBuilder out = new StringBuilder(value.length() + 16);
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '\\':
-                    out.append("\\\\");
-                    break;
-                case '"':
-                    out.append("\\\"");
-                    break;
-                case '\n':
-                    out.append("\\n");
-                    break;
-                case '\r':
-                    out.append("\\r");
-                    break;
-                case '\t':
-                    out.append("\\t");
-                    break;
-                default:
-                    out.append(c);
-                    break;
-            }
-        }
-        return out.toString();
     }
 
     /**

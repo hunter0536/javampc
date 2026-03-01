@@ -44,6 +44,7 @@ tasks.named('test') {
 
 tasks.withType(JavaCompile).configureEach {
     options.compilerArgs.add('-Xlint:unchecked')
+    options.compilerArgs.add('-Xlint:deprecation')
 }
 
 pmd {

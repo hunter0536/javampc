@@ -1,11 +1,6 @@
 package com.example.mpc.model;
 
-import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
-import com.example.mpc.cggmp.proof.NoSmallFactorProof;
-import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.proof.PiSchProof;
-import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.enums.TaskStatus;
 import org.bouncycastle.math.ec.ECPoint;
 
@@ -33,14 +28,6 @@ public class CggmpRefreshTask {
     public final ConcurrentHashMap<Integer, String> round1Commit = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, RefreshRound2Data> round2Data = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, RefreshRound3Data> round3Data = new ConcurrentHashMap<>();
-
-    public PaillierEncryption paillier;
-    public ZKSetup zkSetup;
-    public BigInteger pedersenHatN;
-    public BigInteger pedersenS;
-    public BigInteger pedersenT;
-    public BigInteger pedersenLambda;
-    public PiPrmProof prmProof;
 
     public final ConcurrentHashMap<Integer, BigInteger> yShares = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> yPoints = new ConcurrentHashMap<>();
@@ -84,12 +71,6 @@ public class CggmpRefreshTask {
     }
 
     public static class RefreshRound2Data {
-        public final PaillierEncryption.PublicKey paillierKey;
-        public final ZKSetup zkSetup;
-        public final BigInteger hatN;
-        public final BigInteger s;
-        public final BigInteger t;
-        public final PiPrmProof prmProof;
         public final Map<Integer, ECPoint> Y;
         public final Map<Integer, ECPoint> X;
         public final Map<Integer, ECPoint> A;
@@ -97,24 +78,12 @@ public class CggmpRefreshTask {
         public final byte[] rid;
         public final byte[] u;
 
-        public RefreshRound2Data(PaillierEncryption.PublicKey paillierKey,
-                                 ZKSetup zkSetup,
-                                 BigInteger hatN,
-                                 BigInteger s,
-                                 BigInteger t,
-                                 PiPrmProof prmProof,
-                                 Map<Integer, ECPoint> Y,
+        public RefreshRound2Data(Map<Integer, ECPoint> Y,
                                  Map<Integer, ECPoint> X,
                                  Map<Integer, ECPoint> A,
                                  ECPoint Xi,
                                  byte[] rid,
                                  byte[] u) {
-            this.paillierKey = paillierKey;
-            this.zkSetup = zkSetup;
-            this.hatN = hatN;
-            this.s = s;
-            this.t = t;
-            this.prmProof = prmProof;
             this.Y = Y;
             this.X = X;
             this.A = A;
@@ -127,17 +96,11 @@ public class CggmpRefreshTask {
     public static class RefreshRound3Data {
         public final Map<Integer, BigInteger> C;
         public final Map<Integer, PiSchProof> schProofs;
-        public final BiPrimeBlumProof biPrimeProof;
-        public final NoSmallFactorProof factorProof;
 
         public RefreshRound3Data(Map<Integer, BigInteger> C,
-                                 Map<Integer, PiSchProof> schProofs,
-                                 BiPrimeBlumProof biPrimeProof,
-                                 NoSmallFactorProof factorProof) {
+                                 Map<Integer, PiSchProof> schProofs) {
             this.C = C;
             this.schProofs = schProofs;
-            this.biPrimeProof = biPrimeProof;
-            this.factorProof = factorProof;
         }
     }
 }

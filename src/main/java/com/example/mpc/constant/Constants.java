@@ -85,7 +85,7 @@ public class Constants {
      * DKG 初始化等待时间（毫秒）
      * 广播初始化消息前的等待时间，确保其他节点准备就绪
      */
-    public static long DKG_INIT_WAIT_MS = 2000;
+    public static long DKG_INIT_WAIT_MS = 0;
 
     // ==================== 签名协议超时参数 ====================
 

@@ -85,6 +85,8 @@ public final class CggmpDkgMessageHandler {
 
     void onDkgRound1(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
+            logger.debug("Skip DKG Round1: invalid payload type from node {} (type={})", senderId,
+                    data == null ? "null" : data.getClass().getName());
             return;
         }
         String taskId = (String) dataMap.get("taskId");
@@ -92,10 +94,14 @@ public final class CggmpDkgMessageHandler {
         Object senderValue = dataMap.get("senderId");
         String vCommit = (String) dataMap.get("V");
         if (taskId == null || executionId == null || senderValue == null || vCommit == null) {
+            logger.debug("Skip DKG Round1: missing fields (taskId={}, executionId={}, senderId={}, V={}) from node {}",
+                    taskId, executionId, senderValue, vCommit == null ? "null" : "present", senderId);
             return;
         }
         int senderNodeId = ((Number) senderValue).intValue();
         if (senderNodeId != senderId || senderNodeId == svc.nodeId) {
+            logger.debug("Skip DKG Round1: sender mismatch or self (senderId={}, payloadSenderId={}, localNode={})",
+                    senderId, senderNodeId, svc.nodeId);
             return;
         }
         CggmpDkgTask task = svc.dkgTasks.get(taskId);
@@ -104,11 +110,15 @@ public final class CggmpDkgMessageHandler {
             return;
         }
         if (!executionId.equals(task.executionId)) {
+            logger.debug("Skip DKG Round1: executionId mismatch (taskId={}, senderId={}, expected={}, received={})",
+                    taskId, senderNodeId, task.executionId, executionId);
             return;
         }
         if (task.round1Received.putIfAbsent(senderNodeId, Boolean.TRUE) == null) {
             task.round1PayloadHashes.put(senderNodeId, vCommit);
             task.round1ReceivedLatch.countDown();
+        } else {
+            logger.debug("Skip DKG Round1: duplicate from node {} (taskId={})", senderNodeId, taskId);
         }
         Map<String, Object> pendingOpen = task.pendingRound2Open.remove(senderNodeId);
         if (pendingOpen != null) {

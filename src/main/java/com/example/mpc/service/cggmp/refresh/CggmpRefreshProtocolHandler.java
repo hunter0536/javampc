@@ -3,17 +3,9 @@ package com.example.mpc.service.cggmp.refresh;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
-import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
-import com.example.mpc.cggmp.proof.BiPrimeProofValidator;
-import com.example.mpc.cggmp.proof.NoSmallFactorProof;
-import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
-import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
-import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.model.CggmpRefreshTask;
@@ -66,24 +58,6 @@ public final class CggmpRefreshProtocolHandler {
                             if (!task.participants.contains(svc.nodeId)) {
                                 return null;
                             }
-                            long paillierStart = System.currentTimeMillis();
-                            logger.info("Refresh {} generating Paillier ({} bits)...", task.taskId, svc.refreshPaillierBits);
-                            task.paillier = new PaillierEncryption(svc.refreshPaillierBits);
-                            logger.debug("Refresh {} Paillier ready in {} ms", task.taskId, System.currentTimeMillis() - paillierStart);
-                            task.zkSetup = ZKSetup.generate(task.paillier.getPublicKeyInfo().bitLength);
-
-                            BigInteger[] ped = CggmpRefreshUtils.generateRefreshPedersen(task.paillier.getPublicKeyInfo().bitLength);
-                            task.pedersenHatN = ped[0];
-                            task.pedersenS = ped[1];
-                            task.pedersenT = ped[2];
-                            task.pedersenLambda = ped[3];
-                            task.prmProof = RefreshProofs.createPrmProof(
-                                    task.pedersenHatN,
-                                    task.pedersenS,
-                                    task.pedersenT,
-                                    task.pedersenLambda,
-                                    CggmpRefreshUtils.buildRefreshContext(task.taskId, null, svc.nodeId, "PRM")
-                            );
 
                             BigInteger xi = svc.loadLocalShare(task.groupPublicKey);
                             ECPoint Xi = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), xi);
@@ -120,22 +94,16 @@ public final class CggmpRefreshProtocolHandler {
                             byte[] rid = CggmpProtocolUtils.randomBytes(32);
                             byte[] u = CggmpProtocolUtils.randomBytes(32);
 
-                            String v = CggmpRefreshUtils.computeRefreshCommit(task.taskId, svc.nodeId, task.xPoints, task.yPoints, A, Xi,
-                                    task.paillier.getPublicKeyInfo(), task.zkSetup, task.pedersenHatN, task.pedersenS, task.pedersenT,
-                                    task.prmProof, rid, u);
+                            String v = CggmpRefreshUtils.computeRefreshCommit(task.taskId, svc.nodeId, task.xPoints, task.yPoints, A, Xi, rid, u);
                             task.round1Commit.put(svc.nodeId, v);
+                            logger.debug("Refresh R1 commit generated for task {} (nodeId={}, commit={}, X.size={}, Y.size={}, A.size={})",
+                                    task.taskId, svc.nodeId, v, task.xPoints.size(), task.yPoints.size(), A.size());
                             CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.sendRefreshR1(task, v), logger, "CGGMP_REFRESH_R1");
 
                             Map<Integer, ECPoint> yMap = new HashMap<>(task.yPoints);
                             Map<Integer, ECPoint> xMap = new HashMap<>(task.xPoints);
                             Map<Integer, ECPoint> aMap = A;
                             CggmpRefreshTask.RefreshRound2Data r2 = new CggmpRefreshTask.RefreshRound2Data(
-                                    task.paillier.getPublicKeyInfo(),
-                                    task.zkSetup,
-                                    task.pedersenHatN,
-                                    task.pedersenS,
-                                    task.pedersenT,
-                                    task.prmProof,
                                     yMap,
                                     xMap,
                                     aMap,
@@ -144,6 +112,8 @@ public final class CggmpRefreshProtocolHandler {
                                     u
                             );
                             task.round2Data.put(svc.nodeId, r2);
+                            logger.debug("Refresh R2 prepared for task {} (nodeId={}, X.size={}, Y.size={}, A.size={}, ridLen={}, uLen={})",
+                                    task.taskId, svc.nodeId, xMap.size(), yMap.size(), aMap.size(), rid.length, u.length);
                             return task;
                         } catch (Exception e) {
                             task.fail(e.getMessage());
@@ -183,18 +153,13 @@ public final class CggmpRefreshProtocolHandler {
                                     schProofs.put(peerId, sch);
                                 }
 
-                                BiPrimeBlumProof biPrime = new BiPrimeProofGenerator().createProof(task.paillier.getPrivateKeyInfo(),
-                                        CggmpRefreshUtils.buildRefreshContext(task.taskId, mergedRid, svc.nodeId, "MOD"));
-                                NoSmallFactorProof factor = new NoSmallFactorProofGenerator(task.zkSetup)
-                                        .createProof(task.paillier.getPrivateKeyInfo(), CggmpRefreshUtils.buildRefreshContext(task.taskId, mergedRid, svc.nodeId, "FAC"));
-
                                 CggmpRefreshTask.RefreshRound3Data r3 = new CggmpRefreshTask.RefreshRound3Data(
                                         C,
-                                        schProofs,
-                                        biPrime,
-                                        factor
+                                        schProofs
                                 );
                                 task.round3Data.put(svc.nodeId, r3);
+                                logger.debug("Refresh R3 prepared for task {} (nodeId={}, C.size={}, schProofs.size={})",
+                                        task.taskId, svc.nodeId, C.size(), schProofs.size());
                                 CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.sendRefreshR3(task, r3), logger, "CGGMP_REFRESH_R3");
                             }, refreshExecutorService))
                             .thenCompose(v -> waitForLatchAsync(task.round3Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "refresh R3"))
@@ -204,6 +169,7 @@ public final class CggmpRefreshProtocolHandler {
                                     return;
                                 }
                                 task.complete();
+                                logger.debug("Refresh task {} completed (nodeId={})", task.taskId, svc.nodeId);
                             }, refreshExecutorService);
                 }).whenComplete((v, ex) -> {
                     if (ex == null) {
@@ -234,8 +200,7 @@ public final class CggmpRefreshProtocolHandler {
             if (r2 == null || commit == null) {
                 return false;
             }
-            String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, peerId, r2.X, r2.Y, r2.A, r2.Xi, r2.paillierKey,
-                    r2.zkSetup, r2.hatN, r2.s, r2.t, r2.prmProof, r2.rid, r2.u);
+            String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, peerId, r2.X, r2.Y, r2.A, r2.Xi, r2.rid, r2.u);
             if (!commit.equals(expected)) {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("peerId", peerId);
@@ -243,12 +208,6 @@ public final class CggmpRefreshProtocolHandler {
                 extra.put("expectedCommit", expected);
                 CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Refresh commit mismatch",
                                 svc.refreshMessageHandler.refreshEvidence(task, peerId, "Refresh commit mismatch", extra)),
-                        logger, "CGGMP_REFRESH_COMPLAINT");
-                return false;
-            }
-            if (!RefreshProofs.verifyPrmProof(r2.prmProof, r2.hatN, r2.s, r2.t, CggmpRefreshUtils.buildRefreshContext(task.taskId, null, peerId, "PRM"))) {
-                CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Invalid PiPrm proof",
-                                svc.refreshMessageHandler.refreshEvidence(task, peerId, "Invalid PiPrm proof", Map.of("peerId", peerId))),
                         logger, "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
@@ -269,21 +228,6 @@ public final class CggmpRefreshProtocolHandler {
             CggmpRefreshTask.RefreshRound2Data r2 = task.round2Data.get(peerId);
             CggmpRefreshTask.RefreshRound3Data r3 = task.round3Data.get(peerId);
             if (r2 == null || r3 == null) {
-                return false;
-            }
-
-            BiPrimeProofValidator biPrimeValidator = new BiPrimeProofValidator();
-            if (!biPrimeValidator.verifyProof(r3.biPrimeProof, r2.paillierKey, CggmpRefreshUtils.buildRefreshContext(task.taskId, task.rid, peerId, "MOD"))) {
-                CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Invalid Blum proof",
-                                svc.refreshMessageHandler.refreshEvidence(task, peerId, "Invalid Blum proof", Map.of("peerId", peerId))),
-                        logger, "CGGMP_REFRESH_COMPLAINT");
-                return false;
-            }
-            NoSmallFactorProofValidator factorValidator = new NoSmallFactorProofValidator(r2.zkSetup);
-            if (!factorValidator.verifyProof(r3.factorProof, r2.paillierKey, CggmpRefreshUtils.buildRefreshContext(task.taskId, task.rid, peerId, "FAC"))) {
-                CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Invalid NoSmallFactor proof",
-                                svc.refreshMessageHandler.refreshEvidence(task, peerId, "Invalid NoSmallFactor proof", Map.of("peerId", peerId))),
-                        logger, "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
 
@@ -358,8 +302,6 @@ public final class CggmpRefreshProtocolHandler {
             return false;
         }
 
-        svc.refreshPaillier = task.paillier;
-        svc.refreshZkSetup = task.zkSetup;
         return true;
     }
 
