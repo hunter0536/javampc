@@ -460,16 +460,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                 }, dkgExecutorService));
     }
 
-    private CompletableFuture<Void> broadcastDkgRound1Echo(CggmpDkgTask task) {
-        String echo = computeDkgEchoHash(task);
-        Map<String, Object> data = new HashMap<>();
-        data.put("taskId", task.taskId);
-        data.put("executionId", task.executionId);
-        data.put("senderId", nodeId);
-        data.put("hash", echo);
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1_ECHO, data));
-    }
-
     public DkgTaskStatusResponse getTaskStatus(String taskId) {
         CggmpDkgTask task = getDkgTask(taskId);
         DkgTaskStatusResponse response = new DkgTaskStatusResponse();
@@ -493,6 +483,80 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             return null;
         }
         return task.groupPublicKeyHex;
+    }
+
+    @Override
+    public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
+        Object logTaskId = "N/A";
+        if (message.data instanceof Map<?, ?> map) {
+            if (map.containsKey("taskId")) {
+                logTaskId = map.get("taskId");
+            }
+        }
+        logger.info("=== CGGMP DKG handleMessage: senderId={}, type={}, taskId={} ===",
+                senderId, message.type, logTaskId);
+        ExecutorService executor = dkgExecutorService;
+        if (message.type == MessageType.CGGMP_DKG_ROUND2
+                || message.type == MessageType.CGGMP_DKG_ROUND2_BROAD
+                || message.type == MessageType.CGGMP_DKG_ROUND2_BATCH) {
+            executor = dkgExecutorService;
+        }
+        return CompletableFuture.runAsync(() -> {
+            try {
+                Object data = message.data;
+                if (data instanceof byte[] bytes) {
+                    Object decoded = maybeDecompressDkgPayload(message.type, bytes);
+                    if (decoded != null) {
+                        data = decoded;
+                    }
+                }
+                logger.info("=== CGGMP DKG processing: type={} ===", message.type);
+                switch (message.type) {
+                    case CGGMP_DKG_INIT:
+                        handleCggmpDkgInit(senderId, data);
+                        break;
+                    case CGGMP_DKG_ROUND1:
+                        handleCggmpDkgRound1(senderId, data);
+                        break;
+                    case CGGMP_DKG_ROUND1_ECHO:
+                        handleCggmpDkgRound1Echo(senderId, data);
+                        break;
+                    case CGGMP_DKG_ROUND2:
+                        handleCggmpDkgRound2(senderId, data);
+                        break;
+                    case CGGMP_DKG_ROUND2_BROAD:
+                        handleCggmpDkgRound2Broad(senderId, data);
+                        break;
+                    case CGGMP_DKG_ROUND2_BATCH:
+                        handleCggmpDkgRound2Batch(senderId, data);
+                        break;
+                    case CGGMP_DKG_ROUND3:
+                        handleCggmpDkgRound3(senderId, data);
+                        break;
+                    case CGGMP_DKG_COMPLAINT:
+                        handleCggmpDkgComplaint(senderId, data);
+                        break;
+                    case CGGMP_DKG_EXCLUDE:
+                        handleCggmpDkgExclude(senderId, data);
+                        break;
+                    default:
+                        logger.debug("Ignoring message of type {} for CGGMP DKG service", message.type);
+                }
+            } catch (Exception e) {
+                logger.error("Error handling CGGMP DKG message", e);
+                throw new RuntimeException(e);
+            }
+        }, executor);
+    }
+
+    private CompletableFuture<Void> broadcastDkgRound1Echo(CggmpDkgTask task) {
+        String echo = computeDkgEchoHash(task);
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("executionId", task.executionId);
+        data.put("senderId", nodeId);
+        data.put("hash", echo);
+        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_DKG_ROUND1_ECHO, data));
     }
 
     private void handleCggmpDkgInit(int senderId, Object data) {
@@ -1631,71 +1695,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         byte[] b = new byte[len];
         new SecureRandom().nextBytes(b);
         return b;
-    }
-
-
-    @Override
-    public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
-        Object logTaskId = "N/A";
-        if (message.data instanceof Map<?, ?> map) {
-            if (map.containsKey("taskId")) {
-                logTaskId = map.get("taskId");
-            }
-        }
-        logger.info("=== CGGMP DKG handleMessage: senderId={}, type={}, taskId={} ===",
-                senderId, message.type, logTaskId);
-        ExecutorService executor = dkgExecutorService;
-        if (message.type == MessageType.CGGMP_DKG_ROUND2
-                || message.type == MessageType.CGGMP_DKG_ROUND2_BROAD
-                || message.type == MessageType.CGGMP_DKG_ROUND2_BATCH) {
-            executor = dkgExecutorService;
-        }
-        return CompletableFuture.runAsync(() -> {
-            try {
-                Object data = message.data;
-                if (data instanceof byte[] bytes) {
-                    Object decoded = maybeDecompressDkgPayload(message.type, bytes);
-                    if (decoded != null) {
-                        data = decoded;
-                    }
-                }
-                logger.info("=== CGGMP DKG processing: type={} ===", message.type);
-                switch (message.type) {
-                    case CGGMP_DKG_INIT:
-                        handleCggmpDkgInit(senderId, data);
-                        break;
-                    case CGGMP_DKG_ROUND1:
-                        handleCggmpDkgRound1(senderId, data);
-                        break;
-                    case CGGMP_DKG_ROUND1_ECHO:
-                        handleCggmpDkgRound1Echo(senderId, data);
-                        break;
-                    case CGGMP_DKG_ROUND2:
-                        handleCggmpDkgRound2(senderId, data);
-                        break;
-                    case CGGMP_DKG_ROUND2_BROAD:
-                        handleCggmpDkgRound2Broad(senderId, data);
-                        break;
-                    case CGGMP_DKG_ROUND2_BATCH:
-                        handleCggmpDkgRound2Batch(senderId, data);
-                        break;
-                    case CGGMP_DKG_ROUND3:
-                        handleCggmpDkgRound3(senderId, data);
-                        break;
-                    case CGGMP_DKG_COMPLAINT:
-                        handleCggmpDkgComplaint(senderId, data);
-                        break;
-                    case CGGMP_DKG_EXCLUDE:
-                        handleCggmpDkgExclude(senderId, data);
-                        break;
-                    default:
-                        logger.debug("Ignoring message of type {} for CGGMP DKG service", message.type);
-                }
-            } catch (Exception e) {
-                logger.error("Error handling CGGMP DKG message", e);
-                throw new RuntimeException(e);
-            }
-        }, executor);
     }
 
     private static final class DkgContext {

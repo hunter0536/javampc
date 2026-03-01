@@ -59,13 +59,13 @@ final class CggmpSignatureEvidenceHandler {
             ev.put("D", HexUtils.toHex(D));
             ev.put("Gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Gamma)));
             ev.put("S", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(S)));
-            Map<String, Object> affg = buildAffGEvidenceDelta(task, gamma_i, Gamma);
+            Map<String, Object> affg = buildAffGEvidenceDelta(task, gamma_i);
             if (affg != null && !affg.isEmpty()) {
                 ev.putAll(affg);
             }
             return ev;
         } catch (Exception e) {
-            svc.logger.warn("Failed to build PiDec delta evidence: {}", e.getMessage());
+            CggmpSignatureService.logger.warn("Failed to build PiDec delta evidence: {}", e.getMessage());
             return null;
         }
     }
@@ -103,13 +103,13 @@ final class CggmpSignatureEvidenceHandler {
             ev.put("Gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Gamma)));
             ev.put("S", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(S)));
             ev.put("X", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(X_i)));
-            Map<String, Object> affg = buildAffGEvidenceChi(task, x_i, X_i);
+            Map<String, Object> affg = buildAffGEvidenceChi(task, x_i);
             if (affg != null && !affg.isEmpty()) {
                 ev.putAll(affg);
             }
             return ev;
         } catch (Exception e) {
-            svc.logger.warn("Failed to build PiDec chi evidence: {}", e.getMessage());
+            CggmpSignatureService.logger.warn("Failed to build PiDec chi evidence: {}", e.getMessage());
             return null;
         }
     }
@@ -132,9 +132,6 @@ final class CggmpSignatureEvidenceHandler {
             BigInteger D = new BigInteger(dHex, 16);
             ECPoint Gamma = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(gammaHex));
             ECPoint S = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(sHex));
-            if (proof == null) {
-                return false;
-            }
             if (proof.A() == null || proof.B() == null || proof.C() == null
                     || proof.z() == null || proof.w() == null || proof.nu() == null) {
                 return false;
@@ -155,7 +152,7 @@ final class CggmpSignatureEvidenceHandler {
                     svc.proofEpsBits,
                     SignUtils.buildPresignContext(task.taskId, senderId, "DEC"));
         } catch (Exception e) {
-            svc.logger.warn("Failed to verify PiDec evidence: {}", e.getMessage());
+            CggmpSignatureService.logger.warn("Failed to verify PiDec evidence: {}", e.getMessage());
             return false;
         }
     }
@@ -209,7 +206,7 @@ final class CggmpSignatureEvidenceHandler {
         return sum.mod(nSquared).equals(BigInteger.ONE);
     }
 
-    Map<String, Object> buildAffGEvidenceDelta(Gg20SignatureTask task, BigInteger gamma_i, ECPoint Gamma) {
+    Map<String, Object> buildAffGEvidenceDelta(Gg20SignatureTask task, BigInteger gamma_i) {
         try {
             Map<String, Object> ev = new HashMap<>();
             Map<Integer, BigInteger> D = new HashMap<>();
@@ -246,12 +243,12 @@ final class CggmpSignatureEvidenceHandler {
             ev.put("F_map", JsonUtils.encodeBigIntegerMap(F));
             return ev;
         } catch (Exception e) {
-            svc.logger.warn("Failed to build AffG delta evidence: {}", e.getMessage());
+            CggmpSignatureService.logger.warn("Failed to build AffG delta evidence: {}", e.getMessage());
             return null;
         }
     }
 
-    Map<String, Object> buildAffGEvidenceChi(Gg20SignatureTask task, BigInteger x_i, ECPoint X_i) {
+    Map<String, Object> buildAffGEvidenceChi(Gg20SignatureTask task, BigInteger x_i) {
         try {
             Map<String, Object> ev = new HashMap<>();
             Map<Integer, BigInteger> D = new HashMap<>();
@@ -288,7 +285,7 @@ final class CggmpSignatureEvidenceHandler {
             ev.put("Fhat_map", JsonUtils.encodeBigIntegerMap(F));
             return ev;
         } catch (Exception e) {
-            svc.logger.warn("Failed to build AffG chi evidence: {}", e.getMessage());
+            CggmpSignatureService.logger.warn("Failed to build AffG chi evidence: {}", e.getMessage());
             return null;
         }
     }
@@ -308,7 +305,7 @@ final class CggmpSignatureEvidenceHandler {
                 }
                 Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
                 Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
-                if (!allPeersPresent(task, senderId, proofs, D, F)) {
+                if (allPeersPresent(task, senderId, proofs, D, F)) {
                     return false;
                 }
                 for (Map.Entry<Integer, BigInteger> e : D.entrySet()) {
@@ -317,9 +314,6 @@ final class CggmpSignatureEvidenceHandler {
                         continue;
                     }
                     PiAffGProof proof = CggmpCodecUtils.decodePiAffGProof((Map<?, ?>) proofs.get(peerId));
-                    if (proof == null) {
-                        return false;
-                    }
                     BigInteger K_peer = task.presignK.get(peerId);
                     PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(peerId);
                     ECPoint Gamma = task.presignGamma.get(senderId);
@@ -349,7 +343,7 @@ final class CggmpSignatureEvidenceHandler {
                 }
                 Map<Integer, BigInteger> D = JsonUtils.decodeBigIntegerMap(dMap);
                 Map<Integer, BigInteger> F = JsonUtils.decodeBigIntegerMap(fMap);
-                if (!allPeersPresent(task, senderId, proofsHat, D, F)) {
+                if (allPeersPresent(task, senderId, proofsHat, D, F)) {
                     return false;
                 }
                 for (Map.Entry<Integer, BigInteger> e : D.entrySet()) {
@@ -358,9 +352,6 @@ final class CggmpSignatureEvidenceHandler {
                         continue;
                     }
                     PiAffGProof proof = CggmpCodecUtils.decodePiAffGProof((Map<?, ?>) proofsHat.get(peerId));
-                    if (proof == null) {
-                        return false;
-                    }
                     BigInteger K_peer = task.presignK.get(peerId);
                     PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(peerId);
                     ECPoint X = task.presignSTilde.get(senderId);
@@ -384,7 +375,7 @@ final class CggmpSignatureEvidenceHandler {
             }
             return true;
         } catch (Exception e) {
-            svc.logger.warn("Failed to verify AffG evidence: {}", e.getMessage());
+            CggmpSignatureService.logger.warn("Failed to verify AffG evidence: {}", e.getMessage());
             return false;
         }
     }
@@ -399,10 +390,10 @@ final class CggmpSignatureEvidenceHandler {
                 continue;
             }
             if (!proofs.containsKey(peerId) || !dMap.containsKey(peerId) || !fMap.containsKey(peerId)) {
-                return false;
+                return true;
             }
         }
-        return true;
+        return false;
     }
 
     boolean allPeersPresent(Gg20SignatureTask task,
@@ -465,7 +456,7 @@ final class CggmpSignatureEvidenceHandler {
         newTask.start();
         svc.fireAndForget(svc.broadcastOfflineInit(newTask), "CGGMP_SIGN_OFFLINE_INIT");
         svc.runOfflinePhase(newTask).exceptionally(ex -> {
-            svc.logger.error("Failed offline phase for restarted task {}: {}", newTaskId, ex.getMessage());
+            CggmpSignatureService.logger.error("Failed offline phase for restarted task {}: {}", newTaskId, ex.getMessage());
             return null;
         });
     }

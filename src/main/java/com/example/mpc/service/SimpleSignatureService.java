@@ -101,20 +101,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         return CompletableFuture.completedFuture(null);
     }
 
-    private void startTaskCleanup() {
-        cleanupExecutor.scheduleAtFixedRate(() -> {
-            long now = System.currentTimeMillis();
-            tasks.entrySet().removeIf(entry -> {
-                SimpleSignatureTask task = entry.getValue();
-                if (task.isCompleted() || task.isFailed()) {
-                    long elapsed = now - task.getCreateTime();
-                    return elapsed > 300000;
-                }
-                return false;
-            });
-        }, 5, 5, TimeUnit.MINUTES);
-    }
-
     public String startSignature(String groupPublicKey, String message) {
         return startSignature(groupPublicKey, message, this.nodesCount, this.threshold);
     }
@@ -865,5 +851,19 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
 
     private KeyShare loadKeyShareByGroupPublicKeySync(String groupPublicKey) {
         return keyShareDao.findByGroupPublicKeySync(nodeId, groupPublicKey);
+    }
+
+    private void startTaskCleanup() {
+        cleanupExecutor.scheduleAtFixedRate(() -> {
+            long now = System.currentTimeMillis();
+            tasks.entrySet().removeIf(entry -> {
+                SimpleSignatureTask task = entry.getValue();
+                if (task.isCompleted() || task.isFailed()) {
+                    long elapsed = now - task.getCreateTime();
+                    return elapsed > 300000;
+                }
+                return false;
+            });
+        }, 5, 5, TimeUnit.MINUTES);
     }
 }

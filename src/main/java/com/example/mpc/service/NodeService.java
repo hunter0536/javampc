@@ -164,189 +164,6 @@ public class NodeService {
     }
 
     /**
-     * 启动节点发现服务
-     */
-    private void startNodeDiscovery() {
-        if (discoveryRunning.get()) {
-            return;
-        }
-
-        discoveryRunning.set(true);
-
-        // 启动发现服务器
-        ThreadPoolUtil.getIoThreadPool().submit(() -> {
-            try (DatagramSocket socket = new DatagramSocket(discoveryPort)) {
-                byte[] buffer = new byte[1024];
-                while (discoveryRunning.get()) {
-                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                    socket.receive(packet);
-                    String message = new String(packet.getData(), 0, packet.getLength());
-                    handleDiscoveryMessage(message, packet.getAddress());
-                }
-            } catch (Exception e) {
-                if (discoveryRunning.get()) {
-                    e.printStackTrace();
-                }
-            }
-        });
-
-        // 启动发现客户端
-        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-        scheduler.scheduleAtFixedRate(() -> {
-            try (DatagramSocket socket = new DatagramSocket()) {
-                socket.setBroadcast(true);
-                if (discoveryRunning.get()) {
-                    String message = "DISCOVER_NODE:" + nodeId + ":" + nodePort;
-                    byte[] buffer = message.getBytes();
-
-                    // 向配置中的发现端口发送广播，排除当前节点自己的端口
-                    if (discoveryBroadcastPorts != null) {
-                        for (String portStr : discoveryBroadcastPorts) {
-                            try {
-                                int port = Integer.parseInt(portStr.trim());
-                                // 不向当前节点自己的端口发送广播
-                                if (port != discoveryPort) {
-                                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length, InetAddress.getByName("255.255.255.255"), port);
-                                    socket.send(packet);
-                                }
-                            } catch (NumberFormatException e) {
-                                // 忽略无效的端口格式
-                            } catch (Exception e) {
-                                // 忽略单个端口的发送错误
-                            }
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                if (discoveryRunning.get()) {
-                    logger.error("Error in discovery client: {}", e.getMessage());
-                }
-            }
-        }, 0, Constants.NODE_DISCOVERY_INTERVAL_MS, TimeUnit.MILLISECONDS);
-
-        // 保存scheduler引用，以便在停止时关闭
-        this.discoveryScheduler = scheduler;
-    }
-
-    private void connectStaticPeers() {
-        if (peerNodes == null || peerNodes.isEmpty()) {
-            return;
-        }
-
-        for (String peer : peerNodes) {
-            String trimmed = peer == null ? "" : peer.trim();
-            if (trimmed.isEmpty()) {
-                continue;
-            }
-
-            String[] parts = trimmed.split("@", 2);
-            if (parts.length != 2) {
-                logger.warn("Invalid peer config: {}", trimmed);
-                continue;
-            }
-
-            try {
-                int peerId = Integer.parseInt(parts[0]);
-                String[] hostPort = parts[1].split(":", 2);
-                if (hostPort.length != 2) {
-                    logger.warn("Invalid peer host/port: {}", trimmed);
-                    continue;
-                }
-                String host = hostPort[0];
-                int port = Integer.parseInt(hostPort[1]);
-
-                if (peerId == this.nodeId) {
-                    continue;
-                }
-
-                NodeInfo nodeInfo = new NodeInfo(peerId, host, port);
-                nodes.put(peerId, nodeInfo);
-
-                if (nettyService != null) {
-                    connectWithRetry(peerId, host, port, trimmed);
-                }
-            } catch (Exception e) {
-                logger.warn("Invalid peer config: {}", trimmed);
-            }
-        }
-    }
-
-    private void connectWithRetry(int peerId, String host, int port, String peerDesc) {
-        AtomicInteger attempts = new AtomicInteger(0);
-        int maxAttempts = 10;
-        long retryDelayMs = 2000;
-
-        Runnable attemptConnect = new Runnable() {
-            @Override
-            public void run() {
-                if (nodes.get(peerId) == null) {
-                    logger.debug("Peer {} removed from nodes, stopping retry", peerId);
-                    return;
-                }
-
-                int attempt = attempts.incrementAndGet();
-                if (attempt > maxAttempts) {
-                    logger.warn("Max retry attempts reached for peer {}, giving up", peerDesc);
-                    return;
-                }
-
-                nettyService.connectToNode(peerId, host, port)
-                        .whenComplete((v, ex) -> {
-                            if (ex == null) {
-                                logger.info("Successfully connected to peer {} on attempt {}", peerDesc, attempt);
-                            } else if (attempt < maxAttempts) {
-                                logger.warn("Failed to connect to {} (attempt {}/{}): {}, scheduling retry in {}ms",
-                                        peerDesc, attempt, maxAttempts, ex.getMessage(), retryDelayMs);
-                                getRetryScheduler().schedule(this, retryDelayMs, TimeUnit.MILLISECONDS);
-                            } else {
-                                logger.error("Failed to connect to {} after {} attempts: {}", peerDesc, maxAttempts, ex.getMessage());
-                            }
-                        });
-            }
-        };
-
-        getRetryScheduler().execute(attemptConnect);
-    }
-
-    /**
-     * 处理发现消息
-     */
-    private void handleDiscoveryMessage(String message, InetAddress address) {
-        if (message.startsWith("DISCOVER_NODE:")) {
-            String[] parts = message.split(":");
-            if (parts.length == 3) {
-                try {
-                    int nodeId = Integer.parseInt(parts[1]);
-                    int nodePort = Integer.parseInt(parts[2]);
-
-                    // 不添加自己
-                    if (nodeId != this.nodeId) {
-                        NodeInfo existingNode = nodes.get(nodeId);
-                        if (existingNode != null && nettyService != null) {
-                            Channel existingChannel = nettyService.getNodeChannel(nodeId);
-                            if (existingChannel != null && existingChannel.isActive()) {
-                                logger.debug("Already connected to discovered node {}, skipping", nodeId);
-                                return;
-                            }
-                        }
-
-                        NodeInfo nodeInfo = new NodeInfo(nodeId, address.getHostAddress(), nodePort);
-                        nodes.put(nodeId, nodeInfo);
-                        logger.info("Discovered node: {} at {}:{}", nodeId, address.getHostAddress(), nodePort);
-
-                        // 自动连接到新发现的节点（带重试）
-                        if (nettyService != null) {
-                            connectWithRetry(nodeId, address.getHostAddress(), nodePort, "discovered-" + nodeId);
-                        }
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-    }
-
-    /**
      * 停止P2P服务器
      */
     public CompletableFuture<Void> stopP2PServer() {
@@ -571,14 +388,14 @@ public class NodeService {
         return broadcastReliable(rbc).thenCompose(v -> state.delivered);
     }
 
-    private CompletableFuture<Void> broadcastRbcEcho(Message original) {
+    private void broadcastRbcEcho(Message original) {
         Map<String, Object> data = new HashMap<>();
         data.put("messageId", original.messageId);
         data.put("hash", original.rbcHash);
         data.put("origSenderId", original.senderId);
         data.put("type", original.type.name());
         Message echo = new Message(nodeId, MessageType.NET_RBC_ECHO, data, null, false, null, false, null);
-        return broadcastMessage(echo);
+        broadcastMessage(echo);
     }
 
     private String computeRbcHash(Message message) {
@@ -631,7 +448,7 @@ public class NodeService {
         }
     }
 
-    CompletableFuture<Void> handleInboundMessage(int senderId, Message message) throws Exception {
+    CompletableFuture<Void> handleInboundMessage(int senderId, Message message) {
         if (message.type == MessageType.NET_ACK) {
             handleAck(senderId, message.ackForId);
             return CompletableFuture.completedFuture(null);
@@ -864,6 +681,189 @@ public class NodeService {
                 totalTaskTime.addAndGet(endTime - startTime);
             }
         });
+    }
+
+    /**
+     * 启动节点发现服务
+     */
+    private void startNodeDiscovery() {
+        if (discoveryRunning.get()) {
+            return;
+        }
+
+        discoveryRunning.set(true);
+
+        // 启动发现服务器
+        ThreadPoolUtil.getIoThreadPool().submit(() -> {
+            try (DatagramSocket socket = new DatagramSocket(discoveryPort)) {
+                byte[] buffer = new byte[1024];
+                while (discoveryRunning.get()) {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    socket.receive(packet);
+                    String message = new String(packet.getData(), 0, packet.getLength());
+                    handleDiscoveryMessage(message, packet.getAddress());
+                }
+            } catch (Exception e) {
+                if (discoveryRunning.get()) {
+                    e.printStackTrace();
+                }
+            }
+        });
+
+        // 启动发现客户端
+        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        scheduler.scheduleAtFixedRate(() -> {
+            try (DatagramSocket socket = new DatagramSocket()) {
+                socket.setBroadcast(true);
+                if (discoveryRunning.get()) {
+                    String message = "DISCOVER_NODE:" + nodeId + ":" + nodePort;
+                    byte[] buffer = message.getBytes();
+
+                    // 向配置中的发现端口发送广播，排除当前节点自己的端口
+                    if (discoveryBroadcastPorts != null) {
+                        for (String portStr : discoveryBroadcastPorts) {
+                            try {
+                                int port = Integer.parseInt(portStr.trim());
+                                // 不向当前节点自己的端口发送广播
+                                if (port != discoveryPort) {
+                                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length, InetAddress.getByName("255.255.255.255"), port);
+                                    socket.send(packet);
+                                }
+                            } catch (NumberFormatException e) {
+                                // 忽略无效的端口格式
+                            } catch (Exception e) {
+                                // 忽略单个端口的发送错误
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                if (discoveryRunning.get()) {
+                    logger.error("Error in discovery client: {}", e.getMessage());
+                }
+            }
+        }, 0, Constants.NODE_DISCOVERY_INTERVAL_MS, TimeUnit.MILLISECONDS);
+
+        // 保存scheduler引用，以便在停止时关闭
+        this.discoveryScheduler = scheduler;
+    }
+
+    private void connectStaticPeers() {
+        if (peerNodes == null || peerNodes.isEmpty()) {
+            return;
+        }
+
+        for (String peer : peerNodes) {
+            String trimmed = peer == null ? "" : peer.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+
+            String[] parts = trimmed.split("@", 2);
+            if (parts.length != 2) {
+                logger.warn("Invalid peer config: {}", trimmed);
+                continue;
+            }
+
+            try {
+                int peerId = Integer.parseInt(parts[0]);
+                String[] hostPort = parts[1].split(":", 2);
+                if (hostPort.length != 2) {
+                    logger.warn("Invalid peer host/port: {}", trimmed);
+                    continue;
+                }
+                String host = hostPort[0];
+                int port = Integer.parseInt(hostPort[1]);
+
+                if (peerId == this.nodeId) {
+                    continue;
+                }
+
+                NodeInfo nodeInfo = new NodeInfo(peerId, host, port);
+                nodes.put(peerId, nodeInfo);
+
+                if (nettyService != null) {
+                    connectWithRetry(peerId, host, port, trimmed);
+                }
+            } catch (Exception e) {
+                logger.warn("Invalid peer config: {}", trimmed);
+            }
+        }
+    }
+
+    private void connectWithRetry(int peerId, String host, int port, String peerDesc) {
+        AtomicInteger attempts = new AtomicInteger(0);
+        int maxAttempts = 10;
+        long retryDelayMs = 2000;
+
+        Runnable attemptConnect = new Runnable() {
+            @Override
+            public void run() {
+                if (nodes.get(peerId) == null) {
+                    logger.debug("Peer {} removed from nodes, stopping retry", peerId);
+                    return;
+                }
+
+                int attempt = attempts.incrementAndGet();
+                if (attempt > maxAttempts) {
+                    logger.warn("Max retry attempts reached for peer {}, giving up", peerDesc);
+                    return;
+                }
+
+                nettyService.connectToNode(peerId, host, port)
+                        .whenComplete((v, ex) -> {
+                            if (ex == null) {
+                                logger.info("Successfully connected to peer {} on attempt {}", peerDesc, attempt);
+                            } else if (attempt < maxAttempts) {
+                                logger.warn("Failed to connect to {} (attempt {}/{}): {}, scheduling retry in {}ms",
+                                        peerDesc, attempt, maxAttempts, ex.getMessage(), retryDelayMs);
+                                getRetryScheduler().schedule(this, retryDelayMs, TimeUnit.MILLISECONDS);
+                            } else {
+                                logger.error("Failed to connect to {} after {} attempts: {}", peerDesc, maxAttempts, ex.getMessage());
+                            }
+                        });
+            }
+        };
+
+        getRetryScheduler().execute(attemptConnect);
+    }
+
+    /**
+     * 处理发现消息
+     */
+    private void handleDiscoveryMessage(String message, InetAddress address) {
+        if (message.startsWith("DISCOVER_NODE:")) {
+            String[] parts = message.split(":");
+            if (parts.length == 3) {
+                try {
+                    int nodeId = Integer.parseInt(parts[1]);
+                    int nodePort = Integer.parseInt(parts[2]);
+
+                    // 不添加自己
+                    if (nodeId != this.nodeId) {
+                        NodeInfo existingNode = nodes.get(nodeId);
+                        if (existingNode != null && nettyService != null) {
+                            Channel existingChannel = nettyService.getNodeChannel(nodeId);
+                            if (existingChannel != null && existingChannel.isActive()) {
+                                logger.debug("Already connected to discovered node {}, skipping", nodeId);
+                                return;
+                            }
+                        }
+
+                        NodeInfo nodeInfo = new NodeInfo(nodeId, address.getHostAddress(), nodePort);
+                        nodes.put(nodeId, nodeInfo);
+                        logger.info("Discovered node: {} at {}:{}", nodeId, address.getHostAddress(), nodePort);
+
+                        // 自动连接到新发现的节点（带重试）
+                        if (nettyService != null) {
+                            connectWithRetry(nodeId, address.getHostAddress(), nodePort, "discovered-" + nodeId);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
     }
 
     private static final class RbcState {

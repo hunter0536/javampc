@@ -114,12 +114,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         return runRefreshProtocolAsync(task);
     }
 
-    private CggmpRefreshTask createRefreshTaskInternal(String taskId, String groupPublicKey, Set<Integer> participants, int initiatorId) {
-        CggmpRefreshTask task = new CggmpRefreshTask(taskId, groupPublicKey, nodesCount, initiatorId, participants);
-        refreshTasks.put(taskId, task);
-        return task;
-    }
-
     public com.example.mpc.common.response.RefreshTaskStatusResponse getRefreshTaskStatus(String taskId) {
         CggmpRefreshTask task = refreshTasks.get(taskId);
         if (task == null) {
@@ -139,8 +133,81 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         return response;
     }
 
+    public CompletableFuture<Void> init(int nodesCount) {
+        return nodeService.startP2PServer()
+                .thenRun(() -> {
+                    nodeService.registerMessageHandler(EnumSet.of(
+                            MessageType.CGGMP_REFRESH_R1,
+                            MessageType.CGGMP_REFRESH_R2,
+                            MessageType.CGGMP_REFRESH_R3,
+                            MessageType.CGGMP_REFRESH_COMPLAINT,
+                            MessageType.CGGMP_REFRESH_EXCLUDE
+                    ), this);
+                    logger.info("CGGMP signature service initialized successfully for node {} with {} total nodes", nodeId, nodesCount);
+                })
+                .exceptionally(ex -> {
+                    logger.error("Failed to init CGGMP signature service: {}", ex.getMessage(), ex);
+                    throw new RuntimeException(ex);
+                });
+    }
+
+    @Override
+    public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
+        Object logTaskId = "N/A";
+        if (message.data instanceof Map<?, ?> map) {
+            if (map.containsKey("taskId")) {
+                logTaskId = map.get("taskId");
+            } else if (map.containsKey("signatureTaskId")) {
+                logTaskId = map.get("signatureTaskId");
+            }
+        }
+        logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
+                senderId, message.type, logTaskId);
+        Executor executor = ThreadPoolUtil.getSingleThreadPool();
+        return CompletableFuture.runAsync(() -> {
+            try {
+                Object data = message.data;
+                if (data instanceof byte[] bytes) {
+                    Object decoded = maybeDecompressDkgPayload(message.type, bytes);
+                    if (decoded != null) {
+                        data = decoded;
+                    }
+                }
+                logger.info("=== CGGMP processing: type={} ===", message.type);
+                switch (message.type) {
+                    case CGGMP_REFRESH_R1:
+                        handleRefreshR1(senderId, data);
+                        break;
+                    case CGGMP_REFRESH_R2:
+                        handleRefreshR2(senderId, data);
+                        break;
+                    case CGGMP_REFRESH_R3:
+                        handleRefreshR3(senderId, data);
+                        break;
+                    case CGGMP_REFRESH_COMPLAINT:
+                        handleRefreshComplaint(senderId, data);
+                        break;
+                    case CGGMP_REFRESH_EXCLUDE:
+                        handleRefreshExclude(senderId, data);
+                        break;
+                    default:
+                        logger.debug("Ignoring message of type {} for CGGMP service", message.type);
+                }
+            } catch (Exception e) {
+                logger.error("Error handling CGGMP message", e);
+                throw new RuntimeException(e);
+            }
+        }, executor);
+    }
+
     // 已废弃：基于 MtA 的 DKG 处理程序，已在 CGGMP21 DKG 中移除
 
+
+    private CggmpRefreshTask createRefreshTaskInternal(String taskId, String groupPublicKey, Set<Integer> participants, int initiatorId) {
+        CggmpRefreshTask task = new CggmpRefreshTask(taskId, groupPublicKey, nodesCount, initiatorId, participants);
+        refreshTasks.put(taskId, task);
+        return task;
+    }
 
     private static byte[] buildRefreshContext(String taskId, byte[] rid, int senderId, String label) {
         String base = "REFRESH:" + label + ":" + taskId + ":" + senderId + ":";
@@ -1160,73 +1227,6 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         }
         BigInteger q = Secp256k1CurveUtils.n();
         return publicKey.n.compareTo(q.pow(8)) >= 0;
-    }
-
-    @Override
-    public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
-        Object logTaskId = "N/A";
-        if (message.data instanceof Map<?, ?> map) {
-            if (map.containsKey("taskId")) {
-                logTaskId = map.get("taskId");
-            } else if (map.containsKey("signatureTaskId")) {
-                logTaskId = map.get("signatureTaskId");
-            }
-        }
-        logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
-                senderId, message.type, logTaskId);
-        Executor executor = ThreadPoolUtil.getSingleThreadPool();
-        return CompletableFuture.runAsync(() -> {
-            try {
-                Object data = message.data;
-                if (data instanceof byte[] bytes) {
-                    Object decoded = maybeDecompressDkgPayload(message.type, bytes);
-                    if (decoded != null) {
-                        data = decoded;
-                    }
-                }
-                logger.info("=== CGGMP processing: type={} ===", message.type);
-                switch (message.type) {
-                    case CGGMP_REFRESH_R1:
-                        handleRefreshR1(senderId, data);
-                        break;
-                    case CGGMP_REFRESH_R2:
-                        handleRefreshR2(senderId, data);
-                        break;
-                    case CGGMP_REFRESH_R3:
-                        handleRefreshR3(senderId, data);
-                        break;
-                    case CGGMP_REFRESH_COMPLAINT:
-                        handleRefreshComplaint(senderId, data);
-                        break;
-                    case CGGMP_REFRESH_EXCLUDE:
-                        handleRefreshExclude(senderId, data);
-                        break;
-                    default:
-                        logger.debug("Ignoring message of type {} for CGGMP service", message.type);
-                }
-            } catch (Exception e) {
-                logger.error("Error handling CGGMP message", e);
-                throw new RuntimeException(e);
-            }
-        }, executor);
-    }
-
-    public CompletableFuture<Void> init(int nodesCount) {
-        return nodeService.startP2PServer()
-                .thenRun(() -> {
-                    nodeService.registerMessageHandler(EnumSet.of(
-                            MessageType.CGGMP_REFRESH_R1,
-                            MessageType.CGGMP_REFRESH_R2,
-                            MessageType.CGGMP_REFRESH_R3,
-                            MessageType.CGGMP_REFRESH_COMPLAINT,
-                            MessageType.CGGMP_REFRESH_EXCLUDE
-                    ), this);
-                    logger.info("CGGMP signature service initialized successfully for node {} with {} total nodes", nodeId, nodesCount);
-                })
-                .exceptionally(ex -> {
-                    logger.error("Failed to init CGGMP signature service: {}", ex.getMessage(), ex);
-                    throw new RuntimeException(ex);
-                });
     }
 
     private CompletableFuture<Boolean> waitForNetworkReadyAsync(long timeoutSeconds) {

@@ -1,16 +1,16 @@
 package com.example.mpc.service;
 
+import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
-import com.example.mpc.cggmp.proof.BiPrimeProofValidator;
 import com.example.mpc.cggmp.proof.NoSmallFactorProof;
 import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
-import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
 import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
-import com.example.mpc.cggmp.util.CggmpCodecUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.cggmp.proof.BiPrimeProofValidator;
+import com.example.mpc.cggmp.proof.NoSmallFactorProofValidator;
 import com.example.mpc.common.response.AuxTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
@@ -49,6 +49,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class CggmpAuxService implements NodeService.MessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpAuxService.class);
+    private final SecureRandom secureRandom = new SecureRandom();
     private static final ExecutorService auxExecutorService = ThreadPoolUtil.getAuxThreadPool();
     private static final BiPrimeProofValidator BI_PRIME_VALIDATOR = new BiPrimeProofValidator();
 
@@ -71,6 +72,15 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     private long auxAutoCheckIntervalSeconds;
 
     private final Map<String, CggmpAuxTask> auxTasks = new ConcurrentHashMap<>();
+    private static final class AuxStatus {
+        final boolean hasAux;
+        final long tsMs;
+
+        AuxStatus(boolean hasAux, long tsMs) {
+            this.hasAux = hasAux;
+            this.tsMs = tsMs;
+        }
+    }
 
     private final ConcurrentHashMap<Integer, AuxStatus> auxStatus = new ConcurrentHashMap<>();
     private final AtomicBoolean auxAutoTriggered = new AtomicBoolean(false);
@@ -78,6 +88,18 @@ public class CggmpAuxService implements NodeService.MessageHandler {
 
     private final int nodesCount = Constants.NODES_COUNT;
     private java.util.concurrent.ScheduledExecutorService auxScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+
+    private static final class PendingMsg {
+        final int senderId;
+        final Object data;
+        final MessageType type;
+
+        PendingMsg(int senderId, Object data, MessageType type) {
+            this.senderId = senderId;
+            this.data = data;
+            this.type = type;
+        }
+    }
 
     private final ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<PendingMsg>> pendingAuxMessages =
             new ConcurrentHashMap<>();
@@ -405,43 +427,43 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         final long auxStartNs = System.nanoTime();
         logger.debug("AUX protocol starting: taskId={}, executionId={}", task.taskId, task.executionId);
         return CompletableFuture.supplyAsync(() -> {
-                    logger.debug("AUX protocol running: taskId={}, executionId={}", task.taskId, task.executionId);
-                    long paillierStart = System.nanoTime();
-                    PaillierEncryption paillier = new PaillierEncryption(auxPaillierBits);
-                    logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, auxPaillierBits);
-                    task.paillier = paillier;
-                    long pedStart = System.nanoTime();
-                    ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength);
-                    logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength);
-                    task.hatN = ped.zk().hatN();
-                    task.s = ped.zk().h1();
-                    task.t = ped.zk().h2();
-                    task.pedersenLambda = ped.lambda();
+            logger.debug("AUX protocol running: taskId={}, executionId={}", task.taskId, task.executionId);
+            long paillierStart = System.nanoTime();
+            PaillierEncryption paillier = new PaillierEncryption(auxPaillierBits);
+            logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, auxPaillierBits);
+            task.paillier = paillier;
+            long pedStart = System.nanoTime();
+            ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength);
+            logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength);
+            task.hatN = ped.zk().hatN();
+            task.s = ped.zk().h1();
+            task.t = ped.zk().h2();
+            task.pedersenLambda = ped.lambda();
 
-                    byte[] rho_i = randomBytes(32);
-                    byte[] u_i = randomBytes(32);
-                    task.rho.put(nodeId, rho_i);
-                    task.u.put(nodeId, u_i);
+            byte[] rho_i = randomBytes(32);
+            byte[] u_i = randomBytes(32);
+            task.rho.put(nodeId, rho_i);
+            task.u.put(nodeId, u_i);
 
-                    PiPrmProof prmProof = RefreshProofs.createPrmProof(task.hatN, task.s, task.t, task.pedersenLambda,
-                            buildAuxContext(task.taskId, task.executionId, nodeId, "PRM"));
-                    task.prmProof = prmProof;
+            PiPrmProof prmProof = RefreshProofs.createPrmProof(task.hatN, task.s, task.t, task.pedersenLambda,
+                    buildAuxContext(task.taskId, task.executionId, nodeId, "PRM"));
+            task.prmProof = prmProof;
 
-                    String vCommit = computeAuxCommitHash(task.executionId, task.taskId, nodeId,
-                            CggmpCodecUtils.encodePaillierPublicKey(paillier.getPublicKeyInfo()),
-                            task.hatN.toString(16), task.s.toString(16), task.t.toString(16),
-                            CggmpCodecUtils.encodePiPrmProof(prmProof), rho_i, u_i);
-                    task.commitHashes.put(nodeId, vCommit);
+            String vCommit = computeAuxCommitHash(task.executionId, task.taskId, nodeId,
+                    CggmpCodecUtils.encodePaillierPublicKey(paillier.getPublicKeyInfo()),
+                    task.hatN.toString(16), task.s.toString(16), task.t.toString(16),
+                    CggmpCodecUtils.encodePiPrmProof(prmProof), rho_i, u_i);
+            task.commitHashes.put(nodeId, vCommit);
 
-                    Map<String, Object> r1 = new HashMap<>();
-                    r1.put("taskId", task.taskId);
-                    r1.put("executionId", task.executionId);
-                    r1.put("senderId", nodeId);
-                    r1.put("V", vCommit);
-                    fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1, r1)),
-                            "CGGMP_AUX_R1_RBC");
-                    return new AuxContext(task, paillier, prmProof, rho_i, u_i);
-                }, auxExecutorService)
+            Map<String, Object> r1 = new HashMap<>();
+            r1.put("taskId", task.taskId);
+            r1.put("executionId", task.executionId);
+            r1.put("senderId", nodeId);
+            r1.put("V", vCommit);
+            fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1, r1)),
+                    "CGGMP_AUX_R1_RBC");
+            return new AuxContext(task, paillier, prmProof, rho_i, u_i);
+        }, auxExecutorService)
                 .thenCompose(ctx -> waitForLatchAsync(task, task.commitLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1")
                         .exceptionally(ex -> {
                             fireAndForget(nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_R1, Map.of(
@@ -531,6 +553,22 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                     saveAuxInfo(task);
                     logger.debug("AUX protocol completed in {} ms", (System.nanoTime() - auxStartNs) / 1_000_000);
                 }, auxExecutorService);
+    }
+
+    private static class AuxContext {
+        final CggmpAuxTask task;
+        final PaillierEncryption paillier;
+        final PiPrmProof prmProof;
+        final byte[] rho;
+        final byte[] u;
+
+        AuxContext(CggmpAuxTask task, PaillierEncryption paillier, PiPrmProof prmProof, byte[] rho, byte[] u) {
+            this.task = task;
+            this.paillier = paillier;
+            this.prmProof = prmProof;
+            this.rho = rho;
+            this.u = u;
+        }
     }
 
     @Override
@@ -895,8 +933,8 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     }
 
     private static String computeTaggedHashHex(String tag, String sid, int senderId,
-                                               Map<String, Object> pkMap, String hatN, String s, String t,
-                                               Map<String, Object> prmMap, byte[] rho, byte[] u) {
+                                              Map<String, Object> pkMap, String hatN, String s, String t,
+                                              Map<String, Object> prmMap, byte[] rho, byte[] u) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             md.update(tag.getBytes(StandardCharsets.UTF_8));
@@ -918,44 +956,6 @@ public class CggmpAuxService implements NodeService.MessageHandler {
             return HexUtils.bytesToHex(md.digest());
         } catch (Exception e) {
             throw new RuntimeException("Failed to compute AUX commit hash", e);
-        }
-    }
-
-    private static final class AuxStatus {
-        final boolean hasAux;
-        final long tsMs;
-
-        AuxStatus(boolean hasAux, long tsMs) {
-            this.hasAux = hasAux;
-            this.tsMs = tsMs;
-        }
-    }
-
-    private static final class PendingMsg {
-        final int senderId;
-        final Object data;
-        final MessageType type;
-
-        PendingMsg(int senderId, Object data, MessageType type) {
-            this.senderId = senderId;
-            this.data = data;
-            this.type = type;
-        }
-    }
-
-    private static class AuxContext {
-        final CggmpAuxTask task;
-        final PaillierEncryption paillier;
-        final PiPrmProof prmProof;
-        final byte[] rho;
-        final byte[] u;
-
-        AuxContext(CggmpAuxTask task, PaillierEncryption paillier, PiPrmProof prmProof, byte[] rho, byte[] u) {
-            this.task = task;
-            this.paillier = paillier;
-            this.prmProof = prmProof;
-            this.rho = rho;
-            this.u = u;
         }
     }
 }

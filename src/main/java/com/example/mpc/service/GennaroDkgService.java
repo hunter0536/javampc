@@ -128,6 +128,41 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                 });
     }
 
+    @Override
+    public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                switch (message.type) {
+                    case GENNARO_COMMITMENT:
+                        handleCommitmentMessage(senderId, message);
+                        break;
+                    case GENNARO_SHARE:
+                        handleShareMessage(senderId, message);
+                        break;
+                    case GENNARO_PUBLIC_KEY_PART:
+                        handlePublicKeyPartMessage(senderId, message);
+                        break;
+                    case GENNARO_DKG_INIT:
+                        handleDkgInitMessage(senderId, message);
+                        break;
+                    default:
+                        break;
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                throw new RuntimeException(e);
+            }
+        }, ThreadPoolUtil.getSingleThreadPool());
+    }
+
+    public CompletableFuture<KeyShare> loadKeyShareByGroupPublicKey(String groupPublicKey) {
+        return keyShareDao.findByGroupPublicKey(nodeId, groupPublicKey);
+    }
+
+    public CompletableFuture<KeyShare> loadKeyShareByIndexAndGroupPublicKey(int shareIndex, String groupPublicKey) {
+        return keyShareDao.findByGroupPublicKey(shareIndex, groupPublicKey);
+    }
+
     public CompletableFuture<Void> startDkgProcess(String taskId) {
         logger.info("startDkgProcess invoked for task {}", taskId);
         return waitForTask(taskId, 20, 200)
@@ -639,41 +674,6 @@ public class GennaroDkgService implements NodeService.MessageHandler {
 
     private void saveKeyShareToDatabase(KeyShare keyShare) throws Exception {
         keyShareDao.save(keyShare);
-    }
-
-    public CompletableFuture<KeyShare> loadKeyShareByGroupPublicKey(String groupPublicKey) {
-        return keyShareDao.findByGroupPublicKey(nodeId, groupPublicKey);
-    }
-
-    public CompletableFuture<KeyShare> loadKeyShareByIndexAndGroupPublicKey(int shareIndex, String groupPublicKey) {
-        return keyShareDao.findByGroupPublicKey(shareIndex, groupPublicKey);
-    }
-
-    @Override
-    public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
-        return CompletableFuture.runAsync(() -> {
-            try {
-                switch (message.type) {
-                    case GENNARO_COMMITMENT:
-                        handleCommitmentMessage(senderId, message);
-                        break;
-                    case GENNARO_SHARE:
-                        handleShareMessage(senderId, message);
-                        break;
-                    case GENNARO_PUBLIC_KEY_PART:
-                        handlePublicKeyPartMessage(senderId, message);
-                        break;
-                    case GENNARO_DKG_INIT:
-                        handleDkgInitMessage(senderId, message);
-                        break;
-                    default:
-                        break;
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-                throw new RuntimeException(e);
-            }
-        }, ThreadPoolUtil.getSingleThreadPool());
     }
 
     private void handleCommitmentMessage(int senderId, NodeService.Message message) throws Exception {

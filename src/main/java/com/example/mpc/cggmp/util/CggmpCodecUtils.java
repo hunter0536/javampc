@@ -1,29 +1,17 @@
 package com.example.mpc.cggmp.util;
 
-import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
 import com.example.mpc.cggmp.mta.MtAResult;
-import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
-import com.example.mpc.cggmp.proof.NoSmallFactorProof;
-import com.example.mpc.cggmp.proof.PaillierRangeProof;
-import com.example.mpc.cggmp.proof.PaillierRespondentProof;
-import com.example.mpc.cggmp.proof.PiAffGProof;
-import com.example.mpc.cggmp.proof.PiDecProof;
-import com.example.mpc.cggmp.proof.PiEncElgProof;
-import com.example.mpc.cggmp.proof.PiEncProof;
-import com.example.mpc.cggmp.proof.PiLogProof;
-import com.example.mpc.cggmp.proof.PiLogStarProof;
-import com.example.mpc.cggmp.proof.PiPrmProof;
-import com.example.mpc.cggmp.proof.PiSchProof;
+import com.example.mpc.cggmp.proof.*;
 import com.example.mpc.cggmp.zk.ZKSetup;
-import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.cggmp.PaillierEncryption;
+
 import org.bouncycastle.math.ec.ECPoint;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
+import com.example.mpc.common.util.HexUtils;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public final class CggmpCodecUtils {
     private CggmpCodecUtils() {

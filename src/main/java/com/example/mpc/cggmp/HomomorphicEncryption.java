@@ -26,39 +26,27 @@ public interface HomomorphicEncryption {
 
     interface PublicKey {
         BigInteger n();
-
         BigInteger nSquared();
-
         BigInteger g();
-
         int bitLength();
 
         BigInteger encrypt(BigInteger m);
-
         Encryption encryptWithRandomness(BigInteger m);
-
         BigInteger add(BigInteger c1, BigInteger c2);
-
         BigInteger multiply(BigInteger c, BigInteger k);
     }
 
     interface PrivateKey {
         BigInteger lambda();
-
         BigInteger mu();
-
         BigInteger p();
-
         BigInteger q();
-
         BigInteger n();
-
         int bitLength();
     }
 
     interface Encryption {
         BigInteger c();
-
         BigInteger r();
     }
 
@@ -72,13 +60,9 @@ public interface HomomorphicEncryption {
         }
 
         @Override
-        public BigInteger c() {
-            return c;
-        }
+        public BigInteger c() { return c; }
 
         @Override
-        public BigInteger r() {
-            return r;
-        }
+        public BigInteger r() { return r; }
     }
 }

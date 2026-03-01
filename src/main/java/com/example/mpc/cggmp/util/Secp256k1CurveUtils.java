@@ -1,9 +1,10 @@
 package com.example.mpc.cggmp.util;
 
-import com.example.mpc.common.util.HexUtils;
 import org.bouncycastle.asn1.x9.X9ECParameters;
 import org.bouncycastle.crypto.ec.CustomNamedCurves;
 import org.bouncycastle.math.ec.ECPoint;
+
+import com.example.mpc.common.util.HexUtils;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;

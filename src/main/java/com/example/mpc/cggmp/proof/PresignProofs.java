@@ -1,12 +1,17 @@
 package com.example.mpc.cggmp.proof;
 
 import com.example.mpc.cggmp.PaillierEncryption;
-import com.example.mpc.cggmp.util.BigIntegerUtils;
+import com.example.mpc.cggmp.proof.PaillierRangeEncryptionWitness;
+import com.example.mpc.cggmp.proof.PaillierRangeProof;
+import com.example.mpc.cggmp.proof.PaillierRangeProofContext;
+import com.example.mpc.cggmp.proof.PaillierRangeProofGenerator;
+import com.example.mpc.cggmp.proof.PaillierRangeProofValidator;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
-import com.example.mpc.cggmp.zk.ZKSetup;
-import org.bouncycastle.math.ec.ECPoint;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.example.mpc.cggmp.zk.ZKSetup;
+import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
 import java.security.MessageDigest;
@@ -14,17 +19,15 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 public final class PresignProofs {
     private static final Logger logger = LoggerFactory.getLogger(PresignProofs.class);
-
-    public record EncElgVerifyResult(boolean ok, boolean eq1, boolean eq2, boolean eq3, boolean eq4,
-                                     boolean z1InRange) {
+    public record EncElgVerifyResult(boolean ok, boolean eq1, boolean eq2, boolean eq3, boolean eq4, boolean z1InRange) {
     }
 
-    public record AffGVerifyResult(boolean ok, int index, boolean eq1, boolean eq2, boolean eq3, boolean zInRange,
-                                   boolean zPrimeInRange) {
+    public record AffGVerifyResult(boolean ok, int index, boolean eq1, boolean eq2, boolean eq3, boolean zInRange, boolean zPrimeInRange) {
     }
 
     private PresignProofs() {
@@ -72,21 +75,27 @@ public final class PresignProofs {
     private static final int RANGE_EPS_BITS = 16;
 
     public static PiAffGProof createAffGProof(ECPoint g,
+                                              ECPoint X,
                                               BigInteger N0,
                                               BigInteger N1,
                                               BigInteger C,
+                                              BigInteger D,
+                                              BigInteger Y,
                                               BigInteger x,
                                               BigInteger y,
                                               BigInteger rho,
                                               BigInteger mu,
                                               byte[] context) {
-        return createAffGProof(g, N0, N1, C, x, y, rho, mu, DEFAULT_KAPPA, RANGE_EPS_BITS, context);
+        return createAffGProof(g, X, N0, N1, C, D, Y, x, y, rho, mu, DEFAULT_KAPPA, RANGE_EPS_BITS, context);
     }
 
     public static PiAffGProof createAffGProof(ECPoint g,
+                                              ECPoint X,
                                               BigInteger N0,
                                               BigInteger N1,
                                               BigInteger C,
+                                              BigInteger D,
+                                              BigInteger Y,
                                               BigInteger x,
                                               BigInteger y,
                                               BigInteger rho,
@@ -94,13 +103,16 @@ public final class PresignProofs {
                                               int kappa,
                                               int epsBits,
                                               byte[] context) {
-        return createAffGProofInternal(g, N0, N1, C, x, y, rho, mu, false, kappa, epsBits, context);
+        return createAffGProofInternal(g, X, N0, N1, C, D, Y, x, y, rho, mu, false, kappa, epsBits, context);
     }
 
     public static PiAffGProof createAffGProofNegY(ECPoint g,
+                                                  ECPoint X,
                                                   BigInteger N0,
                                                   BigInteger N1,
                                                   BigInteger C,
+                                                  BigInteger D,
+                                                  BigInteger Y,
                                                   BigInteger x,
                                                   BigInteger y,
                                                   BigInteger rho,
@@ -108,13 +120,16 @@ public final class PresignProofs {
                                                   int kappa,
                                                   int epsBits,
                                                   byte[] context) {
-        return createAffGProofInternal(g, N0, N1, C, x, y, rho, mu, true, kappa, epsBits, context);
+        return createAffGProofInternal(g, X, N0, N1, C, D, Y, x, y, rho, mu, true, kappa, epsBits, context);
     }
 
     private static PiAffGProof createAffGProofInternal(ECPoint g,
+                                                       ECPoint X,
                                                        BigInteger N0,
                                                        BigInteger N1,
                                                        BigInteger C,
+                                                       BigInteger D,
+                                                       BigInteger Y,
                                                        BigInteger x,
                                                        BigInteger y,
                                                        BigInteger rho,
@@ -334,6 +349,7 @@ public final class PresignProofs {
 
     public static boolean verifyLogStarProof(PiLogStarProof proof, ECPoint base, ECPoint X, byte[] context) {
         if (proof == null || proof.A() == null || proof.z() == null) return false;
+        BigInteger q = Secp256k1CurveUtils.n();
         BigInteger c = challenge("PI_LOGSTAR", base, X, proof.A(), context);
         ECPoint left = base.multiply(proof.z()).normalize();
         ECPoint right = proof.A().add(X.multiply(c)).normalize();
