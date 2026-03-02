@@ -35,6 +35,18 @@ public final class CggmpRefreshMessageHandler {
         this.svc = svc;
     }
 
+    CompletableFuture<Void> sendRefreshInit(CggmpRefreshTask task) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("senderId", svc.nodeId);
+        data.put("groupPublicKey", task.groupPublicKey);
+        data.put("initiatorId", task.initiatorId);
+        data.put("participants", new ArrayList<>(task.participants));
+        logger.debug("Refresh INIT send (taskId={}, initiatorId={}, participants={})",
+                task.taskId, task.initiatorId, task.participants.size());
+        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_INIT, data));
+    }
+
     CompletableFuture<Void> sendRefreshR1(CggmpRefreshTask task, String commit) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
@@ -44,6 +56,50 @@ public final class CggmpRefreshMessageHandler {
         data.put("participants", new ArrayList<>(task.participants));
         data.put("commit", commit);
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R1, data));
+    }
+
+    void onRefreshInit(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
+        }
+        String taskId = (String) dataMap.get("taskId");
+        String groupPublicKey = (String) dataMap.get("groupPublicKey");
+        Object participantsValue = dataMap.get("participants");
+        Object initiatorValue = dataMap.get("initiatorId");
+        if (taskId == null || groupPublicKey == null) {
+            return;
+        }
+        logger.debug("Refresh INIT received (taskId={}, senderId={})", taskId, senderId);
+        int initiatorId = initiatorValue instanceof Number n ? n.intValue() : senderId;
+        Set<Integer> participants = new LinkedHashSet<>();
+        if (participantsValue instanceof List<?> list) {
+            for (Object v : list) {
+                if (v instanceof Number n) {
+                    participants.add(n.intValue());
+                }
+            }
+        }
+        if (participants.isEmpty()) {
+            for (int i = 1; i <= svc.nodesCount; i++) {
+                participants.add(i);
+            }
+        }
+        CggmpRefreshTask task = svc.refreshTasks.get(taskId);
+        if (task == null) {
+            task = new CggmpRefreshTask(taskId, groupPublicKey, svc.nodesCount, initiatorId, participants);
+            svc.refreshTasks.put(taskId, task);
+            logger.debug("Refresh task created from INIT (taskId={}, initiatorId={}, participants={})",
+                    taskId, initiatorId, participants.size());
+        }
+        if (!task.participants.contains(svc.nodeId)) {
+            return;
+        }
+        if (!task.isInProgress() && !task.isCompleted()) {
+            svc.startRefreshTaskFromMessage(taskId, senderId).exceptionally(ex -> {
+                logger.error("Failed to auto-start refresh task {}: {}", taskId, ex.getMessage());
+                return null;
+            });
+        }
     }
 
     CompletableFuture<Void> sendRefreshR2(CggmpRefreshTask task, CggmpRefreshTask.RefreshRound2Data r2) {
@@ -138,7 +194,7 @@ public final class CggmpRefreshMessageHandler {
         logger.debug("Refresh R1 stored (taskId={}, senderId={}, round1Latch={})",
                 taskId, senderId, task.round1Latch.getCount());
         if (task.participants.contains(svc.nodeId) && !task.isInProgress() && !task.isCompleted()) {
-            svc.startRefreshTask(taskId).exceptionally(ex -> {
+            svc.startRefreshTaskFromMessage(taskId, senderId).exceptionally(ex -> {
                 logger.error("Failed to auto-start refresh task {}: {}", taskId, ex.getMessage());
                 return null;
             });
@@ -319,7 +375,7 @@ public final class CggmpRefreshMessageHandler {
                 svc.createRefreshTaskInternal(newTaskId, groupPublicKey, participants, senderId);
             }
             if (participants.contains(svc.nodeId)) {
-                svc.startRefreshTask(newTaskId).exceptionally(ex -> {
+                svc.startRefreshTaskFromMessage(newTaskId, senderId).exceptionally(ex -> {
                     logger.error("Failed to start new refresh task {}: {}", newTaskId, ex.getMessage());
                     return null;
                 });

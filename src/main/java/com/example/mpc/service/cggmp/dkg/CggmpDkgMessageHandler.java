@@ -61,6 +61,11 @@ public final class CggmpDkgMessageHandler {
                     participants = p;
                 }
             }
+            if (participants != null && !isFullParticipants(participants, nodesCount)) {
+                logger.error("Rejecting DKG init {}: requires full participation (participants={}, nodesCount={})",
+                        taskId, participants.size(), nodesCount);
+                return;
+            }
             logger.info("Received CGGMP_DKG_INIT from node {} for task: {}, nodesCount: {}, initiatorId={}, participants={}",
                     senderId, taskId, nodesCount, initiatorId, participants == null ? "default" : participants.size());
 
@@ -81,6 +86,18 @@ public final class CggmpDkgMessageHandler {
 
             svc.dkgProtocolHandler.startDkgProcessInternal(taskId, false);
         }
+    }
+
+    private static boolean isFullParticipants(Set<Integer> participants, int nodesCount) {
+        if (participants.size() != nodesCount) {
+            return false;
+        }
+        for (int i = 1; i <= nodesCount; i++) {
+            if (!participants.contains(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void onDkgRound1(int senderId, Object data) {

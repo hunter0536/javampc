@@ -63,6 +63,36 @@ public final class CggmpAuxProtocolHandler {
             logger.debug("AUX PRM proof start: taskId={}, executionId={}, senderId={}", task.taskId, task.executionId, svc.nodeId);
             PiPrmProof prmProof = RefreshProofs.createPrmProof(task.hatN, task.s, task.t, task.pedersenLambda,
                     CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "PRM"));
+            if (logger.isDebugEnabled()) {
+                logger.debug("AUX PRM proof inputs: taskId={}, executionId={}, senderId={}, hatNBits={}, sBits={}, tBits={}, lambdaBits={}, lambdaSign={}",
+                        task.taskId,
+                        task.executionId,
+                        svc.nodeId,
+                        task.hatN == null ? -1 : task.hatN.bitLength(),
+                        task.s == null ? -1 : task.s.bitLength(),
+                        task.t == null ? -1 : task.t.bitLength(),
+                        task.pedersenLambda == null ? -1 : task.pedersenLambda.bitLength(),
+                        task.pedersenLambda == null ? 0 : task.pedersenLambda.signum());
+                byte[] prmCtx = CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "PRM");
+                boolean selfOk = RefreshProofs.verifyPrmProof(prmProof, task.hatN, task.s, task.t, prmCtx);
+                String ctxHash;
+                try {
+                    ctxHash = HexUtils.bytesToHex(java.security.MessageDigest.getInstance("SHA-256").digest(prmCtx));
+                } catch (Exception e) {
+                    ctxHash = "error";
+                }
+                String aHex = prmProof.A() == null ? null : prmProof.A().toString(16);
+                String zHex = prmProof.z() == null ? null : prmProof.z().toString(16);
+                logger.debug("AUX PRM proof self-verify: taskId={}, executionId={}, senderId={}, ok={}, ctxHash={}, ctxPrefix={}, A.prefix={}, z.prefix={}",
+                        task.taskId,
+                        task.executionId,
+                        svc.nodeId,
+                        selfOk,
+                        ctxHash,
+                        HexUtils.bytesToHex(prmCtx).substring(0, Math.min(24, prmCtx.length * 2)),
+                        aHex == null ? null : aHex.substring(0, Math.min(24, aHex.length())),
+                        zHex == null ? null : zHex.substring(0, Math.min(24, zHex.length())));
+            }
             logger.debug("AUX PRM proof generated in {} ms (taskId={}, executionId={}, senderId={})",
                     (System.nanoTime() - prmStart) / 1_000_000, task.taskId, task.executionId, svc.nodeId);
             task.prmProof = prmProof;

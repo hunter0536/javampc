@@ -34,7 +34,7 @@ public final class RefreshProofs {
     public static PiPrmProof createPrmProof(BigInteger hatN, BigInteger s, BigInteger t, BigInteger lambda, byte[] context) {
         SecureRandom rnd = new SecureRandom();
         BigInteger alpha = new BigInteger(hatN.bitLength(), rnd).mod(hatN);
-        BigInteger A = BigIntegerUtils.powSigned(t, alpha, hatN);
+        BigInteger A = BigIntegerUtils.powSigned(s, alpha, hatN);
         BigInteger q = Secp256k1CurveUtils.n();
         BigInteger e = challenge("PI_PRM", q, context, hatN, s, t, A);
         BigInteger z = alpha.add(e.multiply(lambda));
@@ -45,8 +45,8 @@ public final class RefreshProofs {
         if (proof == null || proof.A() == null || proof.z() == null) return false;
         BigInteger q = Secp256k1CurveUtils.n();
         BigInteger e = challenge("PI_PRM", q, context, hatN, s, t, proof.A());
-        BigInteger left = BigIntegerUtils.powSigned(t, proof.z(), hatN);
-        BigInteger right = proof.A().multiply(BigIntegerUtils.powSigned(s, e, hatN)).mod(hatN);
+        BigInteger left = BigIntegerUtils.powSigned(s, proof.z(), hatN);
+        BigInteger right = proof.A().multiply(BigIntegerUtils.powSigned(t, e, hatN)).mod(hatN);
         return left.equals(right);
     }
 

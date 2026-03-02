@@ -42,6 +42,9 @@ public final class CggmpRefreshMessageDispatcher {
                 }
                 logger.info("=== CGGMP processing: type={} ===", message.type);
                 switch (message.type) {
+                    case CGGMP_REFRESH_INIT:
+                        svc.refreshMessageHandler.onRefreshInit(senderId, data);
+                        break;
                     case CGGMP_REFRESH_R1:
                         svc.refreshMessageHandler.onRefreshR1(senderId, data);
                         break;

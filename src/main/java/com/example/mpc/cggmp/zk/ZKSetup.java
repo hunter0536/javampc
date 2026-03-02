@@ -1,5 +1,7 @@
 package com.example.mpc.cggmp.zk;
 
+import com.example.mpc.cggmp.util.BigIntegerUtils;
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,7 +18,20 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
 
     public static ZKSetupWithLambda generateWithLambda(int bitLength) {
         InternalSetup setup = generateInternal(bitLength);
-        return new ZKSetupWithLambda(new ZKSetup(setup.hatN, setup.h1, setup.h2), setup.lambda);
+        SecureRandom rnd = new SecureRandom();
+        BigInteger q = Secp256k1CurveUtils.n();
+        BigInteger lambda;
+        do {
+            lambda = new BigInteger(q.bitLength(), rnd).mod(q);
+        } while (lambda.signum() == 0);
+        BigInteger h2 = BigIntegerUtils.powSigned(setup.h1, lambda, setup.hatN);
+        ZKSetup zk = new ZKSetup(setup.hatN, setup.h1, h2);
+        if (logger.isDebugEnabled()) {
+            BigInteger check = BigIntegerUtils.powSigned(zk.h1(), lambda, zk.hatN());
+            logger.debug("ZKSetup lambda relation check: hatNBits={}, h1Bits={}, h2Bits={}, ok={}",
+                    zk.hatN().bitLength(), zk.h1().bitLength(), zk.h2().bitLength(), check.equals(zk.h2()));
+        }
+        return new ZKSetupWithLambda(zk, lambda);
     }
 
     private static InternalSetup generateInternal(int bitLength) {

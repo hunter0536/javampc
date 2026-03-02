@@ -53,13 +53,15 @@ public final class CggmpAuxUtils {
 
     static byte[] xorAuxRho(int nodeId, CggmpAuxTask task) {
         byte[] result = new byte[32];
-        byte[] myRho = task.rho.get(nodeId);
-        if (myRho == null) {
+        if (task.rho.isEmpty()) {
             return result;
         }
-        System.arraycopy(myRho, 0, result, 0, 32);
         for (byte[] rho : task.rho.values()) {
-            for (int i = 0; i < 32; i++) {
+            if (rho == null || rho.length == 0) {
+                continue;
+            }
+            int len = Math.min(rho.length, result.length);
+            for (int i = 0; i < len; i++) {
                 result[i] ^= rho[i];
             }
         }

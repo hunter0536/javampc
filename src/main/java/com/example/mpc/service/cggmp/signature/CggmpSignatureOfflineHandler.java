@@ -502,6 +502,14 @@ public final class CggmpSignatureOfflineHandler {
         if (keyShare == null) {
             throw new RuntimeException("Key share not found");
         }
+        if (logger.isDebugEnabled()) {
+            logger.debug("Signature key share loaded (taskId={}, nodeId={}, groupPublicKey={}, dkgTaskId={}, shareHash={})",
+                    task.taskId,
+                    svc.nodeId,
+                    task.groupPublicKey,
+                    keyShare.getDkgTaskId(),
+                    sha256Hex(keyShare.getKeyShare()));
+        }
         if (task.publicShares == null) {
             task.publicShares = DbMapUtils.parsePublicShares(keyShare.getPublicShares());
         }
@@ -859,6 +867,11 @@ public final class CggmpSignatureOfflineHandler {
                     HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(rightS)),
                     delta.toString(16),
                     ctx.task.participants);
+            logger.warn("Presign chi mismatch summary task {}: presignDelta.size={}, presignSPoint.size={}, presignDeltaPoint.size={}",
+                    ctx.task.taskId,
+                    ctx.task.presignDelta.size(),
+                    ctx.task.presignSPoint.size(),
+                    ctx.task.presignDeltaPoint.size());
             for (int peerId : ctx.task.participants) {
                 ECPoint sPoint = ctx.task.presignSPoint.get(peerId);
                 BigInteger deltaShare = ctx.task.presignDelta.get(peerId);
@@ -870,6 +883,33 @@ public final class CggmpSignatureOfflineHandler {
                         peerId,
                         sPoint == null ? null : HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(sPoint)),
                         deltaShare == null ? null : deltaShare.toString(16));
+            }
+            // Identify which peer contribution breaks the chi check by excluding it.
+            for (int peerId : ctx.task.participants) {
+                ECPoint sPoint = ctx.task.presignSPoint.get(peerId);
+                BigInteger deltaShare = ctx.task.presignDelta.get(peerId);
+                if (sPoint == null || deltaShare == null) {
+                    continue;
+                }
+                BigInteger deltaEx = delta.subtract(deltaShare).mod(ctx.curveOrder);
+                ECPoint leftEx = X.multiply(deltaEx).normalize();
+                ECPoint rightEx = null;
+                for (Map.Entry<Integer, ECPoint> e : ctx.task.presignSPoint.entrySet()) {
+                    if (e.getKey().intValue() == peerId) {
+                        continue;
+                    }
+                    rightEx = rightEx == null ? e.getValue() : rightEx.add(e.getValue());
+                }
+                if (rightEx != null) {
+                    rightEx = rightEx.normalize();
+                }
+                boolean matchesEx = rightEx != null && leftEx.equals(rightEx);
+                logger.warn("Presign chi mismatch isolate task {} peer {}: excludePeerMatch={}, leftEx={}, rightEx={}",
+                        ctx.task.taskId,
+                        peerId,
+                        matchesEx,
+                        HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(leftEx)),
+                        rightEx == null ? null : HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(rightEx)));
             }
             Map<String, Object> evidence = svc.evidenceHandler.buildDecEvidenceChi(ctx.task, ctx.x_i, r3ctx.chi_i);
             CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(ctx.task, null, "Presign chi verification failed", evidence),
@@ -903,7 +943,24 @@ public final class CggmpSignatureOfflineHandler {
         if (keyShare == null) {
             throw new RuntimeException("Key share not found");
         }
+        if (logger.isDebugEnabled()) {
+            logger.debug("Signature local share loaded (nodeId={}, groupPublicKey={}, dkgTaskId={}, shareHash={})",
+                    svc.nodeId,
+                    groupPublicKey,
+                    keyShare.getDkgTaskId(),
+                    sha256Hex(keyShare.getKeyShare()));
+        }
         BigInteger share = new BigInteger(keyShare.getKeyShare(), 16);
         return share.mod(Secp256k1CurveUtils.n());
+    }
+
+    private static String sha256Hex(String hex) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            md.update(hex.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return HexUtils.bytesToHex(md.digest());
+        } catch (Exception e) {
+            return "error";
+        }
     }
 }

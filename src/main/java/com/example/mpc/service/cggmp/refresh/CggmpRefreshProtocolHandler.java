@@ -7,6 +7,7 @@ import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.model.CggmpRefreshTask;
 import com.example.mpc.model.KeyShare;
@@ -15,8 +16,11 @@ import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
@@ -39,13 +43,40 @@ public final class CggmpRefreshProtocolHandler {
         if (task == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Refresh task not found"));
         }
+        if (task.initiatorId != svc.nodeId) {
+            task.fail("Refresh start must be triggered by initiator");
+            return CompletableFuture.failedFuture(new RuntimeException("Refresh start must be triggered by initiator"));
+        }
+        if (!validateFullParticipation(task)) {
+            task.fail("Refresh requires full participation");
+            return CompletableFuture.failedFuture(new RuntimeException("Refresh requires full participation"));
+        }
         if (!task.start()) {
             return CompletableFuture.completedFuture(null);
         }
-        return runRefreshProtocolAsync(task);
+        return runRefreshProtocolAsync(task, true);
     }
 
-    private CompletableFuture<Void> runRefreshProtocolAsync(CggmpRefreshTask task) {
+    public CompletableFuture<Void> startRefreshTaskFromMessage(String taskId, int senderId) {
+        CggmpRefreshTask task = svc.refreshTasks.get(taskId);
+        if (task == null) {
+            return CompletableFuture.failedFuture(new RuntimeException("Refresh task not found"));
+        }
+        if (senderId != task.initiatorId) {
+            task.fail("Refresh start must be triggered by initiator");
+            return CompletableFuture.failedFuture(new RuntimeException("Refresh start must be triggered by initiator"));
+        }
+        if (!validateFullParticipation(task)) {
+            task.fail("Refresh requires full participation");
+            return CompletableFuture.failedFuture(new RuntimeException("Refresh requires full participation"));
+        }
+        if (!task.start()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return runRefreshProtocolAsync(task, false);
+    }
+
+    private CompletableFuture<Void> runRefreshProtocolAsync(CggmpRefreshTask task, boolean broadcastInit) {
         return waitForNetworkReadyAsync(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS)
                 .thenCompose(ready -> {
                     if (!ready) {
@@ -58,21 +89,14 @@ public final class CggmpRefreshProtocolHandler {
                             if (!task.participants.contains(svc.nodeId)) {
                                 return null;
                             }
+                            if (broadcastInit) {
+                                CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.sendRefreshInit(task), logger, "CGGMP_REFRESH_INIT");
+                            }
 
                             BigInteger xi = svc.loadLocalShare(task.groupPublicKey);
                             ECPoint Xi = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), xi);
-
-                            BigInteger sum = BigInteger.ZERO;
-                            for (int peerId : task.participants) {
-                                if (peerId == svc.nodeId) {
-                                    continue;
-                                }
-                                BigInteger share = CggmpProtocolUtils.randomNonZero(q);
-                                task.xShares.put(peerId, share);
-                                sum = sum.add(share).mod(q);
-                            }
-                            BigInteger selfShare = q.subtract(sum).mod(q);
-                            task.xShares.put(svc.nodeId, selfShare);
+                            Map<Integer, BigInteger> indexMap = svc.loadIndexMap(task.groupPublicKey);
+                            generateRefreshShares(task, q, indexMap);
                             for (int peerId : task.participants) {
                                 BigInteger x = task.xShares.get(peerId);
                                 task.xPoints.put(peerId, Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x));
@@ -180,6 +204,32 @@ public final class CggmpRefreshProtocolHandler {
                 });
     }
 
+    private void generateRefreshShares(CggmpRefreshTask task, BigInteger q, Map<Integer, BigInteger> indexMap) {
+        int threshold = Math.min(Constants.THRESHOLD, task.participants.size());
+        if (threshold <= 1) {
+            for (int peerId : task.participants) {
+                task.xShares.put(peerId, BigInteger.ZERO);
+            }
+            return;
+        }
+        List<BigInteger> coeffs = new ArrayList<>();
+        for (int i = 1; i < threshold; i++) {
+            coeffs.add(CggmpProtocolUtils.randomNonZero(q));
+        }
+        for (int peerId : task.participants) {
+            BigInteger xVal = indexMap != null && indexMap.get(peerId) != null
+                    ? indexMap.get(peerId)
+                    : BigInteger.valueOf(peerId);
+            BigInteger share = BigInteger.ZERO;
+            BigInteger power = BigInteger.ONE;
+            for (BigInteger coeff : coeffs) {
+                power = power.multiply(xVal).mod(q);
+                share = share.add(coeff.multiply(power)).mod(q);
+            }
+            task.xShares.put(peerId, share);
+        }
+    }
+
     private boolean finalizeRefresh(CggmpRefreshTask task) {
         if (task.rid == null || task.rid.length == 0) {
             return false;
@@ -211,11 +261,10 @@ public final class CggmpRefreshProtocolHandler {
                         logger, "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
-            ECPoint sum = Secp256k1CurveUtils.sumPoints(r2.X);
-            if (!sum.isInfinity()) {
+            if (!isRefreshXZeroAtOrigin(task, r2.X)) {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("peerId", peerId);
-                extra.put("xSum", HexUtils.bytesToHex(sum.getEncoded(false)));
+                extra.put("xSum", HexUtils.bytesToHex(Secp256k1CurveUtils.sumPoints(r2.X).getEncoded(false)));
                 CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Sum of X not identity",
                                 svc.refreshMessageHandler.refreshEvidence(task, peerId, "Sum of X not identity", extra)),
                         logger, "CGGMP_REFRESH_COMPLAINT");
@@ -295,8 +344,30 @@ public final class CggmpRefreshProtocolHandler {
         }
         BigInteger newShare = oldShare.add(deltaSum).mod(q);
         try {
+            KeyShare prev = svc.keyShareDao.findByGroupPublicKeySync(svc.nodeId, task.groupPublicKey);
+            String oldHash = sha256Hex(oldShare.toString(16));
+            String newHash = sha256Hex(newShare.toString(16));
+            logger.info("Refresh key share computed (taskId={}, nodeId={}, groupPublicKey={}, oldShareHash={}, newShareHash={})",
+                    task.taskId, svc.nodeId, task.groupPublicKey, oldHash, newHash);
             KeyShare keyShare = new KeyShare(svc.nodeId, newShare.toString(16), task.groupPublicKey, task.taskId);
+            String prevPublicShares = prev == null ? null : prev.getPublicShares();
+            String refreshedPublicShares = buildRefreshedPublicSharesJson(task, prevPublicShares);
+            if (refreshedPublicShares == null) {
+                logger.error("Failed to refresh public shares for task {} (nodeId={})", task.taskId, svc.nodeId);
+                return false;
+            }
+            keyShare.setPublicShares(refreshedPublicShares);
+            if (prev != null) {
+                keyShare.setIndexMap(prev.getIndexMap());
+                keyShare.setChainCode(prev.getChainCode());
+            }
+            if (!verifyLocalPublicShare(task, newShare, keyShare.getPublicShares())) {
+                logger.error("Refresh public share mismatch for task {} (nodeId={})", task.taskId, svc.nodeId);
+                return false;
+            }
             svc.keyShareDao.save(keyShare);
+            logger.info("Refresh key share persisted (taskId={}, nodeId={}, groupPublicKey={}, newShareHash={})",
+                    task.taskId, svc.nodeId, task.groupPublicKey, newHash);
         } catch (Exception e) {
             logger.error("Failed to save refreshed key share", e);
             return false;
@@ -326,5 +397,140 @@ public final class CggmpRefreshProtocolHandler {
         }, 0, 50, TimeUnit.MILLISECONDS);
         future.whenComplete((v, ex) -> tick.cancel(false));
         return future;
+    }
+
+    private static String sha256Hex(String hex) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            md.update(hex.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return com.example.mpc.common.util.HexUtils.bytesToHex(md.digest());
+        } catch (Exception e) {
+            return "error";
+        }
+    }
+
+    private boolean validateFullParticipation(CggmpRefreshTask task) {
+        if (task == null || task.participants == null) {
+            return false;
+        }
+        if (task.participants.size() != svc.nodesCount) {
+            logger.error("Refresh task {} participants size {} does not match nodesCount {}",
+                    task.taskId, task.participants.size(), svc.nodesCount);
+            return false;
+        }
+        for (int id = 1; id <= svc.nodesCount; id++) {
+            if (!task.participants.contains(id)) {
+                logger.error("Refresh task {} missing participant {}", task.taskId, id);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String buildRefreshedPublicSharesJson(CggmpRefreshTask task, String prevPublicSharesJson) {
+        try {
+            if (prevPublicSharesJson == null) {
+                return null;
+            }
+            Map<Integer, ECPoint> prevShares = com.example.mpc.common.util.DbMapUtils.parsePublicShares(prevPublicSharesJson);
+            if (prevShares == null || prevShares.isEmpty()) {
+                return null;
+            }
+            for (int id : task.participants) {
+                if (!prevShares.containsKey(id)) {
+                    logger.error("Refresh public shares missing prior entry for node {} (taskId={})", id, task.taskId);
+                    return null;
+                }
+            }
+            Map<Integer, ECPoint> deltaPoints = new HashMap<>();
+            for (int k : task.participants) {
+                ECPoint sum = null;
+                for (int peerId : task.participants) {
+                    CggmpRefreshTask.RefreshRound2Data r2 = task.round2Data.get(peerId);
+                    if (r2 == null || r2.X == null) {
+                        return null;
+                    }
+                    ECPoint xjk = r2.X.get(k);
+                    if (xjk == null) {
+                        return null;
+                    }
+                    sum = sum == null ? xjk : sum.add(xjk);
+                }
+                deltaPoints.put(k, sum.normalize());
+            }
+            Map<Integer, ECPoint> refreshed = new HashMap<>();
+            for (int k : task.participants) {
+                ECPoint base = prevShares.get(k);
+                ECPoint delta = deltaPoints.get(k);
+                if (base == null || delta == null) {
+                    return null;
+                }
+                refreshed.put(k, base.add(delta).normalize());
+            }
+            Map<String, String> out = new java.util.LinkedHashMap<>();
+            for (int k : task.participants) {
+                ECPoint point = refreshed.get(k);
+                if (point == null) {
+                    return null;
+                }
+                out.put(String.valueOf(k), HexUtils.bytesToHex(point.getEncoded(false)));
+            }
+            return JsonCodec.toJson(out);
+        } catch (Exception e) {
+            logger.error("Failed to build refreshed public shares", e);
+            return null;
+        }
+    }
+
+    private boolean verifyLocalPublicShare(CggmpRefreshTask task, BigInteger newShare, String publicSharesJson) {
+        if (publicSharesJson == null) {
+            return false;
+        }
+        try {
+            Map<Integer, ECPoint> map = com.example.mpc.common.util.DbMapUtils.parsePublicShares(publicSharesJson);
+            ECPoint expected = map.get(svc.nodeId);
+            if (expected == null) {
+                return false;
+            }
+            ECPoint actual = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), newShare);
+            return expected.equals(actual);
+        } catch (Exception e) {
+            logger.error("Failed to verify refreshed public share", e);
+            return false;
+        }
+    }
+
+    private boolean isRefreshXZeroAtOrigin(CggmpRefreshTask task, Map<Integer, ECPoint> xMap) {
+        if (xMap == null || xMap.isEmpty() || task == null) {
+            return false;
+        }
+        Map<Integer, BigInteger> indexMap = svc.loadIndexMap(task.groupPublicKey);
+        BigInteger mod = Secp256k1CurveUtils.n();
+        ECPoint sum = Secp256k1CurveUtils.G().getCurve().getInfinity();
+        for (int k : task.participants) {
+            ECPoint xjk = xMap.get(k);
+            if (xjk == null) {
+                return false;
+            }
+            BigInteger lambda = lagrangeAtZero(k, task.participants, indexMap, mod);
+            sum = sum.add(xjk.multiply(lambda)).normalize();
+        }
+        return sum.isInfinity();
+    }
+
+    private BigInteger lagrangeAtZero(int id, Set<Integer> participants, Map<Integer, BigInteger> indexMap, BigInteger mod) {
+        BigInteger num = BigInteger.ONE;
+        BigInteger den = BigInteger.ONE;
+        BigInteger idBi = indexMap != null && indexMap.get(id) != null ? indexMap.get(id) : BigInteger.valueOf(id);
+        for (int peerId : participants) {
+            if (peerId == id) {
+                continue;
+            }
+            BigInteger peerBi = indexMap != null && indexMap.get(peerId) != null ? indexMap.get(peerId) : BigInteger.valueOf(peerId);
+            num = num.multiply(peerBi).mod(mod);
+            BigInteger diff = peerBi.subtract(idBi).mod(mod);
+            den = den.multiply(diff).mod(mod);
+        }
+        return num.multiply(den.modInverse(mod)).mod(mod);
     }
 }

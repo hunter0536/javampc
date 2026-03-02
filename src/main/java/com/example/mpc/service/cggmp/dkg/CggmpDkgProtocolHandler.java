@@ -51,6 +51,9 @@ public final class CggmpDkgProtocolHandler {
             if (loadLatestAuxInfo(svc.nodeId) == null) {
                 throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before DKG.");
             }
+            if (!validateFullParticipation(task)) {
+                throw new RuntimeException("DKG requires full participation");
+            }
             if (!task.start()) {
                 logger.warn("DKG task {} failed to start (may already be in progress), skipping", taskId);
                 return CompletableFuture.completedFuture(null);
@@ -120,6 +123,21 @@ public final class CggmpDkgProtocolHandler {
                 logger.error("Error in CGGMP DKG process", ex);
             }
         });
+    }
+
+    private boolean validateFullParticipation(CggmpDkgTask task) {
+        if (task == null || task.participants == null) {
+            return false;
+        }
+        if (task.participants.size() != task.nodesCount) {
+            return false;
+        }
+        for (int i = 1; i <= task.nodesCount; i++) {
+            if (!task.participants.contains(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private CompletableFuture<Void> executeDkgRounds(CggmpDkgTask task) {

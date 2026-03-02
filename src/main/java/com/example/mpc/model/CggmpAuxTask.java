@@ -39,6 +39,7 @@ public class CggmpAuxTask {
     public final ConcurrentHashMap<Integer, Boolean> commitReceived = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> echoReceived = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, String> pendingEcho = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, java.util.Map<String, Object>> pendingReveal = new ConcurrentHashMap<>();
 
     public final ConcurrentHashMap<Integer, PaillierEncryption.PublicKey> peerPaillierKeys = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, BigInteger> peerHatN = new ConcurrentHashMap<>();

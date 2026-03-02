@@ -88,6 +88,10 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         return refreshProtocolHandler.startRefreshTask(taskId);
     }
 
+    public CompletableFuture<Void> startRefreshTaskFromMessage(String taskId, int senderId) {
+        return refreshProtocolHandler.startRefreshTaskFromMessage(taskId, senderId);
+    }
+
     public RefreshTaskStatusResponse getRefreshTaskStatus(String taskId) {
         CggmpRefreshTask task = refreshTasks.get(taskId);
         if (task == null) {
@@ -111,6 +115,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         return nodeService.startP2PServer()
                 .thenRun(() -> {
                     nodeService.registerMessageHandler(EnumSet.of(
+                            MessageType.CGGMP_REFRESH_INIT,
                             MessageType.CGGMP_REFRESH_R1,
                             MessageType.CGGMP_REFRESH_R2,
                             MessageType.CGGMP_REFRESH_R3,
@@ -143,6 +148,18 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         }
         BigInteger share = new BigInteger(keyShare.getKeyShare(), 16);
         return share.mod(Secp256k1CurveUtils.n());
+    }
+
+    public Map<Integer, BigInteger> loadIndexMap(String groupPublicKey) {
+        KeyShare keyShare = loadKeyShareByGroupPublicKeySync(groupPublicKey);
+        if (keyShare == null) {
+            throw new RuntimeException("Key share not found");
+        }
+        String indexMapJson = keyShare.getIndexMap();
+        if (indexMapJson == null || indexMapJson.isBlank()) {
+            return new java.util.LinkedHashMap<>();
+        }
+        return com.example.mpc.common.util.DbMapUtils.parseIndexMap(indexMapJson);
     }
 
     private KeyShare loadKeyShareByGroupPublicKeySync(String groupPublicKey) {
