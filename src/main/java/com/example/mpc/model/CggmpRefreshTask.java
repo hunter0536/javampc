@@ -70,37 +70,10 @@ public class CggmpRefreshTask {
         return status.get() == TaskStatus.COMPLETED;
     }
 
-    public static class RefreshRound2Data {
-        public final Map<Integer, ECPoint> Y;
-        public final Map<Integer, ECPoint> X;
-        public final Map<Integer, ECPoint> A;
-        public final ECPoint Xi;
-        public final byte[] rid;
-        public final byte[] u;
-
-        public RefreshRound2Data(Map<Integer, ECPoint> Y,
-                                 Map<Integer, ECPoint> X,
-                                 Map<Integer, ECPoint> A,
-                                 ECPoint Xi,
-                                 byte[] rid,
-                                 byte[] u) {
-            this.Y = Y;
-            this.X = X;
-            this.A = A;
-            this.Xi = Xi;
-            this.rid = rid;
-            this.u = u;
-        }
+    public record RefreshRound2Data(Map<Integer, ECPoint> Y, Map<Integer, ECPoint> X, Map<Integer, ECPoint> A,
+                                    ECPoint Xi, byte[] rid, byte[] u) {
     }
 
-    public static class RefreshRound3Data {
-        public final Map<Integer, BigInteger> C;
-        public final Map<Integer, PiSchProof> schProofs;
-
-        public RefreshRound3Data(Map<Integer, BigInteger> C,
-                                 Map<Integer, PiSchProof> schProofs) {
-            this.C = C;
-            this.schProofs = schProofs;
-        }
+    public record RefreshRound3Data(Map<Integer, BigInteger> C, Map<Integer, PiSchProof> schProofs) {
     }
 }

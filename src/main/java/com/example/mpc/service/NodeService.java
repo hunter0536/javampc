@@ -911,44 +911,18 @@ public class NodeService {
     }
 
     // 消息类
-    public static class Message implements Serializable {
-        public final int senderId;
-        public final MessageType type;
-        public final Object data;
-        public final String messageId;
-        public final boolean requireAck;
-        public final String ackForId;
-        public final boolean rbc;
-        public final String rbcHash;
+        public record Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck,
+                              String ackForId, boolean rbc, String rbcHash) implements Serializable {
+            public Message(int senderId, MessageType type, Object data) {
+                this(senderId, type, data, null, false, null, false, null);
+            }
 
-        public Message(int senderId, MessageType type, Object data) {
-            this(senderId, type, data, null, false, null, false, null);
-        }
-
-        public Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck, String ackForId) {
-            this(senderId, type, data, messageId, requireAck, ackForId, false, null);
-        }
-
-        public Message(int senderId,
-                       MessageType type,
-                       Object data,
-                       String messageId,
-                       boolean requireAck,
-                       String ackForId,
-                       boolean rbc,
-                       String rbcHash) {
-            this.senderId = senderId;
-            this.type = type;
-            this.data = data;
-            this.messageId = messageId;
-            this.requireAck = requireAck;
-            this.ackForId = ackForId;
-            this.rbc = rbc;
-            this.rbcHash = rbcHash;
-        }
+            public Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck, String ackForId) {
+                this(senderId, type, data, messageId, requireAck, ackForId, false, null);
+            }
 
         public static Message ack(int senderId, String ackForId) {
-            return new Message(senderId, MessageType.NET_ACK, null, null, false, ackForId, false, null);
+                return new Message(senderId, MessageType.NET_ACK, null, null, false, ackForId, false, null);
+            }
         }
-    }
 }

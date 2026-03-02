@@ -284,7 +284,7 @@ public class BulletproofRange {
         // 2. 将 v 分解为比特向量
         // 3. 构建内积证明
         // 4. 生成聚合证明
-        return new RangeProof(...);
+        return new RangeProof(...)
     }
     
     public static boolean verify(RangeProof proof, ECPoint C, int n) {
@@ -351,7 +351,7 @@ public class ZkSnark {
         // 1. 将计算转换为 R1CS 约束系统
         // 2. 在约束上生成证明
         // 3. 输出简洁证明
-        return new Proof(...);
+        return new Proof(...)
     }
     
     // 验证证明
@@ -409,7 +409,7 @@ public class ZkStark {
         // 1. 算术化：将计算转换为代数中间表示
         // 2. 低度扩展：在更大域上扩展执行轨迹
         // 3. FRI 协议：证明多项式低度
-        return new Proof(...);
+        return new Proof(...)
     }
     
     public static boolean verify(Proof proof,

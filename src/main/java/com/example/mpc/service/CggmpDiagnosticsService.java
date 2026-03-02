@@ -38,18 +38,18 @@ public class CggmpDiagnosticsService {
             BigInteger x = randomNonZero(q);
             BigInteger y = randomNonZero(q);
             PaillierEncryption.Encryption encX = pk.encryptWithRandomness(x);
-            BigInteger K = encX.c;
-            BigInteger rho = BigIntegerUtils.randomZnStar(pk.n, rnd);
+            BigInteger K = encX.c();
+            BigInteger rho = BigIntegerUtils.randomZnStar(pk.n(), rnd);
             BigInteger encY = pk.encryptWithRandom(y, rho);
-            BigInteger KInvX = BigIntegerUtils.powSigned(K, x.negate(), pk.nSquared);
-            BigInteger D = encY.multiply(KInvX).mod(pk.nSquared);
+            BigInteger KInvX = BigIntegerUtils.powSigned(K, x.negate(), pk.nSquared());
+            BigInteger D = encY.multiply(KInvX).mod(pk.nSquared());
             ECPoint X = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x);
             ECPoint S = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), y);
             PiDecProof decProof = PresignProofs.createDecProof(
                     Secp256k1CurveUtils.G(),
                     X,
                     S,
-                    pk.n,
+                    pk.n(),
                     K,
                     D,
                     x,
@@ -64,7 +64,7 @@ public class CggmpDiagnosticsService {
                     Secp256k1CurveUtils.G(),
                     X,
                     S,
-                    pk.n,
+                    pk.n(),
                     K,
                     D,
                     proofKappa,
@@ -82,20 +82,20 @@ public class CggmpDiagnosticsService {
             BigInteger y2 = randomNonZero(q);
             BigInteger a = randomNonZero(q);
             PaillierEncryption.Encryption encC = pk0.encryptWithRandomness(a);
-            BigInteger C = encC.c;
-            BigInteger rho2 = BigIntegerUtils.randomZnStar(pk0.n, rnd);
-            BigInteger mu2 = BigIntegerUtils.randomZnStar(pk1.n, rnd);
-            BigInteger D2 = BigIntegerUtils.powSigned(C, x2, pk0.nSquared)
-                    .multiply(BigIntegerUtils.powSigned(BigInteger.ONE.add(pk0.n), y2, pk0.nSquared))
-                    .multiply(rho2.modPow(pk0.n, pk0.nSquared))
-                    .mod(pk0.nSquared);
+            BigInteger C = encC.c();
+            BigInteger rho2 = BigIntegerUtils.randomZnStar(pk0.n(), rnd);
+            BigInteger mu2 = BigIntegerUtils.randomZnStar(pk1.n(), rnd);
+            BigInteger D2 = BigIntegerUtils.powSigned(C, x2, pk0.nSquared())
+                    .multiply(BigIntegerUtils.powSigned(BigInteger.ONE.add(pk0.n()), y2, pk0.nSquared()))
+                    .multiply(rho2.modPow(pk0.n(), pk0.nSquared()))
+                    .mod(pk0.nSquared());
             BigInteger Y2 = pk1.encryptWithRandom(y2, mu2);
             ECPoint X2 = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x2);
             PiAffGProof affProof = PresignProofs.createAffGProof(
                     Secp256k1CurveUtils.G(),
                     X2,
-                    pk0.n,
-                    pk1.n,
+                    pk0.n(),
+                    pk1.n(),
                     C,
                     D2,
                     Y2,
@@ -111,8 +111,8 @@ public class CggmpDiagnosticsService {
                     affProof,
                     Secp256k1CurveUtils.G(),
                     X2,
-                    pk0.n,
-                    pk1.n,
+                    pk0.n(),
+                    pk1.n(),
                     C,
                     D2,
                     Y2,

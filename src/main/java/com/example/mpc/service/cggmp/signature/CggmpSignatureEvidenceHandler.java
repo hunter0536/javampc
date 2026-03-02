@@ -43,14 +43,14 @@ public final class CggmpSignatureEvidenceHandler {
                 Gamma = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), gamma_i);
             }
             ECPoint S = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), delta_i);
-            BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared;
+            BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
             BigInteger c = task.paillier.getPublicKeyInfo().multiply(K, gamma_i).multiply(D).mod(nSquared);
             BigInteger rho = task.paillier.recoverRandomizer(c, delta_i);
             PiDecProof proof = PresignProofs.createDecProof(
                     Secp256k1CurveUtils.G(),
                     Gamma,
                     S,
-                    task.paillier.getPublicKeyInfo().n,
+                    task.paillier.getPublicKeyInfo().n(),
                     K,
                     D,
                     gamma_i,
@@ -86,14 +86,14 @@ public final class CggmpSignatureEvidenceHandler {
             ECPoint Gamma = CggmpProtocolUtils.sumPresignGamma(task);
             ECPoint X_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x_i);
             ECPoint S = Gamma.multiply(chi_i).normalize();
-            BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared;
+            BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
             BigInteger c = task.paillier.getPublicKeyInfo().multiply(K, x_i).multiply(Dhat).mod(nSquared);
             BigInteger rho = task.paillier.recoverRandomizer(c, chi_i);
             PiDecProof proof = PresignProofs.createDecProof(
                     Secp256k1CurveUtils.G(),
                     Gamma,
                     S,
-                    task.paillier.getPublicKeyInfo().n,
+                    task.paillier.getPublicKeyInfo().n(),
                     K,
                     Dhat,
                     x_i,
@@ -152,7 +152,7 @@ public final class CggmpSignatureEvidenceHandler {
                     Secp256k1CurveUtils.G(),
                     Gamma,
                     S,
-                    task.paillier.getPublicKeyInfo().n,
+                    task.paillier.getPublicKeyInfo().n(),
                     K,
                     D,
                     svc.proofKappa,
@@ -209,7 +209,7 @@ public final class CggmpSignatureEvidenceHandler {
             sum = sum.add(Dij).add(Fij);
         }
         sum = sum.add(claimedD);
-        BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared;
+        BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
         return sum.mod(nSquared).equals(BigInteger.ONE);
     }
 
@@ -237,8 +237,8 @@ public final class CggmpSignatureEvidenceHandler {
                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
                         Secp256k1CurveUtils.G(),
                         Gamma,
-                        task.peerPaillierKeys.get(peerId).n,
-                        task.paillier.getPublicKeyInfo().n,
+                        task.peerPaillierKeys.get(peerId).n(),
+                        task.paillier.getPublicKeyInfo().n(),
                         task.presignK.get(peerId),
                         D_ji,
                         F_ji,
@@ -283,8 +283,8 @@ public final class CggmpSignatureEvidenceHandler {
                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
                         Secp256k1CurveUtils.G(),
                         X_i,
-                        task.peerPaillierKeys.get(peerId).n,
-                        task.paillier.getPublicKeyInfo().n,
+                        task.peerPaillierKeys.get(peerId).n(),
+                        task.paillier.getPublicKeyInfo().n(),
                         task.presignK.get(peerId),
                         D_ji,
                         F_ji,
@@ -341,8 +341,8 @@ public final class CggmpSignatureEvidenceHandler {
                     if (!PresignProofs.verifyAffGProof(proof,
                             Secp256k1CurveUtils.G(),
                             Gamma,
-                            pk.n,
-                            task.paillier.getPublicKeyInfo().n,
+                            pk.n(),
+                            task.paillier.getPublicKeyInfo().n(),
                             K_peer,
                             e.getValue(),
                             F.get(peerId),
@@ -379,8 +379,8 @@ public final class CggmpSignatureEvidenceHandler {
                     if (!PresignProofs.verifyAffGProof(proof,
                             Secp256k1CurveUtils.G(),
                             X,
-                            pk.n,
-                            task.paillier.getPublicKeyInfo().n,
+                            pk.n(),
+                            task.paillier.getPublicKeyInfo().n(),
                             K_peer,
                             e.getValue(),
                             F.get(peerId),
@@ -432,7 +432,7 @@ public final class CggmpSignatureEvidenceHandler {
     private BigInteger computePresignDForSelf(Gg20SignatureTask task,
                                               Map<Integer, BigInteger> incomingD,
                                               Map<Integer, BigInteger> outgoingF) {
-        BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared;
+        BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
         BigInteger acc = BigInteger.ONE;
         for (int peerId : task.participants) {
             if (peerId == svc.nodeId) {

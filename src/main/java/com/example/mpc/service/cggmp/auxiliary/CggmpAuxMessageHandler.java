@@ -1,8 +1,5 @@
 package com.example.mpc.service.cggmp.auxiliary;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.NoSmallFactorProof;
@@ -16,6 +13,8 @@ import com.example.mpc.model.CggmpAuxTask;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.util.List;
@@ -134,10 +133,6 @@ public final class CggmpAuxMessageHandler {
             return;
         }
         String expected = CggmpProtocolUtils.computeAuxEchoHash(task);
-        if (expected == null) {
-            task.pendingEcho.put(senderNodeId, hash);
-            return;
-        }
         if (!expected.equals(hash)) {
             logger.warn("AUX echo mismatch from node {} (task {}): expected={}, received={}, commits={}/{}",
                     senderNodeId, taskId, expected, hash, task.commitHashes.size(), task.participants.size());
@@ -225,22 +220,17 @@ public final class CggmpAuxMessageHandler {
             return;
         }
         Map<String, Object> pkMapCopy = new java.util.HashMap<>();
-        for (Map.Entry<?, ?> entry : pkMap.entrySet()) {
-            Object key = entry.getKey();
+        for (Map.Entry<?, ?> entry1 : pkMap.entrySet()) {
+            Object key = entry1.getKey();
             if (key instanceof String s) {
-                pkMapCopy.put(s, entry.getValue());
+                pkMapCopy.put(s, entry1.getValue());
             }
         }
         PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
-        if (publicKey == null) {
-            logger.warn("AUX R2 invalid paillierPublicKey decode (taskId={}, senderId={})", taskId, senderIdVal);
-            task.fail("Invalid Paillier public key in AUX R2");
-            return;
-        }
-        if (publicKey.bitLength < svc.auxMinPaillierBitsForProof) {
+        if (publicKey.bitLength() < svc.auxMinPaillierBitsForProof) {
             logger.warn("AUX R2 Paillier bitLength too small (taskId={}, senderId={}, bits={}, min={})",
-                    taskId, senderIdVal, publicKey.bitLength, svc.auxMinPaillierBitsForProof);
-            task.fail("AUX R2 Paillier bit length too small: " + publicKey.bitLength);
+                    taskId, senderIdVal, publicKey.bitLength(), svc.auxMinPaillierBitsForProof);
+            task.fail("AUX R2 Paillier bit length too small: " + publicKey.bitLength());
             return;
         }
         byte[] rho = HexUtils.hexToBytes(rhoHex);
@@ -310,8 +300,8 @@ public final class CggmpAuxMessageHandler {
             } catch (Exception e) {
                 ctxHash = "error";
             }
-            String aHex = prmProof == null || prmProof.A() == null ? null : prmProof.A().toString(16);
-            String zHex = prmProof == null || prmProof.z() == null ? null : prmProof.z().toString(16);
+            String aHex = prmProof.A() == null ? null : prmProof.A().toString(16);
+            String zHex = prmProof.z() == null ? null : prmProof.z().toString(16);
             logger.warn("AUX R2 invalid PiPrmProof (taskId={}, senderId={}, ctxHash={}, ctxPrefix={}, hatNBits={}, sBits={}, tBits={}, A.prefix={}, z.prefix={})",
                     taskId,
                     senderIdVal,
@@ -374,7 +364,7 @@ public final class CggmpAuxMessageHandler {
         if (a == null || b == null) {
             return false;
         }
-        return a.n.equals(b.n) && a.nSquared.equals(b.nSquared) && a.g.equals(b.g) && a.bitLength == b.bitLength;
+        return a.n().equals(b.n()) && a.nSquared().equals(b.nSquared()) && a.g().equals(b.g()) && a.bitLength() == b.bitLength();
     }
 
     void handleCggmpAuxR3(int senderId, Object data) {
@@ -410,7 +400,7 @@ public final class CggmpAuxMessageHandler {
             return;
         }
         BiPrimeBlumProof modProof = CggmpCodecUtils.decodeBiPrimeProof(modMap);
-        byte[] rho = CggmpAuxUtils.xorAuxRho(svc.nodeId, task);
+        byte[] rho = CggmpAuxUtils.xorAuxRho(task);
         byte[] modCtx = CggmpProtocolUtils.buildAuxContext(taskId, task.executionId, senderNodeId, "MOD", rho);
         if (!CggmpAuxService.BI_PRIME_VALIDATOR.verifyProof(modProof, pk, modCtx)) {
             logger.warn("AUX R3 invalid mod proof (taskId={}, senderId={})", taskId, senderNodeId);
@@ -484,15 +474,6 @@ public final class CggmpAuxMessageHandler {
         pendingAuxMessages.remove(taskId, q);
     }
 
-    static final class PendingMsg {
-        final int senderId;
-        final Object data;
-        final MessageType type;
-
-        PendingMsg(int senderId, Object data, MessageType type) {
-            this.senderId = senderId;
-            this.data = data;
-            this.type = type;
-        }
+    record PendingMsg(int senderId, Object data, MessageType type) {
     }
 }

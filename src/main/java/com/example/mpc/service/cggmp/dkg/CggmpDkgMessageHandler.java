@@ -1,8 +1,5 @@
 package com.example.mpc.service.cggmp.dkg;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
@@ -13,6 +10,8 @@ import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import org.bouncycastle.math.ec.ECPoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.util.HashMap;
@@ -48,7 +47,7 @@ public final class CggmpDkgMessageHandler {
             String taskId = (String) dataMap.get("taskId");
             String executionId = (String) dataMap.get("executionId");
             int nodesCount = (Integer) dataMap.get("nodesCount");
-            Integer initiatorId = dataMap.get("initiatorId") instanceof Number n ? n.intValue() : senderId;
+            int initiatorId = dataMap.get("initiatorId") instanceof Number n ? n.intValue() : senderId;
             Set<Integer> participants = null;
             if (dataMap.get("participants") instanceof java.util.Collection<?> coll) {
                 java.util.LinkedHashSet<Integer> p = new java.util.LinkedHashSet<>();
@@ -736,10 +735,7 @@ public final class CggmpDkgMessageHandler {
             if (reason.contains("Round1 echo") || reason.contains("Round1 commit") || reason.contains("XkStar")) {
                 return true;
             }
-            if (reason.contains("Schnorr") || reason.contains("PiSch")) {
-                return true;
-            }
-            return false;
+            return reason.contains("Schnorr") || reason.contains("PiSch");
         } catch (Exception e) {
             return false;
         }

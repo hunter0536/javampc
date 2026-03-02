@@ -27,7 +27,7 @@ public final class NoSmallFactorProofGenerator {
 
     public NoSmallFactorProof createProof(PaillierEncryption.PrivateKey priv, byte[] context) {
         Objects.requireNonNull(priv, "priv");
-        BigInteger Ni = priv.n;
+        BigInteger Ni = priv.n();
         BigInteger Nj = zk.hatN();
         BigInteger s = zk.h1();
         BigInteger t = zk.h2();
@@ -46,8 +46,8 @@ public final class NoSmallFactorProofGenerator {
         BigInteger x = randomSigned(twoEllEps.multiply(Nj), rnd);
         BigInteger y = randomSigned(twoEllEps.multiply(Nj), rnd);
 
-        BigInteger p = priv.p;
-        BigInteger q = priv.q;
+        BigInteger p = priv.p();
+        BigInteger q = priv.q();
 
         BigInteger P = multiexpSigned(Nj, s, p, t, mu);
         BigInteger Q = multiexpSigned(Nj, s, q, t, nu);

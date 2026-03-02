@@ -16,8 +16,8 @@ public class PaillierRangeProofGenerator implements RangeProofGenerator {
         var pubKey = witness.publicKey();
         var zkSetup = witness.zk();
 
-        var n = pubKey.n;
-        var nsq = pubKey.nSquared;
+        var n = pubKey.n();
+        var nsq = pubKey.nSquared();
 
         var hatN = zkSetup.hatN();
         var h1 = zkSetup.h1();

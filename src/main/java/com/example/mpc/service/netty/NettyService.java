@@ -48,7 +48,7 @@ public class NettyService {
 
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
-    private EventLoopGroup clientGroup; // 共享的客户端连接线程池
+    private final EventLoopGroup clientGroup; // 共享的客户端连接线程池
     private Channel serverChannel;
     private volatile SslContext serverSslContext;
     private volatile SslContext clientSslContext;
@@ -183,7 +183,7 @@ public class NettyService {
         CompletableFuture<Void> future = new CompletableFuture<>();
 
         Channel channel = nodeChannels.get(nodeId);
-        logger.info("sendMessage: to node {} type {} channelActive={}", nodeId, message.type, channel != null && channel.isActive());
+        logger.info("sendMessage: to node {} type {} channelActive={}", nodeId, message.type(), channel != null && channel.isActive());
         if (channel != null && channel.isActive()) {
             Object payload = wrapSigned(message);
             channel.writeAndFlush(payload).addListener((ChannelFutureListener) future1 -> {

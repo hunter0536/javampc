@@ -20,6 +20,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
@@ -69,11 +70,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
 
     public String createRefreshTask(String groupPublicKey) {
         String fixedGroupPublicKey;
-        try {
-            fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
-        } catch (java.io.UnsupportedEncodingException e) {
-            fixedGroupPublicKey = groupPublicKey;
-        }
+        fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         String taskId = UUID.randomUUID().toString();
         Set<Integer> participants = new LinkedHashSet<>();
@@ -135,10 +132,9 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         return refreshMessageDispatcher.handleMessage(senderId, message);
     }
 
-    public CggmpRefreshTask createRefreshTaskInternal(String taskId, String groupPublicKey, Set<Integer> participants, int initiatorId) {
+    public void createRefreshTaskInternal(String taskId, String groupPublicKey, Set<Integer> participants, int initiatorId) {
         CggmpRefreshTask task = new CggmpRefreshTask(taskId, groupPublicKey, nodesCount, initiatorId, participants);
         refreshTasks.put(taskId, task);
-        return task;
     }
 
     public BigInteger loadLocalShare(String groupPublicKey) {

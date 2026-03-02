@@ -32,10 +32,10 @@ public final class CggmpCodecUtils {
 
     public static Map<String, Object> encodePaillierPublicKey(PaillierEncryption.PublicKey key) {
         Map<String, Object> map = new HashMap<>();
-        map.put("n", HexUtils.toHex(key.n));
-        map.put("nsquare", HexUtils.toHex(key.nSquared));
-        map.put("g", HexUtils.toHex(key.g));
-        map.put("bitLength", key.bitLength);
+        map.put("n", HexUtils.toHex(key.n()));
+        map.put("nsquare", HexUtils.toHex(key.nSquared()));
+        map.put("g", HexUtils.toHex(key.g()));
+        map.put("bitLength", key.bitLength());
         return map;
     }
 

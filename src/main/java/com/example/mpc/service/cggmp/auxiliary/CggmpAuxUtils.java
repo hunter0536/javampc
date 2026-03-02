@@ -1,11 +1,10 @@
 package com.example.mpc.service.cggmp.auxiliary;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.example.mpc.model.AuxInfo;
 import com.example.mpc.model.CggmpAuxTask;
 import com.example.mpc.service.CggmpAuxService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -51,7 +50,7 @@ public final class CggmpAuxUtils {
         return ev;
     }
 
-    static byte[] xorAuxRho(int nodeId, CggmpAuxTask task) {
+    static byte[] xorAuxRho(CggmpAuxTask task) {
         byte[] result = new byte[32];
         if (task.rho.isEmpty()) {
             return result;
@@ -72,11 +71,11 @@ public final class CggmpAuxUtils {
         try {
             AuxInfo info = new AuxInfo(svc.nodeId, task.taskId);
             com.example.mpc.cggmp.PaillierEncryption.PrivateKey priv = task.paillier.getPrivateKeyInfo();
-            info.setPaillierP(priv.p.toString(16));
-            info.setPaillierQ(priv.q.toString(16));
-            info.setPaillierN(priv.n.toString(16));
-            info.setPaillierG(task.paillier.getPublicKeyInfo().g.toString(16));
-            info.setPaillierBitLength(task.paillier.getPublicKeyInfo().bitLength);
+            info.setPaillierP(priv.p().toString(16));
+            info.setPaillierQ(priv.q().toString(16));
+            info.setPaillierN(priv.n().toString(16));
+            info.setPaillierG(task.paillier.getPublicKeyInfo().g().toString(16));
+            info.setPaillierBitLength(task.paillier.getPublicKeyInfo().bitLength());
             info.setPedersenHatN(task.hatN.toString(16));
             info.setPedersenS(task.s.toString(16));
             info.setPedersenT(task.t.toString(16));

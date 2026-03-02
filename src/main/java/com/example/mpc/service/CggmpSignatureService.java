@@ -22,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.security.Security;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -142,11 +143,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
 
         String fixedGroupPublicKey = null;
-        try {
-            fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
-        } catch (java.io.UnsupportedEncodingException e) {
-            fixedGroupPublicKey = groupPublicKey;
-        }
+        fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         String taskId = UUID.randomUUID().toString();
         Gg20SignatureTask task = new Gg20SignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId);
@@ -161,11 +158,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
 
         String fixedGroupPublicKey = null;
-        try {
-            fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, java.nio.charset.StandardCharsets.UTF_8.name());
-        } catch (java.io.UnsupportedEncodingException e) {
-            fixedGroupPublicKey = groupPublicKey;
-        }
+        fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         Gg20SignatureTask task = new Gg20SignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount, threshold, initiatorId, participants);
         signatureTasks.put(signatureTaskId, task);

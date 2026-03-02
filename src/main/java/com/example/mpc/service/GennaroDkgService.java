@@ -133,7 +133,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
         return CompletableFuture.runAsync(() -> {
             try {
-                switch (message.type) {
+                switch (message.type()) {
                     case GENNARO_COMMITMENT:
                         handleCommitmentMessage(senderId, message);
                         break;
@@ -678,10 +678,9 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     }
 
     private void handleCommitmentMessage(int senderId, NodeService.Message message) throws Exception {
-        if (!(message.data instanceof Map)) {
+        if (!(message.data() instanceof Map<?, ?> dataMap)) {
             return;
         }
-        Map<?, ?> dataMap = (Map<?, ?>) message.data;
         String taskId = (String) dataMap.get("taskId");
         List<String> encodedVerificationPoints = MapUtils.toStringList(dataMap.get("verificationPoints"));
         List<String> encodedMaskingVerificationPoints = MapUtils.toStringList(dataMap.get("maskingVerificationPoints"));
@@ -720,10 +719,9 @@ public class GennaroDkgService implements NodeService.MessageHandler {
  
 
     private void handleShareMessage(int senderId, NodeService.Message message) {
-        if (!(message.data instanceof Map)) {
+        if (!(message.data() instanceof Map<?, ?> dataMap)) {
             return;
         }
-        Map<?, ?> dataMap = (Map<?, ?>) message.data;
         String taskId = (String) dataMap.get("taskId");
         BigInteger share = (BigInteger) dataMap.get("share");
 
@@ -739,10 +737,9 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     }
 
     private void handlePublicKeyPartMessage(int senderId, NodeService.Message message) throws Exception {
-        if (!(message.data instanceof Map)) {
+        if (!(message.data() instanceof Map<?, ?> dataMap)) {
             return;
         }
-        Map<?, ?> dataMap = (Map<?, ?>) message.data;
         String taskId = (String) dataMap.get("taskId");
         String publicKeyPart = (String) dataMap.get("publicKeyPart");
         String groupPublicKey = (String) dataMap.get("groupPublicKey");
@@ -755,10 +752,9 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     }
 
     private void handleDkgInitMessage(int senderId, NodeService.Message message) {
-        if (!(message.data instanceof Map)) {
+        if (!(message.data() instanceof Map<?, ?> dataMap)) {
             return;
         }
-        Map<?, ?> dataMap = (Map<?, ?>) message.data;
         String taskId = (String) dataMap.get("taskId");
         logger.info("Received DKG_INIT from node {} for task {}", senderId, taskId);
 

@@ -63,14 +63,8 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     public long auxAutoCheckIntervalSeconds;
 
     public final Map<String, CggmpAuxTask> auxTasks = new ConcurrentHashMap<>();
-    public static final class AuxStatus {
-        public final boolean hasAux;
-        public final long tsMs;
 
-        public AuxStatus(boolean hasAux, long tsMs) {
-            this.hasAux = hasAux;
-            this.tsMs = tsMs;
-        }
+    public record AuxStatus(boolean hasAux, long tsMs) {
     }
 
     public final ConcurrentHashMap<Integer, AuxStatus> auxStatus = new ConcurrentHashMap<>();

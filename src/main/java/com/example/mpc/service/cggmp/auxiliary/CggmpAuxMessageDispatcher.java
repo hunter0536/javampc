@@ -21,19 +21,19 @@ public final class CggmpAuxMessageDispatcher {
 
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
         Object logTaskId = "N/A";
-        if (message.data instanceof Map<?, ?> map) {
+        if (message.data() instanceof Map<?, ?> map) {
             if (map.containsKey("taskId")) {
                 logTaskId = map.get("taskId");
             }
         }
         logger.info("=== CGGMP AUX handleMessage: senderId={}, type={}, taskId={} ===",
-                senderId, message.type, logTaskId);
+                senderId, message.type(), logTaskId);
         Executor executor = ThreadPoolUtil.getSingleThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
-                Object data = message.data;
-                logger.info("=== CGGMP AUX processing: type={} ===", message.type);
-                switch (message.type) {
+                Object data = message.data();
+                logger.info("=== CGGMP AUX processing: type={} ===", message.type());
+                switch (message.type()) {
                     case CGGMP_AUX_INIT:
                         svc.auxMessageHandler.handleCggmpAuxInit(senderId, data);
                         break;
@@ -53,7 +53,7 @@ public final class CggmpAuxMessageDispatcher {
                         svc.auxMessageHandler.handleCggmpAuxStatus(senderId, data);
                         break;
                     default:
-                        logger.debug("Ignoring message of type {} for CGGMP AUX service", message.type);
+                        logger.debug("Ignoring message of type {} for CGGMP AUX service", message.type());
                 }
             } catch (Exception e) {
                 logger.error("Error handling CGGMP AUX message", e);

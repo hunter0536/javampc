@@ -28,12 +28,12 @@ import java.security.SecureRandom;
 import java.util.Objects;
 
 public class MtAProtocol {
-    private RangeProofGenerator rangeGenerator;
-    private RangeProofValidator rangeValidator;
-    private BiPrimeProofGenerator biPrimeProofGenerator;
-    private BiPrimeProofValidator biPrimeProofValidator;
-    private RespondentProofGenerator respondentProofGenerator;
-    private RespondentProofValidator respondentProofValidator;
+    private final RangeProofGenerator rangeGenerator;
+    private final RangeProofValidator rangeValidator;
+    private final BiPrimeProofGenerator biPrimeProofGenerator;
+    private final BiPrimeProofValidator biPrimeProofValidator;
+    private final RespondentProofGenerator respondentProofGenerator;
+    private final RespondentProofValidator respondentProofValidator;
 
     private final PaillierEncryption paillier;
     private final BigInteger q;
@@ -77,8 +77,8 @@ public class MtAProtocol {
         }
 
         PaillierEncryption.Encryption encryption = paillier.encryptWithRandomness(a_i);
-        BigInteger cA = encryption.c;
-        BigInteger r = encryption.r;
+        BigInteger cA = encryption.c();
+        BigInteger r = encryption.r();
 
         PaillierRangeEncryptionWitness witness = new PaillierRangeEncryptionWitness(
                 a_i, r, cA, paillier.getPublicKeyInfo(), zkSetup, q
@@ -110,25 +110,25 @@ public class MtAProtocol {
             throw new IllegalArgumentException("Inputs cannot be null and b_j must be in [0, q)");
         }
 
-        BigInteger nsq = initiatorPublicKey.nSquared;
+        BigInteger nsq = initiatorPublicKey.nSquared();
         BigInteger y = new BigInteger(q.bitLength(), new SecureRandom()).mod(q);
 
         PaillierEncryption.PublicKey initiatorPk = initiatorPublicKey;
         PaillierEncryption.Encryption encY = initiatorPk.encryptWithRandomness(y);
 
         BigInteger c_j = c_i.modPow(b_j, nsq)
-                .multiply(encY.c)
+                .multiply(encY.c())
                 .mod(nsq);
 
         if (zkSetup != null) {
             PaillierRespondentEncryptionWitness witness = new PaillierRespondentEncryptionWitness(
-                    b_j, y, c_i, c_j, encY.r, initiatorPk, zkSetup, q
+                    b_j, y, c_i, c_j, encY.r(), initiatorPk, zkSetup, q
             );
             PaillierRespondentProof proof = respondentProofGenerator.createProof(witness, context);
-            return new MtAResult(c_j, y, encY.r, proof);
+            return new MtAResult(c_j, y, encY.r(), proof);
         }
 
-        return new MtAResult(c_j, y, encY.r);
+        return new MtAResult(c_j, y, encY.r());
     }
 
     public boolean verifyRespondentProof(MtAResult result, BigInteger c_i, PaillierEncryption.PublicKey publicKey, ZKSetup zkSetup, byte[] context) {
@@ -151,7 +151,7 @@ public class MtAProtocol {
     }
 
     private static void validatePaillierN(PaillierEncryption.PublicKey publicKey, BigInteger q) {
-        if (publicKey.n.compareTo(q.pow(8)) < 0) {
+        if (publicKey.n().compareTo(q.pow(8)) < 0) {
             throw new IllegalArgumentException("Paillier public key n must be at least 8 times larger than q");
         }
     }

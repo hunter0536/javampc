@@ -80,13 +80,6 @@ public class PedersenCommitment {
         return ecSpec;
     }
 
-    public static class Commitment {
-        public final ECPoint point;
-        public final BigInteger blinding;
-
-        public Commitment(ECPoint point, BigInteger blinding) {
-            this.point = point;
-            this.blinding = blinding;
-        }
+    public record Commitment(ECPoint point, BigInteger blinding) {
     }
 }

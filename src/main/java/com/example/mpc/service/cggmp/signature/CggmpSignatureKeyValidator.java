@@ -12,11 +12,11 @@ public final class CggmpSignatureKeyValidator {
     }
 
     public static boolean validatePaillierPublicKey(PaillierEncryption.PublicKey publicKey) {
-        if (publicKey == null || publicKey.n == null || publicKey.nSquared == null || publicKey.g == null) {
+        if (publicKey == null || publicKey.n() == null || publicKey.nSquared() == null || publicKey.g() == null) {
             return false;
         }
         BigInteger q = Secp256k1CurveUtils.n();
-        return publicKey.n.compareTo(q.pow(8)) >= 0;
+        return publicKey.n().compareTo(q.pow(8)) >= 0;
     }
 
     public static boolean ensurePeerKeyConsistency(Gg20SignatureTask task,
@@ -28,10 +28,7 @@ public final class CggmpSignatureKeyValidator {
             return false;
         }
         ZKSetup existingZk = task.peerZkSetups.putIfAbsent(peerId, zkSetup);
-        if (existingZk != null && !existingZk.equals(zkSetup)) {
-            return false;
-        }
-        return true;
+        return existingZk == null || existingZk.equals(zkSetup);
     }
 
     public static boolean ensurePeerKeyMatchesAux(Gg20SignatureTask task,
@@ -52,16 +49,16 @@ public final class CggmpSignatureKeyValidator {
         String auxS = auxParams.get("pedersenS");
         String auxT = auxParams.get("pedersenT");
 
-        if (auxN != null && !auxN.equalsIgnoreCase(publicKey.n.toString(16))) {
+        if (auxN != null && !auxN.equalsIgnoreCase(publicKey.n().toString(16))) {
             return false;
         }
-        if (auxG != null && !auxG.equalsIgnoreCase(publicKey.g.toString(16))) {
+        if (auxG != null && !auxG.equalsIgnoreCase(publicKey.g().toString(16))) {
             return false;
         }
         if (auxBits != null) {
             try {
                 int bits = Integer.parseInt(auxBits);
-                if (publicKey.bitLength != bits) {
+                if (publicKey.bitLength() != bits) {
                     return false;
                 }
             } catch (Exception e) {
@@ -74,10 +71,7 @@ public final class CggmpSignatureKeyValidator {
         if (auxS != null && !auxS.equalsIgnoreCase(zkSetup.h1().toString(16))) {
             return false;
         }
-        if (auxT != null && !auxT.equalsIgnoreCase(zkSetup.h2().toString(16))) {
-            return false;
-        }
-        return true;
+        return auxT == null || auxT.equalsIgnoreCase(zkSetup.h2().toString(16));
     }
 
     private static boolean paillierPublicKeyEquals(PaillierEncryption.PublicKey a, PaillierEncryption.PublicKey b) {
@@ -87,7 +81,7 @@ public final class CggmpSignatureKeyValidator {
         if (a == null || b == null) {
             return false;
         }
-        return a.n.equals(b.n) && a.nSquared.equals(b.nSquared) && a.g.equals(b.g) && a.bitLength == b.bitLength;
+        return a.n().equals(b.n()) && a.nSquared().equals(b.nSquared()) && a.g().equals(b.g()) && a.bitLength() == b.bitLength();
     }
 
     public static String computeAuxHash(java.util.Map<String, String> auxParams) {

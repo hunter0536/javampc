@@ -391,8 +391,7 @@ public class DatabaseService {
         }
 
         public void releaseConnection(Connection conn) {
-            if (conn instanceof PooledConnection) {
-                PooledConnection pooledConn = (PooledConnection) conn;
+            if (conn instanceof PooledConnection pooledConn) {
                 try {
                     if (pooledConn.isValid()) {
                         if (!pool.offer(pooledConn, 100, TimeUnit.MILLISECONDS)) {

@@ -37,8 +37,8 @@ public final class MessageSigner {
     }
 
     public static String canonicalPayload(NodeService.Message message) {
-        String data = canonicalize(message.data);
-        return message.senderId + ":" + message.type + ":" + message.messageId + ":" + message.requireAck + ":" + message.ackForId + ":" + message.rbc + ":" + message.rbcHash + ":" + data;
+        String data = canonicalize(message.data());
+        return message.senderId() + ":" + message.type() + ":" + message.messageId() + ":" + message.requireAck() + ":" + message.ackForId() + ":" + message.rbc() + ":" + message.rbcHash() + ":" + data;
     }
 
     private static String canonicalize(Object value) {

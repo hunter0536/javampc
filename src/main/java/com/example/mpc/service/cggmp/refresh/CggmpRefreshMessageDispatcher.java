@@ -21,7 +21,7 @@ public final class CggmpRefreshMessageDispatcher {
 
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
         Object logTaskId = "N/A";
-        if (message.data instanceof Map<?, ?> map) {
+        if (message.data() instanceof Map<?, ?> map) {
             if (map.containsKey("taskId")) {
                 logTaskId = map.get("taskId");
             } else if (map.containsKey("signatureTaskId")) {
@@ -29,19 +29,19 @@ public final class CggmpRefreshMessageDispatcher {
             }
         }
         logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
-                senderId, message.type, logTaskId);
+                senderId, message.type(), logTaskId);
         Executor executor = ThreadPoolUtil.getSingleThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
-                Object data = message.data;
+                Object data = message.data();
                 if (data instanceof byte[] bytes) {
-                    Object decoded = CggmpRefreshUtils.maybeDecompressPayload(message.type, bytes);
+                    Object decoded = CggmpRefreshUtils.maybeDecompressPayload(message.type(), bytes);
                     if (decoded != null) {
                         data = decoded;
                     }
                 }
-                logger.info("=== CGGMP processing: type={} ===", message.type);
-                switch (message.type) {
+                logger.info("=== CGGMP processing: type={} ===", message.type());
+                switch (message.type()) {
                     case CGGMP_REFRESH_INIT:
                         svc.refreshMessageHandler.onRefreshInit(senderId, data);
                         break;
@@ -61,7 +61,7 @@ public final class CggmpRefreshMessageDispatcher {
                         svc.refreshMessageHandler.onRefreshExclude(senderId, data);
                         break;
                     default:
-                        logger.debug("Ignoring message of type {} for CGGMP service", message.type);
+                        logger.debug("Ignoring message of type {} for CGGMP service", message.type());
                 }
             } catch (Exception e) {
                 logger.error("Error handling CGGMP message", e);

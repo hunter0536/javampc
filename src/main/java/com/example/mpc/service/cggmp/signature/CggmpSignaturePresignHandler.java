@@ -197,7 +197,7 @@ public final class CggmpSignaturePresignHandler {
             String pkHash = hashJsonMap(pkMap);
             String zkHash = hashJsonMap(zkMap);
             logger.debug("Presign R1 recv: taskId={}, senderId={}, pkHash={}, zkHash={}, pkBits={}",
-                    signatureTaskId, senderId, pkHash, zkHash, publicKey == null ? -1 : publicKey.bitLength);
+                    signatureTaskId, senderId, pkHash, zkHash, publicKey == null ? -1 : publicKey.bitLength());
         }
         if (!CggmpSignatureKeyValidator.ensurePeerKeyConsistency(task, senderId, publicKey, zkSetup)) {
             if (logger.isDebugEnabled()) {
@@ -453,8 +453,8 @@ public final class CggmpSignaturePresignHandler {
                         proof,
                         Secp256k1CurveUtils.G(),
                         Gamma,
-                        N0.n,
-                        N1.n,
+                        N0.n(),
+                        N1.n(),
                         K_self,
                         D_ji,
                         F_ji,
@@ -477,8 +477,8 @@ public final class CggmpSignaturePresignHandler {
                         proofHat,
                         Secp256k1CurveUtils.G(),
                         X_i,
-                        N0.n,
-                        N1.n,
+                        N0.n(),
+                        N1.n(),
                         K_self,
                         Dhat_ji,
                         Fhat_ji,

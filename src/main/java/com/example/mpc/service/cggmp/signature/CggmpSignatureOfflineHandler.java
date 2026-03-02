@@ -8,6 +8,7 @@ import com.example.mpc.cggmp.proof.PiLogProof;
 import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.common.util.DbMapUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
@@ -16,7 +17,6 @@ import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.model.KeyShare;
 import com.example.mpc.service.CggmpSignatureService;
-import com.example.mpc.common.util.DbMapUtils;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -77,8 +78,8 @@ public final class CggmpSignatureOfflineHandler {
 
                 PaillierEncryption.Encryption encK = task.paillier.encryptWithRandomness(task.k_i);
                 PaillierEncryption.Encryption encG = task.paillier.encryptWithRandomness(gamma_i);
-                BigInteger K = encK.c;
-                BigInteger G = encG.c;
+                BigInteger K = encK.c();
+                BigInteger G = encG.c();
                 task.presignK.put(svc.nodeId, K);
                 task.presignG.put(svc.nodeId, G);
 
@@ -92,7 +93,7 @@ public final class CggmpSignatureOfflineHandler {
                         Y_i,
                         A2,
                         task.k_i,
-                        encK.r,
+                        encK.r(),
                         a_i,
                         y_i,
                         svc.proofEpsBits,
@@ -116,7 +117,7 @@ public final class CggmpSignatureOfflineHandler {
                         Y_i,
                         B2,
                         gamma_i,
-                        encG.r,
+                        encG.r(),
                         b_i,
                         y_i,
                         svc.proofEpsBits,
@@ -180,26 +181,26 @@ public final class CggmpSignatureOfflineHandler {
                                 }
                                 BigInteger beta = CggmpProtocolUtils.randomNonZero(ctx.curveOrder());
                                 BigInteger betaHat = CggmpProtocolUtils.randomNonZero(ctx.curveOrder());
-                                PaillierEncryption.Encryption encNegBeta = pk.encryptWithRandomness(CggmpProtocolUtils.negateModN(beta, pk.n));
-                                PaillierEncryption.Encryption encNegBetaHat = pk.encryptWithRandomness(CggmpProtocolUtils.negateModN(betaHat, pk.n));
-                                BigInteger D_ji = pk.multiply(K_peer, ctx.gamma_i()).multiply(encNegBeta.c).mod(pk.nSquared);
-                                BigInteger Dhat_ji = pk.multiply(K_peer, x_i).multiply(encNegBetaHat.c).mod(pk.nSquared);
+                                PaillierEncryption.Encryption encNegBeta = pk.encryptWithRandomness(CggmpProtocolUtils.negateModN(beta, pk.n()));
+                                PaillierEncryption.Encryption encNegBetaHat = pk.encryptWithRandomness(CggmpProtocolUtils.negateModN(betaHat, pk.n()));
+                                BigInteger D_ji = pk.multiply(K_peer, ctx.gamma_i()).multiply(encNegBeta.c()).mod(pk.nSquared());
+                                BigInteger Dhat_ji = pk.multiply(K_peer, x_i).multiply(encNegBetaHat.c()).mod(pk.nSquared());
                                 PaillierEncryption.Encryption encBeta = task.paillier.getPublicKeyInfo().encryptWithRandomness(beta);
                                 PaillierEncryption.Encryption encBetaHat = task.paillier.getPublicKeyInfo().encryptWithRandomness(betaHat);
-                                BigInteger F_ji = encBeta.c;
-                                BigInteger Fhat_ji = encBetaHat.c;
+                                BigInteger F_ji = encBeta.c();
+                                BigInteger Fhat_ji = encBetaHat.c();
                                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
                                         Secp256k1CurveUtils.G(),
                                         Gamma_i,
-                                        pk.n,
-                                        task.paillier.getPublicKeyInfo().n,
+                                        pk.n(),
+                                        task.paillier.getPublicKeyInfo().n(),
                                         K_peer,
                                         D_ji,
                                         F_ji,
                                         ctx.gamma_i(),
                                         beta,
-                                        encNegBeta.r,
-                                        encBeta.r,
+                                        encNegBeta.r(),
+                                        encBeta.r(),
                                         svc.proofKappa,
                                         svc.proofEpsBits,
                                         CggmpProtocolUtils.buildPresignContext(task.taskId, svc.nodeId, "R2")
@@ -207,22 +208,22 @@ public final class CggmpSignatureOfflineHandler {
                                 PiAffGProof proofHat = PresignProofs.createAffGProofNegY(
                                         Secp256k1CurveUtils.G(),
                                         X_i,
-                                        pk.n,
-                                        task.paillier.getPublicKeyInfo().n,
+                                        pk.n(),
+                                        task.paillier.getPublicKeyInfo().n(),
                                         K_peer,
                                         Dhat_ji,
                                         Fhat_ji,
                                         x_i,
                                         betaHat,
-                                        encNegBetaHat.r,
-                                        encBetaHat.r,
+                                        encNegBetaHat.r(),
+                                        encBetaHat.r(),
                                         svc.proofKappa,
                                         svc.proofEpsBits,
                                         CggmpProtocolUtils.buildPresignContext(task.taskId, svc.nodeId, "R2H")
                                 );
                                 long peerMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - peerStartNs);
                                 return CggmpPresignPeerR2Result.done(peerId, beta, betaHat, D_ji, Dhat_ji, F_ji, Fhat_ji,
-                                        encNegBeta.r, encBeta.r, encNegBetaHat.r, encBetaHat.r, proof, proofHat, peerMs);
+                                        encNegBeta.r(), encBeta.r(), encNegBetaHat.r(), encBetaHat.r(), proof, proofHat, peerMs);
                             }, CggmpSignatureService.signatureExecutorService));
                         }
                         return new CggmpPresignR2Context(task, ctx.curveOrder(), ctx.gamma_i(), x_i, Gamma_i, X_i, r2Futures, r2StartNs);
@@ -312,11 +313,7 @@ public final class CggmpSignatureOfflineHandler {
                         return;
                     }
                     Throwable cause = ex instanceof CompletionException ? ex.getCause() : ex;
-                    if (cause == null) {
-                        task.fail(ex.getMessage());
-                    } else {
-                        task.fail(cause.getMessage());
-                    }
+                    task.fail(Objects.requireNonNullElse(cause, ex).getMessage());
                 });
     }
 
@@ -380,7 +377,7 @@ public final class CggmpSignatureOfflineHandler {
         if (logger.isDebugEnabled()) {
             String pkHash = CggmpSignaturePresignHandler.hashJsonMap(pkMap);
             String zkHash = CggmpSignaturePresignHandler.hashJsonMap(zkMap);
-            int pkBits = task.paillier == null || task.paillier.getPublicKeyInfo() == null ? -1 : task.paillier.getPublicKeyInfo().bitLength;
+            int pkBits = task.paillier == null || task.paillier.getPublicKeyInfo() == null ? -1 : task.paillier.getPublicKeyInfo().bitLength();
             logger.debug("Presign R1 send: taskId={}, senderId={}, pkHash={}, zkHash={}, pkBits={}",
                     task.taskId, svc.nodeId, pkHash, zkHash, pkBits);
         }
@@ -461,15 +458,15 @@ public final class CggmpSignatureOfflineHandler {
             java.math.BigInteger n = new java.math.BigInteger(auxInfo.getPaillierN(), 16);
             java.math.BigInteger g = new java.math.BigInteger(auxInfo.getPaillierG(), 16);
             task.paillier = new PaillierEncryption(p, q);
-            if (!task.paillier.getPublicKeyInfo().n.equals(n)) {
+            if (!task.paillier.getPublicKeyInfo().n().equals(n)) {
                 throw new RuntimeException("AUX Paillier n mismatch");
             }
-            if (!task.paillier.getPublicKeyInfo().g.equals(g)) {
+            if (!task.paillier.getPublicKeyInfo().g().equals(g)) {
                 throw new RuntimeException("AUX Paillier g mismatch");
             }
             long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
             logger.debug("Signature Paillier loaded from AUX for task {} in {} ms (bitLength={})",
-                    task.taskId, elapsedMs, task.paillier.getPublicKeyInfo().bitLength);
+                    task.taskId, elapsedMs, task.paillier.getPublicKeyInfo().bitLength());
         }
         if (task.zkSetup == null) {
             long startNs = System.nanoTime();
@@ -705,8 +702,8 @@ public final class CggmpSignatureOfflineHandler {
                                 missingR3Peers.add(peerId);
                                 continue;
                             }
-                            BigInteger alpha = CggmpProtocolUtils.decodeSigned(ctx.task.paillier.decrypt(D_ij), ctx.task.paillier.getPublicKeyInfo().n);
-                            BigInteger alphaHat = CggmpProtocolUtils.decodeSigned(ctx.task.paillier.decrypt(Dhat_ij), ctx.task.paillier.getPublicKeyInfo().n);
+                            BigInteger alpha = CggmpProtocolUtils.decodeSigned(ctx.task.paillier.decrypt(D_ij), ctx.task.paillier.getPublicKeyInfo().n());
+                            BigInteger alphaHat = CggmpProtocolUtils.decodeSigned(ctx.task.paillier.decrypt(Dhat_ij), ctx.task.paillier.getPublicKeyInfo().n());
                             BigInteger oldDelta = delta_i;
                             BigInteger oldChi = chi_i;
                             delta_i = delta_i.add(alpha).add(beta).mod(ctx.curveOrder);
@@ -895,7 +892,7 @@ public final class CggmpSignatureOfflineHandler {
                 ECPoint leftEx = X.multiply(deltaEx).normalize();
                 ECPoint rightEx = null;
                 for (Map.Entry<Integer, ECPoint> e : ctx.task.presignSPoint.entrySet()) {
-                    if (e.getKey().intValue() == peerId) {
+                    if (e.getKey() == peerId) {
                         continue;
                     }
                     rightEx = rightEx == null ? e.getValue() : rightEx.add(e.getValue());

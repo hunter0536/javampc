@@ -38,7 +38,7 @@ public class ServerHandler extends SimpleChannelInboundHandler<Object> {
             logger.warn("Rejected unsigned/invalid message");
             return;
         }
-        nettyService.handleInbound(message.senderId, message)
+        nettyService.handleInbound(message.senderId(), message)
                 .thenAccept(v -> logger.debug("Message handled successfully"))
                 .exceptionally(ex -> {
                     logger.error("Error handling message: {}", ex.getMessage());
@@ -55,13 +55,13 @@ public class ServerHandler extends SimpleChannelInboundHandler<Object> {
     private NodeService.Message unwrapSigned(Object raw) {
         if (raw instanceof SignedMessage sm) {
             if (sslEnabled || sharedSecret == null || sharedSecret.isBlank()) {
-                return sm.message;
+                return sm.message();
             }
-            String payload = MessageSigner.canonicalPayload(sm.message);
-            if (!MessageSigner.verify(payload, sharedSecret, sm.signature)) {
+            String payload = MessageSigner.canonicalPayload(sm.message());
+            if (!MessageSigner.verify(payload, sharedSecret, sm.signature())) {
                 return null;
             }
-            return sm.message;
+            return sm.message();
         }
         if (raw instanceof NodeService.Message msg) {
             return msg;

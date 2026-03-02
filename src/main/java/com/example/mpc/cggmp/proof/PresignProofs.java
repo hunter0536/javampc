@@ -407,8 +407,8 @@ public final class PresignProofs {
                                                   int epsBits,
                                                   byte[] context) {
         BigInteger q = Secp256k1CurveUtils.n();
-        BigInteger N0 = publicKey.n;
-        BigInteger N0sq = publicKey.nSquared;
+        BigInteger N0 = publicKey.n();
+        BigInteger N0sq = publicKey.nSquared();
         BigInteger hatN = zkSetup.hatN();
         BigInteger s = zkSetup.h1();
         BigInteger t = zkSetup.h2();
@@ -437,7 +437,7 @@ public final class PresignProofs {
                 .multiply(BigIntegerUtils.powSigned(t, gamma, hatN))
                 .mod(hatN);
 
-        BigInteger e = challengeSignedBounded("PI_ENC_ELG", effectiveEps, context, publicKey.n, A, B, X, S, T, D, Y, Z);
+        BigInteger e = challengeSignedBounded("PI_ENC_ELG", effectiveEps, context, publicKey.n(), A, B, X, S, T, D, Y, Z);
         BigInteger z1 = alpha.add(e.multiply(x));
         BigInteger w = beta.add(e.multiply(b)).mod(q);
         BigInteger z2 = r.multiply(BigIntegerUtils.powSigned(rho, e, N0)).mod(N0);
@@ -474,15 +474,15 @@ public final class PresignProofs {
             return new EncElgVerifyResult(false, false, false, false, false, false);
         }
         BigInteger q = Secp256k1CurveUtils.n();
-        BigInteger N0 = publicKey.n;
-        BigInteger N0sq = publicKey.nSquared;
+        BigInteger N0 = publicKey.n();
+        BigInteger N0sq = publicKey.nSquared();
         BigInteger hatN = zkSetup.hatN();
         BigInteger s = zkSetup.h1();
         BigInteger t = zkSetup.h2();
         int effectiveEps = epsBits > 0 ? epsBits : RANGE_EPS_BITS;
         BigInteger boundX = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps + 2);
 
-        BigInteger e = challengeSignedBounded("PI_ENC_ELG", effectiveEps, context, publicKey.n, A, B, X, proof.S(), proof.T(), proof.D(), proof.Y(), proof.Z());
+        BigInteger e = challengeSignedBounded("PI_ENC_ELG", effectiveEps, context, publicKey.n(), A, B, X, proof.S(), proof.T(), proof.D(), proof.Y(), proof.Z());
 
         BigInteger left1 = BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), proof.z1(), N0sq)
                 .multiply(proof.z2().modPow(N0, N0sq))

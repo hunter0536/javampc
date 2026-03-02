@@ -7,28 +7,7 @@ import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 
-public final class EcChaumPedersenProof {
-    private final ECPoint A;
-    private final BigInteger r;
-    private final BigInteger s;
-
-    public EcChaumPedersenProof(ECPoint A, BigInteger r, BigInteger s) {
-        this.A = A;
-        this.r = r;
-        this.s = s;
-    }
-
-    public ECPoint A() {
-        return A;
-    }
-
-    public BigInteger r() {
-        return r;
-    }
-
-    public BigInteger s() {
-        return s;
-    }
+public record EcChaumPedersenProof(ECPoint A, BigInteger r, BigInteger s) {
 
     public static EcChaumPedersenProof create(BigInteger value, BigInteger blinding, ECPoint commitment, byte[] context) {
         BigInteger q = EcPedersen.n();

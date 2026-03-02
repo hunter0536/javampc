@@ -33,7 +33,7 @@ public class ClientHandler extends SimpleChannelInboundHandler<NodeService.Messa
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, NodeService.Message message) {
-        logger.info("Received message from server: {}", message.type);
+        logger.info("Received message from server: {}", message.type());
         // 客户端处理器主要用于发送消息，接收消息由服务端处理器处理
     }
 

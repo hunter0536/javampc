@@ -21,25 +21,25 @@ public final class CggmpDkgMessageDispatcher {
 
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
         Object logTaskId = "N/A";
-        if (message.data instanceof Map<?, ?> map) {
+        if (message.data() instanceof Map<?, ?> map) {
             if (map.containsKey("taskId")) {
                 logTaskId = map.get("taskId");
             }
         }
         logger.info("=== CGGMP DKG handleMessage: senderId={}, type={}, taskId={} ===",
-                senderId, message.type, logTaskId);
+                senderId, message.type(), logTaskId);
         Executor executor = ThreadPoolUtil.getComputationThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
-                Object data = message.data;
+                Object data = message.data();
                 if (data instanceof byte[] bytes) {
-                    Object decoded = CggmpDkgUtils.maybeDecompressDkgPayload(message.type, bytes);
+                    Object decoded = CggmpDkgUtils.maybeDecompressDkgPayload(message.type(), bytes);
                     if (decoded != null) {
                         data = decoded;
                     }
                 }
-                logger.info("=== CGGMP DKG processing: type={} ===", message.type);
-                switch (message.type) {
+                logger.info("=== CGGMP DKG processing: type={} ===", message.type());
+                switch (message.type()) {
                     case CGGMP_DKG_INIT:
                         svc.dkgMessageHandler.onDkgInit(senderId, data);
                         break;
@@ -68,7 +68,7 @@ public final class CggmpDkgMessageDispatcher {
                         svc.dkgMessageHandler.onDkgExclude(senderId, data);
                         break;
                     default:
-                        logger.debug("Ignoring message of type {} for CGGMP DKG service", message.type);
+                        logger.debug("Ignoring message of type {} for CGGMP DKG service", message.type());
                 }
             } catch (Exception e) {
                 logger.error("Error handling CGGMP DKG message", e);

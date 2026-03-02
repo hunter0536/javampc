@@ -21,7 +21,7 @@ public final class CggmpSignatureMessageDispatcher {
 
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
         Object logTaskId = "N/A";
-        if (message.data instanceof Map<?, ?> map) {
+        if (message.data() instanceof Map<?, ?> map) {
             if (map.containsKey("taskId")) {
                 logTaskId = map.get("taskId");
             } else if (map.containsKey("signatureTaskId")) {
@@ -29,13 +29,13 @@ public final class CggmpSignatureMessageDispatcher {
             }
         }
         logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
-                senderId, message.type, logTaskId);
+                senderId, message.type(), logTaskId);
         Executor executor = ThreadPoolUtil.getSingleThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
-                Object data = message.data;
-                logger.info("=== CGGMP processing: type={} ===", message.type);
-                switch (message.type) {
+                Object data = message.data();
+                logger.info("=== CGGMP processing: type={} ===", message.type());
+                switch (message.type()) {
                     case GG20_SIGN_INIT:
                     case CGGMP_SIGN_OFFLINE_INIT:
                         svc.offlineHandler.handleCggmpSignOfflineInit(senderId, data);
@@ -95,7 +95,7 @@ public final class CggmpSignatureMessageDispatcher {
                         svc.onlineHandler.handleCggmpSignSShare(senderId, data);
                         break;
                     default:
-                        logger.debug("Ignoring message of type {} for CGGMP service", message.type);
+                        logger.debug("Ignoring message of type {} for CGGMP service", message.type());
                 }
             } catch (Exception e) {
                 logger.error("Error handling CGGMP message", e);

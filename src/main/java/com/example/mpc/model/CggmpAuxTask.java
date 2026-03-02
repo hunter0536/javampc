@@ -36,7 +36,6 @@ public class CggmpAuxTask {
     public volatile PiPrmProof prmProof;
 
     public final ConcurrentHashMap<Integer, String> commitHashes = new ConcurrentHashMap<>();
-    public final ConcurrentHashMap<Integer, Boolean> commitReceived = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> echoReceived = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, String> pendingEcho = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.util.Map<String, Object>> pendingReveal = new ConcurrentHashMap<>();

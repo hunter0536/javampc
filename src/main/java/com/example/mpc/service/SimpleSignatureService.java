@@ -425,16 +425,16 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     @Override
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
         try {
-            if (message.type == MessageType.SIMPLE_SIGN_INIT) {
-                handleInitMessage(senderId, message.data);
-            } else if (message.type == MessageType.SIMPLE_SIGN_OFFLINE) {
-                handleOfflineData(senderId, message.data);
-            } else if (message.type == MessageType.SIMPLE_SIGN_SIGMA) {
-                handleSigmaShare(senderId, message.data);
-            } else if (message.type == MessageType.SIMPLE_SIGN_OFFLINE_REQUEST) {
-                handleOfflineRequest(senderId, message.data);
-            } else if (message.type == MessageType.SIMPLE_SIGN_SIGMA_REQUEST) {
-                handleSigmaRequest(senderId, message.data);
+            if (message.type() == MessageType.SIMPLE_SIGN_INIT) {
+                handleInitMessage(senderId, message.data());
+            } else if (message.type() == MessageType.SIMPLE_SIGN_OFFLINE) {
+                handleOfflineData(senderId, message.data());
+            } else if (message.type() == MessageType.SIMPLE_SIGN_SIGMA) {
+                handleSigmaShare(senderId, message.data());
+            } else if (message.type() == MessageType.SIMPLE_SIGN_OFFLINE_REQUEST) {
+                handleOfflineRequest(senderId, message.data());
+            } else if (message.type() == MessageType.SIMPLE_SIGN_SIGMA_REQUEST) {
+                handleSigmaRequest(senderId, message.data());
             }
         } catch (Exception e) {
             logger.error("Error handling message: {}", e.getMessage());

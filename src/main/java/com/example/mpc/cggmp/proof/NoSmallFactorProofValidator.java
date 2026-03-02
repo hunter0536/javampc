@@ -37,7 +37,7 @@ public final class NoSmallFactorProofValidator {
     public boolean verifyProof(NoSmallFactorProof pr, PaillierEncryption.PublicKey pk, byte[] context) {
         if (pr == null || pk == null) return false;
 
-        BigInteger Ni = pk.n;
+        BigInteger Ni = pk.n();
         if (Ni.bitLength() < minNiBits) {
             return false;
         }
@@ -121,7 +121,7 @@ public final class NoSmallFactorProofValidator {
             return ProofCheckResult.failure("null_input");
         }
 
-        BigInteger Ni = pk.n;
+        BigInteger Ni = pk.n();
         if (Ni.bitLength() < minNiBits) {
             return ProofCheckResult.failure("ni_too_small");
         }

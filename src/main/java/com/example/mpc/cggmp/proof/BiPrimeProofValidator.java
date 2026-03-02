@@ -22,7 +22,7 @@ public final class BiPrimeProofValidator {
         if (pr == null || pk == null) {
             return false;
         }
-        if (!pk.n.equals(pr.N())) {
+        if (!pk.n().equals(pr.N())) {
             return false;
         }
         if (pr.sigmas() == null || pr.xs() == null || pr.zs() == null) {

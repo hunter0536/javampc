@@ -75,22 +75,7 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
     private record InternalSetup(BigInteger hatN, BigInteger h1, BigInteger h2, BigInteger lambda) {
     }
 
-    public static final class ZKSetupWithLambda {
-        private final ZKSetup zk;
-        private final BigInteger lambda;
-
-        public ZKSetupWithLambda(ZKSetup zk, BigInteger lambda) {
-            this.zk = zk;
-            this.lambda = lambda;
-        }
-
-        public ZKSetup zk() {
-            return zk;
-        }
-
-        public BigInteger lambda() {
-            return lambda;
-        }
+    public record ZKSetupWithLambda(ZKSetup zk, BigInteger lambda) {
     }
 
     private static BigInteger sampleUnit(BigInteger hatN, SecureRandom rnd) {

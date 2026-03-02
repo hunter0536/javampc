@@ -471,46 +471,11 @@ public final class CggmpDkgProtocolHandler {
         return future;
     }
 
-    private static final class DkgContext {
-        final CggmpDkgTask task;
-        final BigInteger q;
-        final ECPoint g;
-        final BigInteger[] coeffs;
-        final Map<String, Object> r1Open;
-
-        private DkgContext(CggmpDkgTask task,
-                           BigInteger q,
-                           ECPoint g,
-                           BigInteger[] coeffs,
-                           Map<String, Object> r1Open) {
-            this.task = task;
-            this.q = q;
-            this.g = g;
-            this.coeffs = coeffs;
-            this.r1Open = r1Open;
-        }
+    private record DkgContext(CggmpDkgTask task, BigInteger q, ECPoint g, BigInteger[] coeffs,
+                              Map<String, Object> r1Open) {
     }
 
-    private static final class DkgNonThresholdContext {
-        final CggmpDkgTask task;
-        final BigInteger q;
-        final ECPoint g;
-        final BigInteger x_i;
-        final ECPoint X_i;
-        final Map<String, Object> r1Open;
-
-        private DkgNonThresholdContext(CggmpDkgTask task,
-                                       BigInteger q,
-                                       ECPoint g,
-                                       BigInteger x_i,
-                                       ECPoint X_i,
-                                       Map<String, Object> r1Open) {
-            this.task = task;
-            this.q = q;
-            this.g = g;
-            this.x_i = x_i;
-            this.X_i = X_i;
-            this.r1Open = r1Open;
-        }
+    private record DkgNonThresholdContext(CggmpDkgTask task, BigInteger q, ECPoint g, BigInteger x_i, ECPoint X_i,
+                                          Map<String, Object> r1Open) {
     }
 }

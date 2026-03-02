@@ -1,8 +1,5 @@
 package com.example.mpc.service.cggmp.refresh;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
@@ -14,12 +11,15 @@ import com.example.mpc.model.KeyShare;
 import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import org.bouncycastle.math.ec.ECPoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -77,7 +77,7 @@ public final class CggmpRefreshProtocolHandler {
     }
 
     private CompletableFuture<Void> runRefreshProtocolAsync(CggmpRefreshTask task, boolean broadcastInit) {
-        return waitForNetworkReadyAsync(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS)
+        return waitForNetworkReadyAsync()
                 .thenCompose(ready -> {
                     if (!ready) {
                         return CompletableFuture.failedFuture(new RuntimeException("Refresh network ready timeout"));
@@ -126,18 +126,17 @@ public final class CggmpRefreshProtocolHandler {
 
                             Map<Integer, ECPoint> yMap = new HashMap<>(task.yPoints);
                             Map<Integer, ECPoint> xMap = new HashMap<>(task.xPoints);
-                            Map<Integer, ECPoint> aMap = A;
                             CggmpRefreshTask.RefreshRound2Data r2 = new CggmpRefreshTask.RefreshRound2Data(
                                     yMap,
                                     xMap,
-                                    aMap,
+                                    A,
                                     Xi,
                                     rid,
                                     u
                             );
                             task.round2Data.put(svc.nodeId, r2);
                             logger.debug("Refresh R2 prepared for task {} (nodeId={}, X.size={}, Y.size={}, A.size={}, ridLen={}, uLen={})",
-                                    task.taskId, svc.nodeId, xMap.size(), yMap.size(), aMap.size(), rid.length, u.length);
+                                    task.taskId, svc.nodeId, xMap.size(), yMap.size(), A.size(), rid.length, u.length);
                             return task;
                         } catch (Exception e) {
                             task.fail(e.getMessage());
@@ -149,9 +148,9 @@ public final class CggmpRefreshProtocolHandler {
                     if (t == null) {
                         return CompletableFuture.completedFuture(null);
                     }
-                    return waitForLatchAsync(task.round1Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "refresh R1")
+                    return waitForLatchAsync(task.round1Latch, "refresh R1")
                             .thenCompose(v -> svc.refreshMessageHandler.sendRefreshR2(task, task.round2Data.get(svc.nodeId)))
-                            .thenCompose(v -> waitForLatchAsync(task.round2Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "refresh R2"))
+                            .thenCompose(v -> waitForLatchAsync(task.round2Latch, "refresh R2"))
                             .thenCompose(v -> CompletableFuture.runAsync(() -> {
                                 byte[] mergedRid = CggmpRefreshUtils.xorAllRid(task);
                                 task.rid = mergedRid;
@@ -160,7 +159,7 @@ public final class CggmpRefreshProtocolHandler {
                                 Map<Integer, PiSchProof> schProofs = new HashMap<>();
                                 for (int peerId : task.participants) {
                                     if (peerId == svc.nodeId) continue;
-                                    ECPoint Yji = task.round2Data.get(peerId).Y.get(svc.nodeId);
+                                    ECPoint Yji = task.round2Data.get(peerId).Y().get(svc.nodeId);
                                     BigInteger y = task.yShares.get(peerId);
                                     BigInteger rho = CggmpRefreshUtils.deriveRefreshMask(task.taskId, mergedRid, svc.nodeId, peerId, Yji, y);
                                     BigInteger xij = task.xShares.get(peerId);
@@ -186,7 +185,7 @@ public final class CggmpRefreshProtocolHandler {
                                         task.taskId, svc.nodeId, C.size(), schProofs.size());
                                 CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.sendRefreshR3(task, r3), logger, "CGGMP_REFRESH_R3");
                             }, refreshExecutorService))
-                            .thenCompose(v -> waitForLatchAsync(task.round3Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "refresh R3"))
+                            .thenCompose(v -> waitForLatchAsync(task.round3Latch, "refresh R3"))
                             .thenRunAsync(() -> {
                                 if (!finalizeRefresh(task)) {
                                     task.fail("Refresh verification failed");
@@ -250,7 +249,7 @@ public final class CggmpRefreshProtocolHandler {
             if (r2 == null || commit == null) {
                 return false;
             }
-            String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, peerId, r2.X, r2.Y, r2.A, r2.Xi, r2.rid, r2.u);
+            String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, peerId, r2.X(), r2.Y(), r2.A(), r2.Xi(), r2.rid(), r2.u());
             if (!commit.equals(expected)) {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("peerId", peerId);
@@ -261,10 +260,10 @@ public final class CggmpRefreshProtocolHandler {
                         logger, "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
-            if (!isRefreshXZeroAtOrigin(task, r2.X)) {
+            if (!isRefreshXZeroAtOrigin(task, r2.X())) {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("peerId", peerId);
-                extra.put("xSum", HexUtils.bytesToHex(Secp256k1CurveUtils.sumPoints(r2.X).getEncoded(false)));
+                extra.put("xSum", HexUtils.bytesToHex(Secp256k1CurveUtils.sumPoints(r2.X()).getEncoded(false)));
                 CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Sum of X not identity",
                                 svc.refreshMessageHandler.refreshEvidence(task, peerId, "Sum of X not identity", extra)),
                         logger, "CGGMP_REFRESH_COMPLAINT");
@@ -281,8 +280,8 @@ public final class CggmpRefreshProtocolHandler {
             }
 
             for (int k : task.participants) {
-                PiSchProof sch = r3.schProofs.get(k);
-                ECPoint Xjk = r2.X.get(k);
+                PiSchProof sch = r3.schProofs().get(k);
+                ECPoint Xjk = r2.X().get(k);
                 if (sch == null || Xjk == null) {
                     CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Missing Schnorr proof",
                                     svc.refreshMessageHandler.refreshEvidence(task, peerId, "Missing Schnorr proof", Map.of("peerId", peerId, "k", k))),
@@ -300,14 +299,14 @@ public final class CggmpRefreshProtocolHandler {
             if (peerId == svc.nodeId) {
                 continue;
             }
-            BigInteger Cji = r3.C.get(svc.nodeId);
+            BigInteger Cji = r3.C().get(svc.nodeId);
             if (Cji == null) {
                 CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Missing C_{j,i}",
                                 svc.refreshMessageHandler.refreshEvidence(task, peerId, "Missing C_{j,i}", Map.of("peerId", peerId, "missingFor", svc.nodeId))),
                         logger, "CGGMP_REFRESH_COMPLAINT");
                 return false;
             }
-            ECPoint Yji = r2.Y.get(svc.nodeId);
+            ECPoint Yji = r2.Y().get(svc.nodeId);
             if (Yji == null) {
                 CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Missing Y_{j,i}",
                                 svc.refreshMessageHandler.refreshEvidence(task, peerId, "Missing Y_{j,i}", Map.of("peerId", peerId, "missingFor", svc.nodeId))),
@@ -320,7 +319,7 @@ public final class CggmpRefreshProtocolHandler {
             }
             BigInteger rho = CggmpRefreshUtils.deriveRefreshMask(task.taskId, task.rid, peerId, svc.nodeId, Yji, yij);
             BigInteger xji = Cji.subtract(rho).mod(q);
-            ECPoint Xji = r2.X.get(svc.nodeId);
+            ECPoint Xji = r2.X().get(svc.nodeId);
             if (Xji == null) {
                 CggmpProtocolUtils.fireAndForget(svc.refreshMessageHandler.broadcastRefreshComplaint(task, peerId, "Missing X_{j,i}",
                                 svc.refreshMessageHandler.refreshEvidence(task, peerId, "Missing X_{j,i}", Map.of("peerId", peerId, "missingFor", svc.nodeId))),
@@ -376,15 +375,15 @@ public final class CggmpRefreshProtocolHandler {
         return true;
     }
 
-    private CompletableFuture<Boolean> waitForNetworkReadyAsync(long timeoutSeconds) {
+    private CompletableFuture<Boolean> waitForNetworkReadyAsync() {
         return svc.nodeService.waitForNetworkReady()
-                .orTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .orTimeout(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .thenApply(v -> true)
                 .exceptionally(ex -> false);
     }
 
-    private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
-        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds);
+    private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, String label) {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS);
         CompletableFuture<Void> future = new CompletableFuture<>();
         ScheduledFuture<?> tick = svc.cggmpScheduler.scheduleAtFixedRate(() -> {
             if (latch.getCount() == 0) {
@@ -410,7 +409,7 @@ public final class CggmpRefreshProtocolHandler {
     }
 
     private boolean validateFullParticipation(CggmpRefreshTask task) {
-        if (task == null || task.participants == null) {
+        if (task == null) {
             return false;
         }
         if (task.participants.size() != svc.nodesCount) {
@@ -433,7 +432,7 @@ public final class CggmpRefreshProtocolHandler {
                 return null;
             }
             Map<Integer, ECPoint> prevShares = com.example.mpc.common.util.DbMapUtils.parsePublicShares(prevPublicSharesJson);
-            if (prevShares == null || prevShares.isEmpty()) {
+            if (prevShares.isEmpty()) {
                 return null;
             }
             for (int id : task.participants) {
@@ -447,16 +446,16 @@ public final class CggmpRefreshProtocolHandler {
                 ECPoint sum = null;
                 for (int peerId : task.participants) {
                     CggmpRefreshTask.RefreshRound2Data r2 = task.round2Data.get(peerId);
-                    if (r2 == null || r2.X == null) {
+                    if (r2 == null || r2.X() == null) {
                         return null;
                     }
-                    ECPoint xjk = r2.X.get(k);
+                    ECPoint xjk = r2.X().get(k);
                     if (xjk == null) {
                         return null;
                     }
                     sum = sum == null ? xjk : sum.add(xjk);
                 }
-                deltaPoints.put(k, sum.normalize());
+                deltaPoints.put(k, Objects.requireNonNull(sum).normalize());
             }
             Map<Integer, ECPoint> refreshed = new HashMap<>();
             for (int k : task.participants) {

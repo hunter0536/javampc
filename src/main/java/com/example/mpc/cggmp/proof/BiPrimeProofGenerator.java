@@ -29,8 +29,8 @@ public final class BiPrimeProofGenerator {
     public BiPrimeBlumProof createProof(PaillierEncryption.PrivateKey sk, byte[] ctx) {
         Objects.requireNonNull(sk, "sk");
 
-        BigInteger p = sk.p;
-        BigInteger q = sk.q;
+        BigInteger p = sk.p();
+        BigInteger q = sk.q();
         BigInteger N = p.multiply(q);
 
         validateBlum(p, q);

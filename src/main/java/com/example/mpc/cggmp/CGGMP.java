@@ -32,10 +32,10 @@ public class CGGMP {
 
     private BigInteger secretShare;
     private ECPoint publicKey;
-    private Map<Integer, PaillierEncryption.PublicKey> otherPaillierKeys;
-    private Map<Integer, ECPoint> otherPublicKeys;
+    private final Map<Integer, PaillierEncryption.PublicKey> otherPaillierKeys;
+    private final Map<Integer, ECPoint> otherPublicKeys;
 
-    private SecureRandom random;
+    private final SecureRandom random;
 
     public CGGMP(int threshold, int totalNodes, int nodeId, String curveName) throws Exception {
         this.threshold = threshold;
@@ -239,34 +239,11 @@ public class CGGMP {
         return pedersen.getCurveOrder();
     }
 
-    public static class DkgRound1Output {
-        public final int nodeId;
-        public final BigInteger[] coefficients;
-        public final List<ECPoint> commitments;
-        public final PaillierEncryption.PublicKey paillierKey;
-        public final ZKSetup zkSetup;
-        public final BiPrimeBlumProof biPrimeProof;
-        public final NoSmallFactorProof factorProof;
-
-        public DkgRound1Output(int nodeId, BigInteger[] coefficients, List<ECPoint> commitments, PaillierEncryption.PublicKey paillierKey,
-                               ZKSetup zkSetup, BiPrimeBlumProof biPrimeProof, NoSmallFactorProof factorProof) {
-            this.nodeId = nodeId;
-            this.coefficients = coefficients;
-            this.commitments = commitments;
-            this.paillierKey = paillierKey;
-            this.zkSetup = zkSetup;
-            this.biPrimeProof = biPrimeProof;
-            this.factorProof = factorProof;
-        }
+    public record DkgRound1Output(int nodeId, BigInteger[] coefficients, List<ECPoint> commitments,
+                                  PaillierEncryption.PublicKey paillierKey, ZKSetup zkSetup,
+                                  BiPrimeBlumProof biPrimeProof, NoSmallFactorProof factorProof) {
     }
 
-    public static class DkgRound2Output {
-        public final int nodeId;
-        public final Map<Integer, BigInteger> shares;
-
-        public DkgRound2Output(int nodeId, Map<Integer, BigInteger> shares) {
-            this.nodeId = nodeId;
-            this.shares = shares;
-        }
+    public record DkgRound2Output(int nodeId, Map<Integer, BigInteger> shares) {
     }
 }

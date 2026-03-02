@@ -72,10 +72,10 @@ public final class CggmpRefreshUtils {
         byte[] rid = null;
         for (CggmpRefreshTask.RefreshRound2Data d : task.round2Data.values()) {
             if (rid == null) {
-                rid = d.rid.clone();
+                rid = d.rid().clone();
             } else {
                 for (int i = 0; i < rid.length; i++) {
-                    rid[i] ^= d.rid[i];
+                    rid[i] ^= d.rid()[i];
                 }
             }
         }

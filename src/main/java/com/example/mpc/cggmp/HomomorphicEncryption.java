@@ -50,19 +50,6 @@ public interface HomomorphicEncryption {
         BigInteger r();
     }
 
-    final class SimpleEncryption implements Encryption {
-        private final BigInteger c;
-        private final BigInteger r;
-
-        public SimpleEncryption(BigInteger c, BigInteger r) {
-            this.c = c;
-            this.r = r;
-        }
-
-        @Override
-        public BigInteger c() { return c; }
-
-        @Override
-        public BigInteger r() { return r; }
+    record SimpleEncryption(BigInteger c, BigInteger r) implements Encryption {
     }
 }

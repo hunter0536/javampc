@@ -1,8 +1,5 @@
 package com.example.mpc.service.cggmp.auxiliary;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
@@ -19,6 +16,8 @@ import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -46,9 +45,9 @@ public final class CggmpAuxProtocolHandler {
             task.paillier = paillier;
             long pedStart = System.nanoTime();
             logger.debug("AUX Pedersen/ZK setup start: taskId={}, executionId={}, bits={}",
-                    task.taskId, task.executionId, paillier.getPublicKeyInfo().bitLength);
-            ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength);
-            logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength);
+                    task.taskId, task.executionId, paillier.getPublicKeyInfo().bitLength());
+            ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength());
+            logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength());
             task.hatN = ped.zk().hatN();
             task.s = ped.zk().h1();
             task.t = ped.zk().h2();
@@ -109,7 +108,7 @@ public final class CggmpAuxProtocolHandler {
             r1.put("senderId", svc.nodeId);
             r1.put("V", vCommit);
             logger.debug("AUX R1 broadcast: taskId={}, executionId={}, senderId={}, V.len={}",
-                    task.taskId, task.executionId, svc.nodeId, vCommit == null ? -1 : vCommit.length());
+                    task.taskId, task.executionId, svc.nodeId, vCommit.length());
             CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1, r1)),
                     logger, "CGGMP_AUX_R1_RBC");
             return new AuxContext(task, paillier, prmProof, rho_i, u_i);
@@ -138,17 +137,15 @@ public final class CggmpAuxProtocolHandler {
                 .thenCompose(ctx -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.echoLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1 echo")
                         .exceptionally(ex -> {
                     String echo = CggmpProtocolUtils.computeAuxEchoHash(task);
-                    if (echo != null) {
-                        Map<String, Object> r1Echo = new HashMap<>();
-                                r1Echo.put("taskId", task.taskId);
-                                r1Echo.put("executionId", task.executionId);
-                                r1Echo.put("senderId", svc.nodeId);
-                                r1Echo.put("hash", echo);
-                                logger.debug("AUX R1 echo retry: taskId={}, executionId={}, senderId={}, hash.len={}",
-                                        task.taskId, task.executionId, svc.nodeId, echo.length());
-                                CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
-                                        logger, "CGGMP_AUX_R1_ECHO_RETRY");
-                            }
+                            Map<String, Object> r1Echo = new HashMap<>();
+                            r1Echo.put("taskId", task.taskId);
+                            r1Echo.put("executionId", task.executionId);
+                            r1Echo.put("senderId", svc.nodeId);
+                            r1Echo.put("hash", echo);
+                            logger.debug("AUX R1 echo retry: taskId={}, executionId={}, senderId={}, hash.len={}",
+                                    task.taskId, task.executionId, svc.nodeId, echo.length());
+                            CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
+                                    logger, "CGGMP_AUX_R1_ECHO_RETRY");
                             throw new java.util.concurrent.CompletionException(ex);
                         })
                         .thenApply(v -> ctx))
@@ -171,7 +168,7 @@ public final class CggmpAuxProtocolHandler {
                 .thenCompose(ctx -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.revealLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R2")
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
-                    byte[] rho = CggmpAuxUtils.xorAuxRho(svc.nodeId, task);
+                    byte[] rho = CggmpAuxUtils.xorAuxRho(task);
                     byte[] modCtx = CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "MOD", rho);
                     long modProofStart = System.nanoTime();
                     BiPrimeBlumProof modProof = new BiPrimeProofGenerator().createProof(ctx.paillier.getPrivateKeyInfo(), modCtx);
@@ -210,19 +207,7 @@ public final class CggmpAuxProtocolHandler {
                 }, auxExecutorService);
     }
 
-    private static final class AuxContext {
-        final CggmpAuxTask task;
-        final PaillierEncryption paillier;
-        final PiPrmProof prmProof;
-        final byte[] rho;
-        final byte[] u;
-
-        AuxContext(CggmpAuxTask task, PaillierEncryption paillier, PiPrmProof prmProof, byte[] rho, byte[] u) {
-            this.task = task;
-            this.paillier = paillier;
-            this.prmProof = prmProof;
-            this.rho = rho;
-            this.u = u;
-        }
+    private record AuxContext(CggmpAuxTask task, PaillierEncryption paillier, PiPrmProof prmProof, byte[] rho,
+                              byte[] u) {
     }
 }

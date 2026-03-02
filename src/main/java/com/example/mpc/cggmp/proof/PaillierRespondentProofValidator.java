@@ -8,9 +8,9 @@ import java.math.BigInteger;
 
 public class PaillierRespondentProofValidator implements RespondentProofValidator {
     public boolean verifyProof(PaillierRespondentProof proof, com.example.mpc.cggmp.PaillierEncryption.PublicKey pubKey, PaillierRespondentProofContext ctx) {
-        var g = pubKey.g;
-        var n = pubKey.n;
-        var nsq = pubKey.nSquared;
+        var g = pubKey.g();
+        var n = pubKey.n();
+        var nsq = pubKey.nSquared();
         var hatN = ctx.zkSetup().hatN();
         var h1 = ctx.zkSetup().h1();
         var h2 = ctx.zkSetup().h2();

@@ -129,80 +129,47 @@ public class PaillierEncryption {
         return bitLength;
     }
 
-    public static class PublicKey {
-        public final BigInteger n;
-        public final BigInteger nSquared;
-        public final BigInteger g;
-        public final int bitLength;
-
-        public PublicKey(BigInteger n) {
-            this(n, n.multiply(n), n.add(BigInteger.ONE), n.bitLength());
-        }
-
-        public PublicKey(BigInteger n, BigInteger nSquared, BigInteger g, int bitLength) {
-            this.n = n;
-            this.nSquared = nSquared;
-            this.g = g;
-            this.bitLength = bitLength;
-        }
+    public record PublicKey(BigInteger n, BigInteger nSquared, BigInteger g, int bitLength) {
+            public PublicKey(BigInteger n) {
+                this(n, n.multiply(n), n.add(BigInteger.ONE), n.bitLength());
+            }
 
         public BigInteger encrypt(BigInteger m) {
-            return encryptWithRandomness(m).c;
+                return encryptWithRandomness(m).c;
+            }
+
+            public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
+                BigInteger gm = g.modPow(m, nSquared);
+                BigInteger rn = r.modPow(n, nSquared);
+                return gm.multiply(rn).mod(nSquared);
+            }
+
+            public Encryption encryptWithRandomness(BigInteger m) {
+                SecureRandom random = new SecureRandom();
+                BigInteger r;
+
+                do {
+                    r = new BigInteger(n.bitLength(), random);
+                } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
+
+                BigInteger c = encryptWithRandom(m, r);
+                return new Encryption(c, r);
+            }
+
+            public BigInteger add(BigInteger c1, BigInteger c2) {
+                return c1.multiply(c2).mod(nSquared);
+            }
+
+            public BigInteger multiply(BigInteger c, BigInteger k) {
+                return c.modPow(k, nSquared);
+            }
         }
 
-        public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
-            BigInteger gm = g.modPow(m, nSquared);
-            BigInteger rn = r.modPow(n, nSquared);
-            return gm.multiply(rn).mod(nSquared);
-        }
-
-        public Encryption encryptWithRandomness(BigInteger m) {
-            SecureRandom random = new SecureRandom();
-            BigInteger r;
-
-            do {
-                r = new BigInteger(n.bitLength(), random);
-            } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
-
-            BigInteger c = encryptWithRandom(m, r);
-            return new Encryption(c, r);
-        }
-
-        public BigInteger add(BigInteger c1, BigInteger c2) {
-            return c1.multiply(c2).mod(nSquared);
-        }
-
-        public BigInteger multiply(BigInteger c, BigInteger k) {
-            return c.modPow(k, nSquared);
-        }
+    public record PrivateKey(BigInteger lambda, BigInteger mu, BigInteger p, BigInteger q, BigInteger n,
+                             int bitLength) {
     }
 
-    public static class PrivateKey {
-        public final BigInteger lambda;
-        public final BigInteger mu;
-        public final BigInteger p;
-        public final BigInteger q;
-        public final BigInteger n;
-        public final int bitLength;
-
-        public PrivateKey(BigInteger lambda, BigInteger mu, BigInteger p, BigInteger q, BigInteger n, int bitLength) {
-            this.lambda = lambda;
-            this.mu = mu;
-            this.p = p;
-            this.q = q;
-            this.n = n;
-            this.bitLength = bitLength;
-        }
-    }
-
-    public static class Encryption {
-        public final BigInteger c;
-        public final BigInteger r;
-
-        public Encryption(BigInteger c, BigInteger r) {
-            this.c = c;
-            this.r = r;
-        }
+    public record Encryption(BigInteger c, BigInteger r) {
     }
 
     private static BigInteger lcm(BigInteger a, BigInteger b) {
