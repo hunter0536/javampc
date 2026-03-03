@@ -1,5 +1,7 @@
 package com.example.mpc.common.util;
 
+import org.checkerframework.checker.nullness.qual.NonNull;
+
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -22,7 +24,7 @@ public class ThreadPoolUtil {
         private final AtomicInteger threadNumber = new AtomicInteger(1);
 
         @Override
-        public Thread newThread(Runnable r) {
+        public Thread newThread(@NonNull Runnable r) {
             Thread t = defaultFactory.newThread(r);
             t.setName("ThreadPoolUtil-" + threadNumber.getAndIncrement());
             return t;
