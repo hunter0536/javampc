@@ -111,7 +111,7 @@ public final class CggmpAuxProtocolHandler {
                             task.taskId, task.executionId, svc.nodeId, vCommit.length());
                     CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1, r1)),
                             logger, "CGGMP_AUX_R1_RBC");
-                    return new AuxContext(task, paillier, prmProof, rho_i, u_i);
+                    return new CggmpAuxContext(task, paillier, prmProof, rho_i, u_i);
                 }, auxExecutorService)
                 .thenCompose(ctx -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.commitLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1")
                         .exceptionally(ex -> {
@@ -154,13 +154,13 @@ public final class CggmpAuxProtocolHandler {
                     r2.put("taskId", task.taskId);
                     r2.put("executionId", task.executionId);
                     r2.put("senderId", svc.nodeId);
-                    r2.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(ctx.paillier.getPublicKeyInfo()));
+                    r2.put("paillierPublicKey", CggmpCodecUtils.encodePaillierPublicKey(ctx.paillier().getPublicKeyInfo()));
                     r2.put("hatN", task.hatN.toString(16));
                     r2.put("s", task.s.toString(16));
                     r2.put("t", task.t.toString(16));
-                    r2.put("prmProof", CggmpCodecUtils.encodePiPrmProof(ctx.prmProof));
-                    r2.put("rho", HexUtils.bytesToHex(ctx.rho));
-                    r2.put("u", HexUtils.bytesToHex(ctx.u));
+                    r2.put("prmProof", CggmpCodecUtils.encodePiPrmProof(ctx.prmProof()));
+                    r2.put("rho", HexUtils.bytesToHex(ctx.rho()));
+                    r2.put("u", HexUtils.bytesToHex(ctx.u()));
                     logger.debug("AUX R2 broadcast: taskId={}, executionId={}, senderId={}", task.taskId, task.executionId, svc.nodeId);
                     CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R2, r2)),
                             logger, "CGGMP_AUX_R2");
@@ -171,7 +171,7 @@ public final class CggmpAuxProtocolHandler {
                     byte[] rho = CggmpAuxUtils.xorAuxRho(task);
                     byte[] modCtx = CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "MOD", rho);
                     long modProofStart = System.nanoTime();
-                    BiPrimeBlumProof modProof = new BiPrimeProofGenerator().createProof(ctx.paillier.getPrivateKeyInfo(), modCtx);
+                    BiPrimeBlumProof modProof = new BiPrimeProofGenerator().createProof(ctx.paillier().getPrivateKeyInfo(), modCtx);
                     logger.debug("AUX mod proof generated in {} ms", (System.nanoTime() - modProofStart) / 1_000_000);
                     Map<String, Object> facProofs = new HashMap<>();
                     for (int peerId : task.participants) {
@@ -184,7 +184,7 @@ public final class CggmpAuxProtocolHandler {
                         }
                         ZKSetup zk = new ZKSetup(hatN, s, t);
                         long facStart = System.nanoTime();
-                        NoSmallFactorProof facProof = new NoSmallFactorProofGenerator(zk).createProof(ctx.paillier.getPrivateKeyInfo(), modCtx);
+                        NoSmallFactorProof facProof = new NoSmallFactorProofGenerator(zk).createProof(ctx.paillier().getPrivateKeyInfo(), modCtx);
                         logger.debug("AUX fac proof generated for peer {} in {} ms", peerId, (System.nanoTime() - facStart) / 1_000_000);
                         facProofs.put(String.valueOf(peerId), CggmpCodecUtils.encodeNoSmallFactorProof(facProof));
                     }
@@ -205,9 +205,5 @@ public final class CggmpAuxProtocolHandler {
                     CggmpAuxUtils.saveAuxInfo(svc, task);
                     logger.debug("AUX protocol completed in {} ms", (System.nanoTime() - auxStartNs) / 1_000_000);
                 }, auxExecutorService);
-    }
-
-    private record AuxContext(CggmpAuxTask task, PaillierEncryption paillier, PiPrmProof prmProof, byte[] rho,
-                              byte[] u) {
     }
 }

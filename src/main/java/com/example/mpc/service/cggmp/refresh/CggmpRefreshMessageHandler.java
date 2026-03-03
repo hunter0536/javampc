@@ -11,6 +11,9 @@ import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
+import com.example.mpc.service.cggmp.types.BigIntIndexMap;
+import com.example.mpc.service.cggmp.types.ECPointIndexMap;
+import com.example.mpc.service.cggmp.types.SchProofMap;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,9 +108,9 @@ public final class CggmpRefreshMessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", svc.nodeId);
-        data.put("Y", Secp256k1CurveUtils.encodeECPointMap(r2.Y()));
-        data.put("X", Secp256k1CurveUtils.encodeECPointMap(r2.X()));
-        data.put("A", Secp256k1CurveUtils.encodeECPointMap(r2.A()));
+        data.put("Y", Secp256k1CurveUtils.encodeECPointMap(r2.Y().toMap()));
+        data.put("X", Secp256k1CurveUtils.encodeECPointMap(r2.X().toMap()));
+        data.put("A", Secp256k1CurveUtils.encodeECPointMap(r2.A().toMap()));
         data.put("Xi", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(r2.Xi())));
         data.put("rid", Base64.getEncoder().encodeToString(r2.rid()));
         data.put("u", Base64.getEncoder().encodeToString(r2.u()));
@@ -118,8 +121,8 @@ public final class CggmpRefreshMessageHandler {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", svc.nodeId);
-        data.put("C", CggmpCodecUtils.encodeBigIntegerMap(r3.C()));
-        data.put("schProofs", CggmpCodecUtils.encodeSchProofMap(r3.schProofs()));
+        data.put("C", CggmpCodecUtils.encodeBigIntegerMap(r3.C().toMap()));
+        data.put("schProofs", CggmpCodecUtils.encodeSchProofMap(r3.schProofs().toMap()));
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R3, data));
     }
 
@@ -244,7 +247,10 @@ public final class CggmpRefreshMessageHandler {
                 return;
             }
 
-            String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, senderId, X, Y, A, Xi, rid, u);
+            ECPointIndexMap YMap = ECPointIndexMap.of(Y);
+            ECPointIndexMap XMap = ECPointIndexMap.of(X);
+            ECPointIndexMap AMap = ECPointIndexMap.of(A);
+            String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, senderId, X, Y, AMap.values(), Xi, rid, u);
             if (!commit.equals(expected)) {
                 Map<String, Object> extra = new HashMap<>();
                 extra.put("expectedCommit", expected);
@@ -256,7 +262,7 @@ public final class CggmpRefreshMessageHandler {
             }
 
             CggmpRefreshTask.RefreshRound2Data r2 = new CggmpRefreshTask.RefreshRound2Data(
-                    Y, X, A, Xi, rid, u
+                    YMap, XMap, AMap, Xi, rid, u
             );
             if (task.round2Data.putIfAbsent(senderId, r2) == null && task.round2Latch.getCount() > 0) {
                 task.round2Latch.countDown();
@@ -294,7 +300,8 @@ public final class CggmpRefreshMessageHandler {
             logger.debug("Refresh R3 received (taskId={}, senderId={}, C.size={}, schProofs.size={})",
                     taskId, senderId, C.size(), schProofs.size());
 
-            CggmpRefreshTask.RefreshRound3Data r3 = new CggmpRefreshTask.RefreshRound3Data(C, schProofs);
+            CggmpRefreshTask.RefreshRound3Data r3 = new CggmpRefreshTask.RefreshRound3Data(
+                    BigIntIndexMap.of(C), SchProofMap.of(schProofs));
             if (task.round3Data.putIfAbsent(senderId, r3) == null && task.round3Latch.getCount() > 0) {
                 task.round3Latch.countDown();
             }
@@ -446,7 +453,7 @@ public final class CggmpRefreshMessageHandler {
             }
             if (r.startsWith("Refresh R1 commit mismatch") || r.startsWith("Refresh commit mismatch")) {
                 if (commit == null || r2 == null) return false;
-                String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, offenderId, r2.X(), r2.Y(), r2.A(), r2.Xi(), r2.rid(), r2.u());
+                String expected = CggmpRefreshUtils.computeRefreshCommit(task.taskId, offenderId, r2.X().toMap(), r2.Y().toMap(), r2.A().toMap(), r2.Xi(), r2.rid(), r2.u());
                 if (evidence != null) {
                     Object evCommit = evidence.get("commit");
                     Object evExpected = evidence.get("expectedCommit");
@@ -460,7 +467,7 @@ public final class CggmpRefreshMessageHandler {
                 return !commit.equals(expected);
             }
             if (r.startsWith("Sum of X not identity")) {
-                return r2 != null && !Secp256k1CurveUtils.sumPoints(r2.X()).isInfinity();
+                return r2 != null && !Secp256k1CurveUtils.sumPoints(r2.X().toMap()).isInfinity();
             }
             if (r.startsWith("Missing Schnorr proof")) {
                 if (r2 == null || r3 == null) return false;
@@ -474,8 +481,8 @@ public final class CggmpRefreshMessageHandler {
             if (r.startsWith("Invalid Schnorr proof")) {
                 if (r2 == null || r3 == null) return false;
                 for (int k : task.participants) {
-                    PiSchProof sch = r3.schProofs().get(k);
-                    ECPoint Xjk = r2.X().get(k);
+                    PiSchProof sch = r3.schProofs().get(k).orElse(null);
+                    ECPoint Xjk = r2.X().get(k).orElse(null);
                     if (sch == null || Xjk == null) continue;
                     boolean ok = RefreshProofs.verifySchProof(sch, Secp256k1CurveUtils.G(), Xjk,
                             CggmpRefreshUtils.buildRefreshContext(task.taskId, task.rid, offenderId, "SCH:" + k));
@@ -484,19 +491,19 @@ public final class CggmpRefreshMessageHandler {
                 return false;
             }
             if (r.startsWith("Missing C_{j,i}")) {
-                return r3 == null || r3.C().get(svc.nodeId) == null;
+                return r3 == null || r3.C().get(svc.nodeId).isEmpty();
             }
             if (r.startsWith("Missing Y_{j,i}")) {
-                return r2 == null || r2.Y().get(svc.nodeId) == null;
+                return r2 == null || r2.Y().get(svc.nodeId).isEmpty();
             }
             if (r.startsWith("Missing X_{j,i}")) {
-                return r2 == null || r2.X().get(svc.nodeId) == null;
+                return r2 == null || r2.X().get(svc.nodeId).isEmpty();
             }
             if (r.startsWith("Invalid C_{j,i} decryption")) {
                 if (r2 == null || r3 == null) return false;
-                BigInteger Cji = r3.C().get(svc.nodeId);
-                ECPoint Yji = r2.Y().get(svc.nodeId);
-                ECPoint Xji = r2.X().get(svc.nodeId);
+                BigInteger Cji = r3.C().get(svc.nodeId).orElse(null);
+                ECPoint Yji = r2.Y().get(svc.nodeId).orElse(null);
+                ECPoint Xji = r2.X().get(svc.nodeId).orElse(null);
                 BigInteger yij = task.yShares.get(offenderId);
                 if (Cji == null || Yji == null || Xji == null || yij == null) return false;
                 BigInteger rho = CggmpRefreshUtils.deriveRefreshMask(task.taskId, task.rid, offenderId, svc.nodeId, Yji, yij);

@@ -12,6 +12,8 @@ import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
+import com.example.mpc.service.cggmp.types.AffGProofMap;
+import com.example.mpc.service.cggmp.types.BigIntIndexMap;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -215,9 +217,9 @@ public final class CggmpSignatureEvidenceHandler {
     Map<String, Object> buildAffGEvidenceDelta(Gg20SignatureTask task, BigInteger gamma_i) {
         try {
             Map<String, Object> ev = new HashMap<>();
-            Map<Integer, BigInteger> D = new HashMap<>();
-            Map<Integer, BigInteger> F = new HashMap<>();
-            Map<Integer, PiAffGProof> proofs = new HashMap<>();
+            BigIntIndexMap D = BigIntIndexMap.empty();
+            BigIntIndexMap F = BigIntIndexMap.empty();
+            AffGProofMap proofs = AffGProofMap.empty();
             ECPoint Gamma = task.presignGamma.get(svc.nodeId);
             if (Gamma == null) {
                 Gamma = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), gamma_i);
@@ -231,8 +233,8 @@ public final class CggmpSignatureEvidenceHandler {
                 if (D_ji == null || F_ji == null) {
                     return null;
                 }
-                D.put(peerId, D_ji);
-                F.put(peerId, F_ji);
+                D = D.put(peerId, D_ji);
+                F = F.put(peerId, F_ji);
                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
                         Secp256k1CurveUtils.G(),
                         Gamma,
@@ -249,11 +251,11 @@ public final class CggmpSignatureEvidenceHandler {
                         svc.proofEpsBits,
                         CggmpProtocolUtils.buildPresignContext(task.taskId, svc.nodeId, "R2")
                 );
-                proofs.put(peerId, proof);
+                proofs = proofs.put(peerId, proof);
             }
-            ev.put("affGProofs", CggmpSignaturePresignHandler.encodeAffGProofMap(proofs));
-            ev.put("D_map", CggmpCodecUtils.encodeBigIntegerMap(D));
-            ev.put("F_map", CggmpCodecUtils.encodeBigIntegerMap(F));
+            ev.put("affGProofs", CggmpSignaturePresignHandler.encodeAffGProofMap(proofs.toMap()));
+            ev.put("D_map", CggmpCodecUtils.encodeBigIntegerMap(D.toMap()));
+            ev.put("F_map", CggmpCodecUtils.encodeBigIntegerMap(F.toMap()));
             return ev;
         } catch (Exception e) {
             logger.warn("Failed to build AffG delta evidence: {}", e.getMessage());
@@ -264,9 +266,9 @@ public final class CggmpSignatureEvidenceHandler {
     Map<String, Object> buildAffGEvidenceChi(Gg20SignatureTask task, BigInteger x_i) {
         try {
             Map<String, Object> ev = new HashMap<>();
-            Map<Integer, BigInteger> D = new HashMap<>();
-            Map<Integer, BigInteger> F = new HashMap<>();
-            Map<Integer, PiAffGProof> proofs = new HashMap<>();
+            BigIntIndexMap D = BigIntIndexMap.empty();
+            BigIntIndexMap F = BigIntIndexMap.empty();
+            AffGProofMap proofs = AffGProofMap.empty();
             ECPoint X_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x_i);
             for (int peerId : task.participants) {
                 if (peerId == svc.nodeId) {
@@ -277,8 +279,8 @@ public final class CggmpSignatureEvidenceHandler {
                 if (D_ji == null || F_ji == null) {
                     return null;
                 }
-                D.put(peerId, D_ji);
-                F.put(peerId, F_ji);
+                D = D.put(peerId, D_ji);
+                F = F.put(peerId, F_ji);
                 PiAffGProof proof = PresignProofs.createAffGProofNegY(
                         Secp256k1CurveUtils.G(),
                         X_i,
@@ -295,11 +297,11 @@ public final class CggmpSignatureEvidenceHandler {
                         svc.proofEpsBits,
                         CggmpProtocolUtils.buildPresignContext(task.taskId, svc.nodeId, "R2H")
                 );
-                proofs.put(peerId, proof);
+                proofs = proofs.put(peerId, proof);
             }
-            ev.put("affGProofsHat", CggmpSignaturePresignHandler.encodeAffGProofMap(proofs));
-            ev.put("Dhat_map", CggmpCodecUtils.encodeBigIntegerMap(D));
-            ev.put("Fhat_map", CggmpCodecUtils.encodeBigIntegerMap(F));
+            ev.put("affGProofsHat", CggmpSignaturePresignHandler.encodeAffGProofMap(proofs.toMap()));
+            ev.put("Dhat_map", CggmpCodecUtils.encodeBigIntegerMap(D.toMap()));
+            ev.put("Fhat_map", CggmpCodecUtils.encodeBigIntegerMap(F.toMap()));
             return ev;
         } catch (Exception e) {
             logger.warn("Failed to build AffG chi evidence: {}", e.getMessage());

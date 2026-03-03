@@ -1,12 +1,11 @@
 package com.example.mpc.service.cggmp.signature;
 
-import java.math.BigInteger;
-import java.util.Map;
+import com.example.mpc.service.cggmp.types.BigIntIndexMap;
 
 public record CggmpPresignR2Bundle(
         CggmpPresignR2Context ctx,
-        Map<Integer, BigInteger> D,
-        Map<Integer, BigInteger> Dhat,
-        Map<Integer, BigInteger> F,
-        Map<Integer, BigInteger> Fhat) {
+        BigIntIndexMap D,
+        BigIntIndexMap Dhat,
+        BigIntIndexMap F,
+        BigIntIndexMap Fhat) {
 }

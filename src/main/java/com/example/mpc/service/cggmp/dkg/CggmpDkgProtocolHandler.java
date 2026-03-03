@@ -12,6 +12,7 @@ import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
+import com.example.mpc.service.cggmp.types.ECPointIndexMap;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -148,7 +149,7 @@ public final class CggmpDkgProtocolHandler {
         }
         logger.info("Node {} executing CGGMP24 DKG Round 1 (t-of-n)", svc.nodeId);
 
-        CompletableFuture<DkgContext> r1Future = CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<CggmpDkgContext> r1Future = CompletableFuture.supplyAsync(() -> {
             BigInteger q = Secp256k1CurveUtils.n();
             ECPoint g = Secp256k1CurveUtils.G();
 
@@ -157,11 +158,11 @@ public final class CggmpDkgProtocolHandler {
                 coeffs[i] = CggmpProtocolUtils.randomNonZero(q);
             }
 
-            Map<Integer, ECPoint> S_i = new HashMap<>();
+            ECPointIndexMap S_i = ECPointIndexMap.empty();
             for (int k = 0; k < svc.threshold; k++) {
-                S_i.put(k, g.multiply(coeffs[k]).normalize());
+                S_i = S_i.put(k, g.multiply(coeffs[k]).normalize());
             }
-            task.Xjks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(S_i));
+            task.Xjks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(S_i.toMap()));
 
             BigInteger alpha = CggmpProtocolUtils.randomNonZero(q);
             ECPoint A_i = g.multiply(alpha).normalize();
@@ -180,14 +181,14 @@ public final class CggmpDkgProtocolHandler {
             r1Open.put("executionId", task.executionId);
             r1Open.put("senderId", svc.nodeId);
             r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
-            r1Open.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(S_i));
+            r1Open.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(S_i.toMap()));
             r1Open.put("A", HexUtils.bytesToHex(A_i.getEncoded(true)));
             byte[] uCommit = CggmpProtocolUtils.randomBytes(32);
             r1Open.put("u", HexUtils.bytesToHex(uCommit));
             if (chainCodePart != null) {
                 r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
             }
-            String vCommit = CggmpDkgUtils.computeDkgCommitHash(task.executionId, task.taskId, svc.nodeId, ridPart, S_i, A_i, uCommit, chainCodePart);
+            String vCommit = CggmpDkgUtils.computeDkgCommitHash(task.executionId, task.taskId, svc.nodeId, ridPart, S_i.toMap(), A_i, uCommit, chainCodePart);
             task.round1PayloadHashes.put(svc.nodeId, vCommit);
             Map<String, Object> r1Commit = new HashMap<>();
             r1Commit.put("taskId", task.taskId);
@@ -205,7 +206,7 @@ public final class CggmpDkgProtocolHandler {
             }
 
             task.startRound1Waiting();
-            return new DkgContext(task, q, g, coeffs, r1Open);
+            return new CggmpDkgContext(task, q, g, coeffs, r1Open);
         }, dkgExecutorService);
 
         return r1Future
@@ -237,17 +238,17 @@ public final class CggmpDkgProtocolHandler {
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
                     if (svc.dkgUseRbc) {
                         CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open))),
+                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
                                 logger, "CGGMP_DKG_ROUND2_BROAD_RBC");
                     } else {
                         CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open))),
+                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
                                 logger, "CGGMP_DKG_ROUND2_BROAD");
                     }
 
                     for (int peerId : task.participants) {
                         if (peerId == svc.nodeId) continue;
-                        BigInteger sigma = CggmpDkgUtils.evaluatePolynomial(ctx.coeffs, CggmpDkgUtils.getIndexValue(task, peerId), ctx.q);
+                        BigInteger sigma = CggmpDkgUtils.evaluatePolynomial(ctx.coeffs(), CggmpDkgUtils.getIndexValue(task, peerId), ctx.q());
                         Map<String, Object> share = new HashMap<>();
                         share.put("taskId", task.taskId);
                         share.put("executionId", task.executionId);
@@ -275,17 +276,17 @@ public final class CggmpDkgProtocolHandler {
                     BigInteger xStar = BigInteger.ZERO;
                     for (int peerId : task.participants) {
                         BigInteger share = peerId == svc.nodeId
-                                ? CggmpDkgUtils.evaluatePolynomial(ctx.coeffs, CggmpDkgUtils.getIndexValue(task, svc.nodeId), ctx.q)
+                                ? CggmpDkgUtils.evaluatePolynomial(ctx.coeffs(), CggmpDkgUtils.getIndexValue(task, svc.nodeId), ctx.q())
                                 : task.xji.getOrDefault(peerId, new java.util.concurrent.ConcurrentHashMap<>()).get(svc.nodeId);
                         if (share == null) {
                             throw new RuntimeException("Missing share from peer " + peerId);
                         }
-                        xStar = xStar.add(share).mod(ctx.q);
+                        xStar = xStar.add(share).mod(ctx.q());
                     }
                     task.secretShare = xStar;
 
                     ECPoint X_i = CggmpDkgUtils.computePublicShare(task, svc.nodeId);
-                    PiSchProof psi_i = CggmpDkgUtils.createSchProofWithAlpha(ctx.g, X_i, xStar, task.schAlphas.get(0),
+                    PiSchProof psi_i = CggmpDkgUtils.createSchProofWithAlpha(ctx.g(), X_i, xStar, task.schAlphas.get(0),
                             CggmpDkgUtils.buildDkgContext(task.taskId, task.executionId, task.rid, svc.nodeId, "SCH"));
                     Map<String, Object> r3 = new HashMap<>();
                     r3.put("taskId", task.taskId);
@@ -299,7 +300,7 @@ public final class CggmpDkgProtocolHandler {
                 .thenCompose(ctx -> waitForDkgLatch(task, task.round3ReceivedLatch, "DKG Round 3 messages")
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
-                    ECPoint groupPublicKey = ctx.g.getCurve().getInfinity();
+                    ECPoint groupPublicKey = ctx.g().getCurve().getInfinity();
                     for (int peerId : task.participants) {
                         Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
                         if (sVec == null || sVec.get(0) == null) {
@@ -326,9 +327,8 @@ public final class CggmpDkgProtocolHandler {
 
                     BigInteger x_i = CggmpProtocolUtils.randomNonZero(q);
                     ECPoint X_i = g.multiply(x_i).normalize();
-                    Map<Integer, ECPoint> S_i = new HashMap<>();
-                    S_i.put(0, X_i);
-                    task.Xjks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(S_i));
+                    ECPointIndexMap S_i = ECPointIndexMap.empty().put(0, X_i);
+                    task.Xjks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(S_i.toMap()));
 
                     BigInteger alpha = CggmpProtocolUtils.randomNonZero(q);
                     ECPoint A_i = g.multiply(alpha).normalize();
@@ -348,13 +348,13 @@ public final class CggmpDkgProtocolHandler {
                     r1Open.put("executionId", task.executionId);
                     r1Open.put("senderId", svc.nodeId);
                     r1Open.put("ridPart", HexUtils.bytesToHex(ridPart));
-                    r1Open.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(S_i));
+                    r1Open.put("S", Secp256k1CurveUtils.encodeECPointMapCompressed(S_i.toMap()));
                     r1Open.put("A", HexUtils.bytesToHex(A_i.getEncoded(true)));
                     r1Open.put("u", HexUtils.bytesToHex(uCommit));
                     if (chainCodePart != null) {
                         r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
                     }
-                    String vCommit = CggmpDkgUtils.computeDkgCommitHash(task.executionId, task.taskId, svc.nodeId, ridPart, S_i, A_i, uCommit, chainCodePart);
+                    String vCommit = CggmpDkgUtils.computeDkgCommitHash(task.executionId, task.taskId, svc.nodeId, ridPart, S_i.toMap(), A_i, uCommit, chainCodePart);
                     task.round1PayloadHashes.put(svc.nodeId, vCommit);
                     Map<String, Object> r1Commit = new HashMap<>();
                     r1Commit.put("taskId", task.taskId);
@@ -372,7 +372,7 @@ public final class CggmpDkgProtocolHandler {
                     }
 
                     task.startRound1Waiting();
-                    return new DkgNonThresholdContext(task, q, g, x_i, X_i, r1Open);
+                    return new CggmpDkgNonThresholdContext(task, q, g, x_i, X_i, r1Open);
                 }, dkgExecutorService)
                 .thenCompose(ctx -> waitForDkgLatch(task, task.round1ReceivedLatch, "DKG Round 1 messages")
                         .thenApply(v -> ctx))
@@ -387,11 +387,11 @@ public final class CggmpDkgProtocolHandler {
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
                     if (svc.dkgUseRbc) {
                         CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open))),
+                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
                                 logger, "CGGMP_DKG_ROUND2_BROAD_RBC");
                     } else {
                         CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open))),
+                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
                                 logger, "CGGMP_DKG_ROUND2_BROAD");
                     }
                 }, dkgExecutorService).thenApply(v -> ctx))
@@ -408,7 +408,7 @@ public final class CggmpDkgProtocolHandler {
                 .thenCompose(ctx -> waitForDkgLatch(task, task.round3ReceivedLatch, "DKG Round 3 messages")
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
-                    ECPoint groupPublicKey = ctx.g.getCurve().getInfinity();
+                    ECPoint groupPublicKey = ctx.g().getCurve().getInfinity();
                     for (int peerId : task.participants) {
                         Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
                         if (sVec == null || sVec.get(0) == null) {
@@ -468,13 +468,5 @@ public final class CggmpDkgProtocolHandler {
         CompletableFuture<Void> future = new CompletableFuture<>();
         svc.dkgScheduler.schedule(() -> future.complete(null), delayMs, TimeUnit.MILLISECONDS);
         return future;
-    }
-
-    private record DkgContext(CggmpDkgTask task, BigInteger q, ECPoint g, BigInteger[] coeffs,
-                              Map<String, Object> r1Open) {
-    }
-
-    private record DkgNonThresholdContext(CggmpDkgTask task, BigInteger q, ECPoint g, BigInteger x_i, ECPoint X_i,
-                                          Map<String, Object> r1Open) {
     }
 }

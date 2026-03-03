@@ -20,6 +20,8 @@ import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
+import com.example.mpc.service.cggmp.types.AffGProofMap;
+import com.example.mpc.service.cggmp.types.BigIntIndexMap;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -238,12 +240,12 @@ public final class CggmpSignatureOfflineHandler {
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.supplyAsync(() -> {
                     try {
-                        Map<Integer, BigInteger> D = new HashMap<>();
-                        Map<Integer, BigInteger> Dhat = new HashMap<>();
-                        Map<Integer, BigInteger> F = new HashMap<>();
-                        Map<Integer, BigInteger> Fhat = new HashMap<>();
-                        Map<Integer, PiAffGProof> affGProofs = new HashMap<>();
-                        Map<Integer, PiAffGProof> affGProofsHat = new HashMap<>();
+                        BigIntIndexMap D = BigIntIndexMap.empty();
+                        BigIntIndexMap Dhat = BigIntIndexMap.empty();
+                        BigIntIndexMap F = BigIntIndexMap.empty();
+                        BigIntIndexMap Fhat = BigIntIndexMap.empty();
+                        AffGProofMap affGProofs = AffGProofMap.empty();
+                        AffGProofMap affGProofsHat = AffGProofMap.empty();
                         int skippedPeers = 0;
 
                         for (CompletableFuture<CggmpPresignPeerR2Result> future : ctx.r2Futures()) {
@@ -258,18 +260,18 @@ public final class CggmpSignatureOfflineHandler {
                             int peerId = result.peerId();
                             ctx.task().presignBeta.put(peerId, result.beta());
                             ctx.task().presignBetaHat.put(peerId, result.betaHat());
-                            D.put(peerId, result.d());
-                            Dhat.put(peerId, result.dhat());
-                            F.put(peerId, result.f());
-                            Fhat.put(peerId, result.fhat());
+                            D = D.put(peerId, result.d());
+                            Dhat = Dhat.put(peerId, result.dhat());
+                            F = F.put(peerId, result.f());
+                            Fhat = Fhat.put(peerId, result.fhat());
                             ctx.task().presignFOutgoing.put(peerId, result.f());
                             ctx.task().presignFhatOutgoing.put(peerId, result.fhat());
                             ctx.task().presignRho.put(peerId, result.rho());
                             ctx.task().presignMu.put(peerId, result.mu());
                             ctx.task().presignRhoHat.put(peerId, result.rhoHat());
                             ctx.task().presignMuHat.put(peerId, result.muHat());
-                            affGProofs.put(peerId, result.proof());
-                            affGProofsHat.put(peerId, result.proofHat());
+                            affGProofs = affGProofs.put(peerId, result.proof());
+                            affGProofsHat = affGProofsHat.put(peerId, result.proofHat());
                             logger.debug("Presign R2 proof generated for task {} peer {} in {} ms",
                                     ctx.task().taskId, peerId, result.peerMs());
                         }
@@ -411,24 +413,24 @@ public final class CggmpSignatureOfflineHandler {
 
     CompletableFuture<Void> broadcastPresignR2(Gg20SignatureTask task,
                                                ECPoint Gamma,
-                                               Map<Integer, BigInteger> D,
-                                               Map<Integer, BigInteger> Dhat,
-                                               Map<Integer, BigInteger> F,
-                                               Map<Integer, BigInteger> Fhat,
-                                               Map<Integer, PiAffGProof> affG,
-                                               Map<Integer, PiAffGProof> affGhat,
+                                               BigIntIndexMap D,
+                                               BigIntIndexMap Dhat,
+                                               BigIntIndexMap F,
+                                               BigIntIndexMap Fhat,
+                                               AffGProofMap affG,
+                                               AffGProofMap affGhat,
                                                PiLogProof logProof,
                                                ECPoint X) {
         Map<String, Object> data = new HashMap<>();
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", svc.nodeId);
         data.put("Gamma", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Gamma)));
-        data.put("D", CggmpCodecUtils.encodeBigIntegerMap(D));
-        data.put("Dhat", CggmpCodecUtils.encodeBigIntegerMap(Dhat));
-        data.put("F", CggmpCodecUtils.encodeBigIntegerMap(F));
-        data.put("Fhat", CggmpCodecUtils.encodeBigIntegerMap(Fhat));
-        data.put("affGProofs", CggmpSignaturePresignHandler.encodeAffGProofMap(affG));
-        data.put("affGProofsHat", CggmpSignaturePresignHandler.encodeAffGProofMap(affGhat));
+        data.put("D", CggmpCodecUtils.encodeBigIntegerMap(D.toMap()));
+        data.put("Dhat", CggmpCodecUtils.encodeBigIntegerMap(Dhat.toMap()));
+        data.put("F", CggmpCodecUtils.encodeBigIntegerMap(F.toMap()));
+        data.put("Fhat", CggmpCodecUtils.encodeBigIntegerMap(Fhat.toMap()));
+        data.put("affGProofs", CggmpSignaturePresignHandler.encodeAffGProofMap(affG.toMap()));
+        data.put("affGProofsHat", CggmpSignaturePresignHandler.encodeAffGProofMap(affGhat.toMap()));
         data.put("logProof", CggmpCodecUtils.encodePiLogProof(logProof));
         data.put("X", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(X)));
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_PRESIGN_R2, data));
@@ -642,58 +644,22 @@ public final class CggmpSignatureOfflineHandler {
         if (bundle == null || bundle.ctx() == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Missing presign R2 bundle"));
         }
-        PresignR2Context ctx = toPresignR2Context(bundle.ctx());
-        return continuePresignAfterR2(new PresignR2Bundle(ctx, bundle.D(), bundle.Dhat(), bundle.F(), bundle.Fhat()));
-    }
-
-    private PresignR2Context toPresignR2Context(CggmpPresignR2Context ctx) {
-        List<CompletableFuture<PeerR2Result>> mapped = new ArrayList<>(ctx.r2Futures().size());
-        for (CompletableFuture<CggmpPresignPeerR2Result> future : ctx.r2Futures()) {
-            mapped.add(future.thenApply(result -> {
-                if (result == null) {
-                    return null;
-                }
-                if (result.skipped()) {
-                    return PeerR2Result.skipped(result.peerId());
-                }
-                return PeerR2Result.done(
-                        result.peerId(),
-                        result.beta(),
-                        result.betaHat(),
-                        result.d(),
-                        result.dhat(),
-                        result.f(),
-                        result.fhat(),
-                        result.rho(),
-                        result.mu(),
-                        result.rhoHat(),
-                        result.muHat(),
-                        result.proof(),
-                        result.proofHat(),
-                        result.peerMs()
-                );
-            }));
-        }
-        return new PresignR2Context(ctx.task(), ctx.curveOrder(), ctx.gamma_i(), ctx.x_i(), ctx.Gamma_i(), ctx.X_i(), mapped, ctx.r2StartNs());
-    }
-
-    private CompletableFuture<Void> continuePresignAfterR2(PresignR2Bundle bundle) {
-        PresignR2Context ctx = bundle.ctx;
-        return svc.waitForLatchAsync(ctx.task.presignR2Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presign R2")
+        CggmpPresignR2Context ctx = bundle.ctx();
+        return svc.waitForLatchAsync(ctx.task().presignR2Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presign R2")
                 .thenCompose(v -> CompletableFuture.supplyAsync(() -> {
                     try {
-                        BigInteger delta_i = ctx.gamma_i.multiply(ctx.task.k_i).mod(ctx.curveOrder);
-                        BigInteger chi_i = ctx.x_i.multiply(ctx.task.k_i).mod(ctx.curveOrder);
+                        BigInteger delta_i = ctx.gamma_i().multiply(ctx.task().k_i).mod(ctx.curveOrder());
+                        BigInteger chi_i = ctx.x_i().multiply(ctx.task().k_i).mod(ctx.curveOrder());
                         List<Integer> missingR3Peers = new ArrayList<>();
-                        for (int peerId : ctx.task.participants) {
+                        for (int peerId : ctx.task().participants) {
                             if (peerId == svc.nodeId) continue;
-                            BigInteger D_ij = ctx.task.presignD.get(peerId);
-                            BigInteger Dhat_ij = ctx.task.presignDhat.get(peerId);
-                            BigInteger beta = ctx.task.presignBeta.get(peerId);
-                            BigInteger betaHat = ctx.task.presignBetaHat.get(peerId);
+                            BigInteger D_ij = ctx.task().presignD.get(peerId);
+                            BigInteger Dhat_ij = ctx.task().presignDhat.get(peerId);
+                            BigInteger beta = ctx.task().presignBeta.get(peerId);
+                            BigInteger betaHat = ctx.task().presignBetaHat.get(peerId);
                             if (D_ij == null || Dhat_ij == null || beta == null || betaHat == null) {
                                 logger.warn("Presign R3 missing inputs for task {} peer {}: D={}, Dhat={}, beta={}, betaHat={}",
-                                        ctx.task.taskId,
+                                        ctx.task().taskId,
                                         peerId,
                                         D_ij == null ? null : D_ij.toString(16),
                                         Dhat_ij == null ? null : Dhat_ij.toString(16),
@@ -702,14 +668,14 @@ public final class CggmpSignatureOfflineHandler {
                                 missingR3Peers.add(peerId);
                                 continue;
                             }
-                            BigInteger alpha = CggmpProtocolUtils.decodeSigned(ctx.task.paillier.decrypt(D_ij), ctx.task.paillier.getPublicKeyInfo().n());
-                            BigInteger alphaHat = CggmpProtocolUtils.decodeSigned(ctx.task.paillier.decrypt(Dhat_ij), ctx.task.paillier.getPublicKeyInfo().n());
+                            BigInteger alpha = CggmpProtocolUtils.decodeSigned(ctx.task().paillier.decrypt(D_ij), ctx.task().paillier.getPublicKeyInfo().n());
+                            BigInteger alphaHat = CggmpProtocolUtils.decodeSigned(ctx.task().paillier.decrypt(Dhat_ij), ctx.task().paillier.getPublicKeyInfo().n());
                             BigInteger oldDelta = delta_i;
                             BigInteger oldChi = chi_i;
-                            delta_i = delta_i.add(alpha).add(beta).mod(ctx.curveOrder);
-                            chi_i = chi_i.add(alphaHat).add(betaHat).mod(ctx.curveOrder);
+                            delta_i = delta_i.add(alpha).add(beta).mod(ctx.curveOrder());
+                            chi_i = chi_i.add(alphaHat).add(betaHat).mod(ctx.curveOrder());
                             logger.info("Presign R3 accumulate task {} peer {}: alpha={}, beta={}, alphaHat={}, betaHat={}, delta_i: {} -> {}, chi_i: {} -> {}",
-                                    ctx.task.taskId,
+                                    ctx.task().taskId,
                                     peerId,
                                     alpha.toString(16),
                                     beta.toString(16),
@@ -723,17 +689,17 @@ public final class CggmpSignatureOfflineHandler {
                         if (!missingR3Peers.isEmpty()) {
                             throw new RuntimeException("Presign R3 missing inputs from peers: " + missingR3Peers);
                         }
-                        ECPoint Gamma = CggmpProtocolUtils.sumPresignGamma(ctx.task);
-                        ECPoint Delta_i = Gamma.multiply(ctx.task.k_i).normalize();
+                        ECPoint Gamma = CggmpProtocolUtils.sumPresignGamma(ctx.task());
+                        ECPoint Delta_i = Gamma.multiply(ctx.task().k_i).normalize();
                         ECPoint S_i = Gamma.multiply(chi_i).normalize();
-                        ctx.task.presignDelta.put(svc.nodeId, delta_i);
-                        ctx.task.presignDeltaPoint.put(svc.nodeId, Delta_i);
-                        ctx.task.presignSPoint.put(svc.nodeId, S_i);
-                        byte[] ctxR3 = CggmpProtocolUtils.buildPresignContext(ctx.task.taskId, svc.nodeId, "R3");
-                        ECPoint Y_i_r3 = ctx.task.presignY.get(svc.nodeId);
-                        ECPoint A1_r3 = ctx.task.presignA1.get(svc.nodeId);
-                        ECPoint A2_r3 = ctx.task.presignA2.get(svc.nodeId);
-                        if (Y_i_r3 == null || A1_r3 == null || A2_r3 == null || ctx.task.presignAScalar == null) {
+                        ctx.task().presignDelta.put(svc.nodeId, delta_i);
+                        ctx.task().presignDeltaPoint.put(svc.nodeId, Delta_i);
+                        ctx.task().presignSPoint.put(svc.nodeId, S_i);
+                        byte[] ctxR3 = CggmpProtocolUtils.buildPresignContext(ctx.task().taskId, svc.nodeId, "R3");
+                        ECPoint Y_i_r3 = ctx.task().presignY.get(svc.nodeId);
+                        ECPoint A1_r3 = ctx.task().presignA1.get(svc.nodeId);
+                        ECPoint A2_r3 = ctx.task().presignA2.get(svc.nodeId);
+                        if (Y_i_r3 == null || A1_r3 == null || A2_r3 == null || ctx.task().presignAScalar == null) {
                             throw new RuntimeException("Missing presign R1 commitments for PiLog proof (R3)");
                         }
                         PiLogProof logProofR3 = PresignProofs.createLogProof(
@@ -743,155 +709,78 @@ public final class CggmpSignatureOfflineHandler {
                                 Y_i_r3,
                                 A1_r3,
                                 A2_r3,
-                                ctx.task.k_i,
-                                ctx.task.presignAScalar,
+                                ctx.task().k_i,
+                                ctx.task().presignAScalar,
                                 ctxR3
                         );
-                        CggmpProtocolUtils.fireAndForget(broadcastPresignR3(ctx.task, delta_i, Delta_i, S_i, logProofR3),
+                        CggmpProtocolUtils.fireAndForget(broadcastPresignR3(ctx.task(), delta_i, Delta_i, S_i, logProofR3),
                                 logger, "CGGMP_PRESIGN_R3");
-                        return new PresignR3Context(ctx, delta_i, chi_i, Gamma);
+                        return new CggmpPresignR3Context(ctx, delta_i, chi_i, Gamma);
                     } catch (Exception e) {
-                        ctx.task.fail(e.getMessage());
+                        ctx.task().fail(e.getMessage());
                         throw new RuntimeException(e);
                     }
                 }, ThreadPoolUtil.getIoThreadPool()))
-                .thenCompose(r3ctx -> svc.waitForLatchAsync(ctx.task.offlineDoneLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presign R3")
+                .thenCompose(r3ctx -> svc.waitForLatchAsync(ctx.task().offlineDoneLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presign R3")
                         .thenRunAsync(() -> finalizePresign(r3ctx), ThreadPoolUtil.getIoThreadPool()));
     }
 
-    private record PeerR2Result(int peerId, boolean skipped, BigInteger beta, BigInteger betaHat, BigInteger d,
-                                BigInteger dhat, BigInteger f, BigInteger fhat, BigInteger rho, BigInteger mu,
-                                BigInteger rhoHat, BigInteger muHat, PiAffGProof proof, PiAffGProof proofHat,
-                                long peerMs) {
-
-        static PeerR2Result skipped(int peerId) {
-            return new PeerR2Result(peerId, true, null, null, null, null, null, null, null, null, null, null, null, null, 0L);
-        }
-
-        static PeerR2Result done(int peerId,
-                                 BigInteger beta,
-                                 BigInteger betaHat,
-                                 BigInteger d,
-                                 BigInteger dhat,
-                                 BigInteger f,
-                                 BigInteger fhat,
-                                 BigInteger rho,
-                                 BigInteger mu,
-                                 BigInteger rhoHat,
-                                 BigInteger muHat,
-                                 PiAffGProof proof,
-                                 PiAffGProof proofHat,
-                                 long peerMs) {
-            return new PeerR2Result(peerId, false, beta, betaHat, d, dhat, f, fhat, rho, mu, rhoHat, muHat, proof, proofHat, peerMs);
-        }
-    }
-
-    static final class PresignR2Context {
-        final Gg20SignatureTask task;
-        final BigInteger curveOrder;
-        final BigInteger gamma_i;
-        final BigInteger x_i;
-        final ECPoint Gamma_i;
-        final ECPoint X_i;
-        final List<CompletableFuture<PeerR2Result>> r2Futures;
-        final long r2StartNs;
-
-        private PresignR2Context(Gg20SignatureTask task,
-                                 BigInteger curveOrder,
-                                 BigInteger gamma_i,
-                                 BigInteger x_i,
-                                 ECPoint Gamma_i,
-                                 ECPoint X_i,
-                                 List<CompletableFuture<PeerR2Result>> r2Futures,
-                                 long r2StartNs) {
-            this.task = task;
-            this.curveOrder = curveOrder;
-            this.gamma_i = gamma_i;
-            this.x_i = x_i;
-            this.Gamma_i = Gamma_i;
-            this.X_i = X_i;
-            this.r2Futures = r2Futures;
-            this.r2StartNs = r2StartNs;
-        }
-    }
-
-    private record PresignR2Bundle(PresignR2Context ctx, Map<Integer, BigInteger> D, Map<Integer, BigInteger> Dhat,
-                                   Map<Integer, BigInteger> F, Map<Integer, BigInteger> Fhat) {
-    }
-
-    static final class PresignR3Context {
-        final PresignR2Context ctx;
-        final BigInteger delta_i;
-        final BigInteger chi_i;
-        final ECPoint Gamma;
-
-        private PresignR3Context(PresignR2Context ctx,
-                                 BigInteger delta_i,
-                                 BigInteger chi_i,
-                                 ECPoint Gamma) {
-            this.ctx = ctx;
-            this.delta_i = delta_i;
-            this.chi_i = chi_i;
-            this.Gamma = Gamma;
-        }
-    }
-
-    void finalizePresign(PresignR3Context r3ctx) {
-        PresignR2Context ctx = r3ctx.ctx;
-        BigInteger delta = CggmpProtocolUtils.sumShares(ctx.task.presignDelta, ctx.curveOrder);
+    void finalizePresign(CggmpPresignR3Context r3ctx) {
+        CggmpPresignR2Context ctx = r3ctx.ctx();
+        BigInteger delta = CggmpProtocolUtils.sumShares(ctx.task().presignDelta, ctx.curveOrder());
         ECPoint left = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), delta);
-        ECPoint right = Secp256k1CurveUtils.sumPoints(ctx.task.presignDeltaPoint);
+        ECPoint right = Secp256k1CurveUtils.sumPoints(ctx.task().presignDeltaPoint);
         if (!left.equals(right)) {
             logger.warn("Presign delta verification mismatch for task {}: left={}, right={}, delta={}, participants={}",
-                    ctx.task.taskId,
+                    ctx.task().taskId,
                     HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(left)),
                     HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(right)),
                     delta.toString(16),
-                    ctx.task.participants);
-            Map<String, Object> evidence = svc.evidenceHandler.buildDecEvidenceDelta(ctx.task, ctx.gamma_i, r3ctx.delta_i);
-            CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(ctx.task, null, "Presign delta verification failed", evidence),
+                    ctx.task().participants);
+            Map<String, Object> evidence = svc.evidenceHandler.buildDecEvidenceDelta(ctx.task(), ctx.gamma_i(), r3ctx.delta_i());
+            CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(ctx.task(), null, "Presign delta verification failed", evidence),
                     logger, "CGGMP_PRESIGN_DELTA_COMPLAINT");
-            svc.failSignatureTask(ctx.task, "Presign delta verification failed");
+            svc.failSignatureTask(ctx.task(), "Presign delta verification failed");
             return;
         }
-        ECPoint X = ctx.task.groupPublicKeyPoint;
+        ECPoint X = ctx.task().groupPublicKeyPoint;
         ECPoint leftS = X.multiply(delta).normalize();
-        ECPoint rightS = Secp256k1CurveUtils.sumPoints(ctx.task.presignSPoint);
+        ECPoint rightS = Secp256k1CurveUtils.sumPoints(ctx.task().presignSPoint);
         if (!leftS.equals(rightS)) {
             logger.warn("Presign chi verification mismatch for task {}: leftS={}, rightS={}, delta={}, participants={}",
-                    ctx.task.taskId,
+                    ctx.task().taskId,
                     HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(leftS)),
                     HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(rightS)),
                     delta.toString(16),
-                    ctx.task.participants);
+                    ctx.task().participants);
             logger.warn("Presign chi mismatch summary task {}: presignDelta.size={}, presignSPoint.size={}, presignDeltaPoint.size={}",
-                    ctx.task.taskId,
-                    ctx.task.presignDelta.size(),
-                    ctx.task.presignSPoint.size(),
-                    ctx.task.presignDeltaPoint.size());
-            for (int peerId : ctx.task.participants) {
-                ECPoint sPoint = ctx.task.presignSPoint.get(peerId);
-                BigInteger deltaShare = ctx.task.presignDelta.get(peerId);
+                    ctx.task().taskId,
+                    ctx.task().presignDelta.size(),
+                    ctx.task().presignSPoint.size(),
+                    ctx.task().presignDeltaPoint.size());
+            for (int peerId : ctx.task().participants) {
+                ECPoint sPoint = ctx.task().presignSPoint.get(peerId);
+                BigInteger deltaShare = ctx.task().presignDelta.get(peerId);
                 if (sPoint == null && deltaShare == null) {
                     continue;
                 }
                 logger.warn("Presign chi mismatch details task {} peer {}: S_i={}, delta_i={}",
-                        ctx.task.taskId,
+                        ctx.task().taskId,
                         peerId,
                         sPoint == null ? null : HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(sPoint)),
                         deltaShare == null ? null : deltaShare.toString(16));
             }
             // Identify which peer contribution breaks the chi check by excluding it.
-            for (int peerId : ctx.task.participants) {
-                ECPoint sPoint = ctx.task.presignSPoint.get(peerId);
-                BigInteger deltaShare = ctx.task.presignDelta.get(peerId);
+            for (int peerId : ctx.task().participants) {
+                ECPoint sPoint = ctx.task().presignSPoint.get(peerId);
+                BigInteger deltaShare = ctx.task().presignDelta.get(peerId);
                 if (sPoint == null || deltaShare == null) {
                     continue;
                 }
-                BigInteger deltaEx = delta.subtract(deltaShare).mod(ctx.curveOrder);
+                BigInteger deltaEx = delta.subtract(deltaShare).mod(ctx.curveOrder());
                 ECPoint leftEx = X.multiply(deltaEx).normalize();
                 ECPoint rightEx = null;
-                for (Map.Entry<Integer, ECPoint> e : ctx.task.presignSPoint.entrySet()) {
+                for (Map.Entry<Integer, ECPoint> e : ctx.task().presignSPoint.entrySet()) {
                     if (e.getKey() == peerId) {
                         continue;
                     }
@@ -902,36 +791,36 @@ public final class CggmpSignatureOfflineHandler {
                 }
                 boolean matchesEx = rightEx != null && leftEx.equals(rightEx);
                 logger.warn("Presign chi mismatch isolate task {} peer {}: excludePeerMatch={}, leftEx={}, rightEx={}",
-                        ctx.task.taskId,
+                        ctx.task().taskId,
                         peerId,
                         matchesEx,
                         HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(leftEx)),
                         rightEx == null ? null : HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(rightEx)));
             }
-            Map<String, Object> evidence = svc.evidenceHandler.buildDecEvidenceChi(ctx.task, ctx.x_i, r3ctx.chi_i);
-            CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(ctx.task, null, "Presign chi verification failed", evidence),
+            Map<String, Object> evidence = svc.evidenceHandler.buildDecEvidenceChi(ctx.task(), ctx.x_i(), r3ctx.chi_i());
+            CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(ctx.task(), null, "Presign chi verification failed", evidence),
                     logger, "CGGMP_PRESIGN_CHI_COMPLAINT");
-            svc.failSignatureTask(ctx.task, "Presign chi verification failed");
+            svc.failSignatureTask(ctx.task(), "Presign chi verification failed");
             return;
         }
-        BigInteger deltaInv = delta.modInverse(ctx.curveOrder);
-        ECPoint GammaFinal = r3ctx.Gamma.normalize();
-        BigInteger kTilde = ctx.task.k_i.multiply(deltaInv).mod(ctx.curveOrder);
-        BigInteger chiTilde = r3ctx.chi_i.multiply(deltaInv).mod(ctx.curveOrder);
-        ctx.task.presignature = new Presignature(GammaFinal, kTilde, chiTilde);
-        ctx.task.presignatureLatch.countDown();
+        BigInteger deltaInv = delta.modInverse(ctx.curveOrder());
+        ECPoint GammaFinal = r3ctx.Gamma().normalize();
+        BigInteger kTilde = ctx.task().k_i.multiply(deltaInv).mod(ctx.curveOrder());
+        BigInteger chiTilde = r3ctx.chi_i().multiply(deltaInv).mod(ctx.curveOrder());
+        ctx.task().presignature = new Presignature(GammaFinal, kTilde, chiTilde);
+        ctx.task().presignatureLatch.countDown();
 
-        for (Map.Entry<Integer, ECPoint> e : ctx.task.presignDeltaPoint.entrySet()) {
-            ctx.task.presignDeltaTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
+        for (Map.Entry<Integer, ECPoint> e : ctx.task().presignDeltaPoint.entrySet()) {
+            ctx.task().presignDeltaTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
         }
-        for (Map.Entry<Integer, ECPoint> e : ctx.task.presignSPoint.entrySet()) {
-            ctx.task.presignSTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
+        for (Map.Entry<Integer, ECPoint> e : ctx.task().presignSPoint.entrySet()) {
+            ctx.task().presignSTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
         }
 
-        if (svc.nodeId == ctx.task.initiatorId) {
-            markOfflineReady(ctx.task, svc.nodeId);
+        if (svc.nodeId == ctx.task().initiatorId) {
+            markOfflineReady(ctx.task(), svc.nodeId);
         } else {
-            CggmpProtocolUtils.fireAndForget(sendOfflineReady(ctx.task), logger, "CGGMP_SIGN_OFFLINE_READY");
+            CggmpProtocolUtils.fireAndForget(sendOfflineReady(ctx.task()), logger, "CGGMP_SIGN_OFFLINE_READY");
         }
     }
 

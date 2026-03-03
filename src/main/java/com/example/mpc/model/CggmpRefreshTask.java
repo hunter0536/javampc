@@ -2,6 +2,9 @@ package com.example.mpc.model;
 
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.enums.TaskStatus;
+import com.example.mpc.service.cggmp.types.BigIntIndexMap;
+import com.example.mpc.service.cggmp.types.ECPointIndexMap;
+import com.example.mpc.service.cggmp.types.SchProofMap;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
@@ -70,10 +73,10 @@ public class CggmpRefreshTask {
         return status.get() == TaskStatus.COMPLETED;
     }
 
-    public record RefreshRound2Data(Map<Integer, ECPoint> Y, Map<Integer, ECPoint> X, Map<Integer, ECPoint> A,
+    public record RefreshRound2Data(ECPointIndexMap Y, ECPointIndexMap X, ECPointIndexMap A,
                                     ECPoint Xi, byte[] rid, byte[] u) {
     }
 
-    public record RefreshRound3Data(Map<Integer, BigInteger> C, Map<Integer, PiSchProof> schProofs) {
+    public record RefreshRound3Data(BigIntIndexMap C, SchProofMap schProofs) {
     }
 }

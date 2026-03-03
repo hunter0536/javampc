@@ -13,6 +13,8 @@ import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
+import com.example.mpc.service.cggmp.types.AffGProofMap;
+import com.example.mpc.service.cggmp.types.BigIntIndexMap;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -374,17 +376,17 @@ public final class CggmpSignaturePresignHandler {
         BigInteger curveOrder = Secp256k1CurveUtils.n();
         ECPoint Gamma = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(gammaHex));
         task.presignGamma.put(senderId, Gamma);
-        Map<Integer, BigInteger> D = CggmpCodecUtils.decodeBigIntegerMap(dMap);
-        Map<Integer, BigInteger> Dhat = CggmpCodecUtils.decodeBigIntegerMap(dhMap);
-        Map<Integer, BigInteger> F = CggmpCodecUtils.decodeBigIntegerMap(fMap);
-        Map<Integer, BigInteger> Fhat = CggmpCodecUtils.decodeBigIntegerMap(fhMap);
-        BigInteger dForNode = D.get(svc.nodeId);
-        BigInteger dhatForNode = Dhat.get(svc.nodeId);
+        BigIntIndexMap D = BigIntIndexMap.of(CggmpCodecUtils.decodeBigIntegerMap(dMap));
+        BigIntIndexMap Dhat = BigIntIndexMap.of(CggmpCodecUtils.decodeBigIntegerMap(dhMap));
+        BigIntIndexMap F = BigIntIndexMap.of(CggmpCodecUtils.decodeBigIntegerMap(fMap));
+        BigIntIndexMap Fhat = BigIntIndexMap.of(CggmpCodecUtils.decodeBigIntegerMap(fhMap));
+        BigInteger dForNode = D.get(svc.nodeId).orElse(null);
+        BigInteger dhatForNode = Dhat.get(svc.nodeId).orElse(null);
         logger.info("Presign R2 received for task {} from {}: D keys={}, Dhat keys={}, D[node]={}, Dhat[node]={}",
                 task.taskId,
                 senderId,
-                D.keySet(),
-                Dhat.keySet(),
+                D.values().keySet(),
+                Dhat.values().keySet(),
                 dForNode == null ? null : dForNode.toString(16),
                 dhatForNode == null ? null : dhatForNode.toString(16));
         PiLogProof logProof = logProofMap == null ? null : CggmpCodecUtils.decodePiLogProof(logProofMap);
@@ -436,14 +438,14 @@ public final class CggmpSignaturePresignHandler {
         }
 
         if (affGMap != null && affGhatMap != null) {
-            Map<Integer, PiAffGProof> proofs = decodeAffGProofMap(affGMap);
-            Map<Integer, PiAffGProof> proofsHat = decodeAffGProofMap(affGhatMap);
-            PiAffGProof proof = proofs.get(svc.nodeId);
-            PiAffGProof proofHat = proofsHat.get(svc.nodeId);
-            BigInteger D_ji = D.get(svc.nodeId);
-            BigInteger F_ji = F.get(svc.nodeId);
-            BigInteger Dhat_ji = Dhat.get(svc.nodeId);
-            BigInteger Fhat_ji = Fhat.get(svc.nodeId);
+            AffGProofMap proofs = AffGProofMap.of(decodeAffGProofMap(affGMap));
+            AffGProofMap proofsHat = AffGProofMap.of(decodeAffGProofMap(affGhatMap));
+            PiAffGProof proof = proofs.get(svc.nodeId).orElse(null);
+            PiAffGProof proofHat = proofsHat.get(svc.nodeId).orElse(null);
+            BigInteger D_ji = D.get(svc.nodeId).orElse(null);
+            BigInteger F_ji = F.get(svc.nodeId).orElse(null);
+            BigInteger Dhat_ji = Dhat.get(svc.nodeId).orElse(null);
+            BigInteger Fhat_ji = Fhat.get(svc.nodeId).orElse(null);
             BigInteger K_self = task.presignK.get(svc.nodeId);
             PaillierEncryption.PublicKey N0 = task.paillier.getPublicKeyInfo();
             PaillierEncryption.PublicKey N1 = task.peerPaillierKeys.get(senderId);
@@ -501,10 +503,10 @@ public final class CggmpSignaturePresignHandler {
             logger.warn("Presign R2 missing payload for receiver {} from sender {} (D or Dhat not found)", svc.nodeId, senderId);
             return;
         }
-        task.presignD.put(senderId, D.get(svc.nodeId));
-        task.presignDhat.put(senderId, Dhat.get(svc.nodeId));
-        if (F.containsKey(svc.nodeId)) task.presignF.put(senderId, F.get(svc.nodeId));
-        if (Fhat.containsKey(svc.nodeId)) task.presignFhat.put(senderId, Fhat.get(svc.nodeId));
+        task.presignD.put(senderId, D.get(svc.nodeId).orElse(null));
+        task.presignDhat.put(senderId, Dhat.get(svc.nodeId).orElse(null));
+        if (F.containsKey(svc.nodeId)) task.presignF.put(senderId, F.get(svc.nodeId).orElse(null));
+        if (Fhat.containsKey(svc.nodeId)) task.presignFhat.put(senderId, Fhat.get(svc.nodeId).orElse(null));
         if (task.presignR2Received.putIfAbsent(senderId, Boolean.TRUE) == null
                 && task.presignR2Latch.getCount() > 0) {
             task.presignR2Latch.countDown();

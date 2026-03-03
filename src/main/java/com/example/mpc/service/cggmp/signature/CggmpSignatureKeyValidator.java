@@ -3,7 +3,10 @@ package com.example.mpc.service.cggmp.signature;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.model.Gg20SignatureTask;
+import com.example.mpc.service.cggmp.CggmpCodecUtils;
 
 import java.math.BigInteger;
 
@@ -89,9 +92,9 @@ public final class CggmpSignatureKeyValidator {
             return "null";
         }
         try {
-            String json = com.example.mpc.common.util.JsonCodec.toJson(auxParams);
+            String json = JsonCodec.toJson(auxParams);
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            return com.example.mpc.common.util.HexUtils.bytesToHex(md.digest(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            return HexUtils.bytesToHex(md.digest(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         } catch (Exception e) {
             return "error";
         }
@@ -102,10 +105,10 @@ public final class CggmpSignatureKeyValidator {
             return "null";
         }
         try {
-            java.util.Map<String, Object> map = com.example.mpc.service.cggmp.CggmpCodecUtils.encodePaillierPublicKey(publicKey);
-            String json = com.example.mpc.common.util.JsonCodec.toJson(map);
+            java.util.Map<String, Object> map = CggmpCodecUtils.encodePaillierPublicKey(publicKey);
+            String json = JsonCodec.toJson(map);
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            return com.example.mpc.common.util.HexUtils.bytesToHex(md.digest(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            return HexUtils.bytesToHex(md.digest(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         } catch (Exception e) {
             return "error";
         }
@@ -116,10 +119,10 @@ public final class CggmpSignatureKeyValidator {
             return "null";
         }
         try {
-            java.util.Map<String, Object> map = com.example.mpc.service.cggmp.CggmpCodecUtils.encodeZkSetup(zkSetup);
-            String json = com.example.mpc.common.util.JsonCodec.toJson(map);
+            java.util.Map<String, Object> map = CggmpCodecUtils.encodeZkSetup(zkSetup);
+            String json = JsonCodec.toJson(map);
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            return com.example.mpc.common.util.HexUtils.bytesToHex(md.digest(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            return HexUtils.bytesToHex(md.digest(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         } catch (Exception e) {
             return "error";
         }

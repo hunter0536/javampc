@@ -61,7 +61,7 @@ public final class CggmpProtocolUtils {
     }
 
     public static String computeTaggedHashHex(String tag, Object... parts) {
-        return com.example.mpc.service.cggmp.CggmpHashUtils.computeCggmpTaggedHashHex(tag, parts);
+        return CggmpHashUtils.computeCggmpTaggedHashHex(tag, parts);
     }
 
     public static String computeAuxEchoHash(CggmpAuxTask task) {

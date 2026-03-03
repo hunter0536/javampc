@@ -3,7 +3,10 @@ package com.example.mpc.service.cggmp.dkg;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.model.CggmpDkgTask;
+import com.example.mpc.service.cggmp.CggmpHashUtils;
+import com.example.mpc.service.cggmp.types.ECPointIndexMap;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
@@ -35,7 +38,7 @@ public final class CggmpDkgUtils {
     }
 
     public static String computeTaggedHashHex(String tag, Object... parts) {
-        return com.example.mpc.service.cggmp.CggmpHashUtils.computeTaggedHashHex(tag, parts);
+        return CggmpHashUtils.computeTaggedHashHex(tag, parts);
     }
 
     public static String computeDkgEchoHash(CggmpDkgTask task) {
@@ -240,14 +243,14 @@ public final class CggmpDkgUtils {
         return code == null ? new byte[0] : code;
     }
 
-    public static Object maybeCompressDkgPayload(com.example.mpc.enums.MessageType type, Object data) {
+    public static Object maybeCompressDkgPayload(MessageType type, Object data) {
         if (type == null) {
             return data;
         }
         return data;
     }
 
-    public static Object maybeDecompressDkgPayload(com.example.mpc.enums.MessageType type, byte[] bytes) {
+    public static Object maybeDecompressDkgPayload(MessageType type, byte[] bytes) {
         if (type == null || bytes == null || bytes.length == 0) {
             return null;
         }
