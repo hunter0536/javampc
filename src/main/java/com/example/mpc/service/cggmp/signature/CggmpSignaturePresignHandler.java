@@ -18,14 +18,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 
 public final class CggmpSignaturePresignHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpSignaturePresignHandler.class);
@@ -177,7 +177,7 @@ public final class CggmpSignaturePresignHandler {
         PaillierEncryption.PublicKey publicKey = CggmpCodecUtils.decodePaillierPublicKey(pkMap);
         ZKSetup zkSetup = CggmpCodecUtils.decodeZkSetup(zkMap);
         Map<String, String> auxParams = coerceAuxParams(auxMap);
-        if (!svc.ensurePeerAuxConsistency(task, senderId, auxParams)) {
+        if (svc.ensurePeerAuxConsistency(task, senderId, auxParams)) {
             CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(task, senderId, "Inconsistent AUX params (presign R1)", Map.of("auxParams", auxMap)),
                     logger, "CGGMP_PRESIGN_COMPLAINT");
             svc.failSignatureTask(task, "Inconsistent AUX params from node " + senderId);

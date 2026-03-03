@@ -4,9 +4,10 @@ import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.dao.AuxInfoDao;
+import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.enums.MessageType;
+import com.example.mpc.model.AuxInfo;
 import com.example.mpc.model.Gg20SignatureTask;
 import com.example.mpc.service.cggmp.signature.CggmpSignatureControlHandler;
 import com.example.mpc.service.cggmp.signature.CggmpSignatureEvidenceHandler;
@@ -40,7 +41,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import com.example.mpc.model.AuxInfo;
 
 @Service
 public class CggmpSignatureService implements NodeService.MessageHandler {
@@ -105,14 +105,14 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
 
     public List<ComplaintDao.ComplaintRecord> getComplaints(String taskId,
-                                                                                          String reason,
-                                                                                          String reasonLike,
-                                                                                          Integer senderId,
-                                                                                          Integer offenderId,
-                                                                                          Long fromTs,
-                                                                                          Long toTs,
-                                                                                          int limit,
-                                                                                          int offset) {
+                                                            String reason,
+                                                            String reasonLike,
+                                                            Integer senderId,
+                                                            Integer offenderId,
+                                                            Long fromTs,
+                                                            Long toTs,
+                                                            int limit,
+                                                            int offset) {
         int safeLimit = Math.max(1, Math.min(500, limit));
         int safeOffset = Math.max(0, offset);
         if ((taskId == null || taskId.isBlank())
@@ -142,42 +142,36 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             throw new RuntimeException("Signature process is already in progress");
         }
 
-        String fixedGroupPublicKey = null;
+        String fixedGroupPublicKey;
         fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         String taskId = UUID.randomUUID().toString();
         Gg20SignatureTask task = new Gg20SignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId);
         signatureTasks.put(taskId, task);
-        logger.debug("Created CGGMP signature task {} (initiator={}, participants={})", taskId, nodeId, task.participants);
         return taskId;
     }
 
-    public String createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants) {
+    public void createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants) {
         if (!signatureInProgress.compareAndSet(false, true)) {
             throw new RuntimeException("Signature process is already in progress");
         }
 
-        String fixedGroupPublicKey = null;
+        String fixedGroupPublicKey;
         fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         Gg20SignatureTask task = new Gg20SignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount, threshold, initiatorId, participants);
         signatureTasks.put(signatureTaskId, task);
-        logger.debug("Created CGGMP signature task {} (initiator={}, participants={})", signatureTaskId, initiatorId, task.participants);
-        return signatureTaskId;
     }
 
     public CompletableFuture<Void> startSignatureTask(String taskId) {
-        return startSignatureTaskInternal(taskId, true);
+        return startSignatureTaskInternal(taskId);
     }
 
-    private CompletableFuture<Void> startSignatureTaskInternal(String taskId, boolean broadcastInit) {
+    private CompletableFuture<Void> startSignatureTaskInternal(String taskId) {
         Gg20SignatureTask task = signatureTasks.get(taskId);
         if (task == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Signature task not found: " + taskId));
         }
-        logger.debug("Starting CGGMP signature task {} (broadcastInit={}, initiator={}, participants={})",
-                taskId, broadcastInit, task.initiatorId, task.participants);
-
         if (task.isInProgress() || task.isCompleted()) {
             return CompletableFuture.failedFuture(new RuntimeException("Signature task is already in progress or completed"));
         }
@@ -204,15 +198,12 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return CompletableFuture.failedFuture(e);
         }
 
-        CompletableFuture<Void> flow = (broadcastInit ? offlineHandler.broadcastOfflineInit(task) : CompletableFuture.completedFuture(null))
+        CompletableFuture<Void> flow = (offlineHandler.broadcastOfflineInit(task))
                 .thenCompose(v -> offlineHandler.runOfflinePhase(task))
-                .thenCompose(v -> {
-                    if (!broadcastInit) {
-                        return CompletableFuture.completedFuture(null);
-                    }
-                    return waitForLatchAsync(task.offlineReadyLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "offline ready")
-                            .thenCompose(v2 -> onlineHandler.broadcastOnlineInit(task));
-                })
+                .thenCompose(v ->
+                        waitForLatchAsync(task.offlineReadyLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "offline ready")
+                                .thenCompose(v2 -> onlineHandler.broadcastOnlineInit(task))
+                )
                 .thenCompose(v -> onlineHandler.runOnlinePhase(task));
 
         return flow.whenComplete((v, ex) -> {
@@ -249,13 +240,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
     public boolean ensurePeerAuxConsistency(Gg20SignatureTask task, int peerId, java.util.Map<String, String> auxParams) {
         if (task == null || auxParams == null) {
-            return false;
+            return true;
         }
         java.util.Map<String, String> existing = task.peerAuxParams.putIfAbsent(peerId, new java.util.HashMap<>(auxParams));
         if (existing == null) {
             String auxHash = hashJsonMap(auxParams);
             logger.debug("Recorded peer AUX params (taskId={}, peerId={}, auxHash={})", task.taskId, peerId, auxHash);
-            return true;
+            return false;
         }
         boolean ok = existing.equals(auxParams);
         if (!ok) {
@@ -264,7 +255,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             logger.warn("Peer AUX mismatch (taskId={}, peerId={}, existingHash={}, incomingHash={})",
                     task.taskId, peerId, existingHash, incomingHash);
         }
-        return ok;
+        return !ok;
     }
 
     private static String hashJsonMap(Object map) {
@@ -322,9 +313,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
 
-
-
-
     public void failSignatureTask(Gg20SignatureTask task, String reason) {
         if (task == null || task.isCompleted() || task.isFailed()) {
             return;
@@ -345,9 +333,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public CompletableFuture<Void> broadcastComplaint(Gg20SignatureTask task,
-                                               Integer offenderId,
-                                               String reason,
-                                               Map<String, Object> evidence) {
+                                                      Integer offenderId,
+                                                      String reason,
+                                                      Map<String, Object> evidence) {
         if (task == null) {
             return CompletableFuture.completedFuture(null);
         }
@@ -368,7 +356,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     public CompletableFuture<Void> handleMessage(int senderId, NodeService.Message message) {
         return messageDispatcher.handleMessage(senderId, message);
     }
-
 
 
     public void clearPresignLocal(Gg20SignatureTask task) {

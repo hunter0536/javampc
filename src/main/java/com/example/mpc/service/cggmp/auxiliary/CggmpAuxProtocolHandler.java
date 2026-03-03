@@ -38,81 +38,81 @@ public final class CggmpAuxProtocolHandler {
         final long auxStartNs = System.nanoTime();
         logger.debug("AUX protocol starting: taskId={}, executionId={}", task.taskId, task.executionId);
         return CompletableFuture.supplyAsync(() -> {
-            logger.debug("AUX protocol running: taskId={}, executionId={}", task.taskId, task.executionId);
-            long paillierStart = System.nanoTime();
-            PaillierEncryption paillier = new PaillierEncryption(svc.auxPaillierBits);
-            logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, svc.auxPaillierBits);
-            task.paillier = paillier;
-            long pedStart = System.nanoTime();
-            logger.debug("AUX Pedersen/ZK setup start: taskId={}, executionId={}, bits={}",
-                    task.taskId, task.executionId, paillier.getPublicKeyInfo().bitLength());
-            ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength());
-            logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength());
-            task.hatN = ped.zk().hatN();
-            task.s = ped.zk().h1();
-            task.t = ped.zk().h2();
-            task.pedersenLambda = ped.lambda();
+                    logger.debug("AUX protocol running: taskId={}, executionId={}", task.taskId, task.executionId);
+                    long paillierStart = System.nanoTime();
+                    PaillierEncryption paillier = new PaillierEncryption(svc.auxPaillierBits);
+                    logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, svc.auxPaillierBits);
+                    task.paillier = paillier;
+                    long pedStart = System.nanoTime();
+                    logger.debug("AUX Pedersen/ZK setup start: taskId={}, executionId={}, bits={}",
+                            task.taskId, task.executionId, paillier.getPublicKeyInfo().bitLength());
+                    ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength());
+                    logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength());
+                    task.hatN = ped.zk().hatN();
+                    task.s = ped.zk().h1();
+                    task.t = ped.zk().h2();
+                    task.pedersenLambda = ped.lambda();
 
-            byte[] rho_i = CggmpProtocolUtils.randomBytes(32);
-            byte[] u_i = CggmpProtocolUtils.randomBytes(32);
-            task.rho.put(svc.nodeId, rho_i);
-            task.u.put(svc.nodeId, u_i);
+                    byte[] rho_i = CggmpProtocolUtils.randomBytes(32);
+                    byte[] u_i = CggmpProtocolUtils.randomBytes(32);
+                    task.rho.put(svc.nodeId, rho_i);
+                    task.u.put(svc.nodeId, u_i);
 
-            long prmStart = System.nanoTime();
-            logger.debug("AUX PRM proof start: taskId={}, executionId={}, senderId={}", task.taskId, task.executionId, svc.nodeId);
-            PiPrmProof prmProof = RefreshProofs.createPrmProof(task.hatN, task.s, task.t, task.pedersenLambda,
-                    CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "PRM"));
-            if (logger.isDebugEnabled()) {
-                logger.debug("AUX PRM proof inputs: taskId={}, executionId={}, senderId={}, hatNBits={}, sBits={}, tBits={}, lambdaBits={}, lambdaSign={}",
-                        task.taskId,
-                        task.executionId,
-                        svc.nodeId,
-                        task.hatN == null ? -1 : task.hatN.bitLength(),
-                        task.s == null ? -1 : task.s.bitLength(),
-                        task.t == null ? -1 : task.t.bitLength(),
-                        task.pedersenLambda == null ? -1 : task.pedersenLambda.bitLength(),
-                        task.pedersenLambda == null ? 0 : task.pedersenLambda.signum());
-                byte[] prmCtx = CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "PRM");
-                boolean selfOk = RefreshProofs.verifyPrmProof(prmProof, task.hatN, task.s, task.t, prmCtx);
-                String ctxHash;
-                try {
-                    ctxHash = HexUtils.bytesToHex(java.security.MessageDigest.getInstance("SHA-256").digest(prmCtx));
-                } catch (Exception e) {
-                    ctxHash = "error";
-                }
-                String aHex = prmProof.A() == null ? null : prmProof.A().toString(16);
-                String zHex = prmProof.z() == null ? null : prmProof.z().toString(16);
-                logger.debug("AUX PRM proof self-verify: taskId={}, executionId={}, senderId={}, ok={}, ctxHash={}, ctxPrefix={}, A.prefix={}, z.prefix={}",
-                        task.taskId,
-                        task.executionId,
-                        svc.nodeId,
-                        selfOk,
-                        ctxHash,
-                        HexUtils.bytesToHex(prmCtx).substring(0, Math.min(24, prmCtx.length * 2)),
-                        aHex == null ? null : aHex.substring(0, Math.min(24, aHex.length())),
-                        zHex == null ? null : zHex.substring(0, Math.min(24, zHex.length())));
-            }
-            logger.debug("AUX PRM proof generated in {} ms (taskId={}, executionId={}, senderId={})",
-                    (System.nanoTime() - prmStart) / 1_000_000, task.taskId, task.executionId, svc.nodeId);
-            task.prmProof = prmProof;
+                    long prmStart = System.nanoTime();
+                    logger.debug("AUX PRM proof start: taskId={}, executionId={}, senderId={}", task.taskId, task.executionId, svc.nodeId);
+                    PiPrmProof prmProof = RefreshProofs.createPrmProof(task.hatN, task.s, task.t, task.pedersenLambda,
+                            CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "PRM"));
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("AUX PRM proof inputs: taskId={}, executionId={}, senderId={}, hatNBits={}, sBits={}, tBits={}, lambdaBits={}, lambdaSign={}",
+                                task.taskId,
+                                task.executionId,
+                                svc.nodeId,
+                                task.hatN == null ? -1 : task.hatN.bitLength(),
+                                task.s == null ? -1 : task.s.bitLength(),
+                                task.t == null ? -1 : task.t.bitLength(),
+                                task.pedersenLambda == null ? -1 : task.pedersenLambda.bitLength(),
+                                task.pedersenLambda == null ? 0 : task.pedersenLambda.signum());
+                        byte[] prmCtx = CggmpProtocolUtils.buildAuxContext(task.taskId, task.executionId, svc.nodeId, "PRM");
+                        boolean selfOk = RefreshProofs.verifyPrmProof(prmProof, task.hatN, task.s, task.t, prmCtx);
+                        String ctxHash;
+                        try {
+                            ctxHash = HexUtils.bytesToHex(java.security.MessageDigest.getInstance("SHA-256").digest(prmCtx));
+                        } catch (Exception e) {
+                            ctxHash = "error";
+                        }
+                        String aHex = prmProof.A() == null ? null : prmProof.A().toString(16);
+                        String zHex = prmProof.z() == null ? null : prmProof.z().toString(16);
+                        logger.debug("AUX PRM proof self-verify: taskId={}, executionId={}, senderId={}, ok={}, ctxHash={}, ctxPrefix={}, A.prefix={}, z.prefix={}",
+                                task.taskId,
+                                task.executionId,
+                                svc.nodeId,
+                                selfOk,
+                                ctxHash,
+                                HexUtils.bytesToHex(prmCtx).substring(0, Math.min(24, prmCtx.length * 2)),
+                                aHex == null ? null : aHex.substring(0, Math.min(24, aHex.length())),
+                                zHex == null ? null : zHex.substring(0, Math.min(24, zHex.length())));
+                    }
+                    logger.debug("AUX PRM proof generated in {} ms (taskId={}, executionId={}, senderId={})",
+                            (System.nanoTime() - prmStart) / 1_000_000, task.taskId, task.executionId, svc.nodeId);
+                    task.prmProof = prmProof;
 
-            String vCommit = CggmpProtocolUtils.computeAuxCommitHash(task.executionId, task.taskId, svc.nodeId,
-                    CggmpCodecUtils.encodePaillierPublicKey(paillier.getPublicKeyInfo()),
-                    task.hatN.toString(16), task.s.toString(16), task.t.toString(16),
-                    CggmpCodecUtils.encodePiPrmProof(prmProof), rho_i, u_i);
-            task.commitHashes.put(svc.nodeId, vCommit);
+                    String vCommit = CggmpProtocolUtils.computeAuxCommitHash(task.executionId, task.taskId, svc.nodeId,
+                            CggmpCodecUtils.encodePaillierPublicKey(paillier.getPublicKeyInfo()),
+                            task.hatN.toString(16), task.s.toString(16), task.t.toString(16),
+                            CggmpCodecUtils.encodePiPrmProof(prmProof), rho_i, u_i);
+                    task.commitHashes.put(svc.nodeId, vCommit);
 
-            Map<String, Object> r1 = new HashMap<>();
-            r1.put("taskId", task.taskId);
-            r1.put("executionId", task.executionId);
-            r1.put("senderId", svc.nodeId);
-            r1.put("V", vCommit);
-            logger.debug("AUX R1 broadcast: taskId={}, executionId={}, senderId={}, V.len={}",
-                    task.taskId, task.executionId, svc.nodeId, vCommit.length());
-            CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1, r1)),
-                    logger, "CGGMP_AUX_R1_RBC");
-            return new AuxContext(task, paillier, prmProof, rho_i, u_i);
-        }, auxExecutorService)
+                    Map<String, Object> r1 = new HashMap<>();
+                    r1.put("taskId", task.taskId);
+                    r1.put("executionId", task.executionId);
+                    r1.put("senderId", svc.nodeId);
+                    r1.put("V", vCommit);
+                    logger.debug("AUX R1 broadcast: taskId={}, executionId={}, senderId={}, V.len={}",
+                            task.taskId, task.executionId, svc.nodeId, vCommit.length());
+                    CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1, r1)),
+                            logger, "CGGMP_AUX_R1_RBC");
+                    return new AuxContext(task, paillier, prmProof, rho_i, u_i);
+                }, auxExecutorService)
                 .thenCompose(ctx -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.commitLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1")
                         .exceptionally(ex -> {
                             CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1, Map.of(
@@ -136,7 +136,7 @@ public final class CggmpAuxProtocolHandler {
                 }, auxExecutorService).thenApply(v -> ctx))
                 .thenCompose(ctx -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.echoLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX R1 echo")
                         .exceptionally(ex -> {
-                    String echo = CggmpProtocolUtils.computeAuxEchoHash(task);
+                            String echo = CggmpProtocolUtils.computeAuxEchoHash(task);
                             Map<String, Object> r1Echo = new HashMap<>();
                             r1Echo.put("taskId", task.taskId);
                             r1Echo.put("executionId", task.executionId);

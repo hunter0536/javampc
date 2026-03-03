@@ -59,13 +59,13 @@ public final class CggmpDkgUtils {
 
 
     public static String computeDkgCommitHash(String executionId,
-                                       String taskId,
-                                       int senderId,
-                                       byte[] ridPart,
-                                       Map<Integer, ECPoint> sVec,
-                                       ECPoint A,
-                                       byte[] u,
-                                       byte[] chainCode) {
+                                              String taskId,
+                                              int senderId,
+                                              byte[] ridPart,
+                                              Map<Integer, ECPoint> sVec,
+                                              ECPoint A,
+                                              byte[] u,
+                                              byte[] chainCode) {
         String sid = buildSid(executionId, taskId);
         Map<String, String> sMap = Secp256k1CurveUtils.encodeECPointMapCompressed(sVec);
         String aHex = HexUtils.bytesToHex(A.getEncoded(true));
@@ -73,13 +73,13 @@ public final class CggmpDkgUtils {
     }
 
     public static String computeDkgCommitHashFromWire(String executionId,
-                                               String taskId,
-                                               int senderId,
-                                               String ridPartHex,
-                                               Map<?, ?> sMap,
-                                               String aHex,
-                                               String uHex,
-                                               String cHex) {
+                                                      String taskId,
+                                                      int senderId,
+                                                      String ridPartHex,
+                                                      Map<?, ?> sMap,
+                                                      String aHex,
+                                                      String uHex,
+                                                      String cHex) {
         String sid = buildSid(executionId, taskId);
         byte[] rid = ridPartHex == null ? null : HexUtils.hexToBytes(ridPartHex);
         byte[] u = uHex == null ? null : HexUtils.hexToBytes(uHex);

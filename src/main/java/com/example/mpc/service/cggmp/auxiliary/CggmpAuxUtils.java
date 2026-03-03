@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class CggmpAuxUtils {
     private static final Logger logger = LoggerFactory.getLogger(CggmpAuxUtils.class);
+
     private CggmpAuxUtils() {
     }
 

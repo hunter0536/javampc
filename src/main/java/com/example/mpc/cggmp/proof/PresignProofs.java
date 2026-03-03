@@ -18,10 +18,13 @@ import java.util.concurrent.TimeUnit;
 
 public final class PresignProofs {
     private static final Logger logger = LoggerFactory.getLogger(PresignProofs.class);
-    public record EncElgVerifyResult(boolean ok, boolean eq1, boolean eq2, boolean eq3, boolean eq4, boolean z1InRange) {
+
+    public record EncElgVerifyResult(boolean ok, boolean eq1, boolean eq2, boolean eq3, boolean eq4,
+                                     boolean z1InRange) {
     }
 
-    public record AffGVerifyResult(boolean ok, int index, boolean eq1, boolean eq2, boolean eq3, boolean zInRange, boolean zPrimeInRange) {
+    public record AffGVerifyResult(boolean ok, int index, boolean eq1, boolean eq2, boolean eq3, boolean zInRange,
+                                   boolean zPrimeInRange) {
     }
 
     private PresignProofs() {

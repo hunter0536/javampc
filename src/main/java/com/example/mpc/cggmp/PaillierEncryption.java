@@ -130,40 +130,40 @@ public class PaillierEncryption {
     }
 
     public record PublicKey(BigInteger n, BigInteger nSquared, BigInteger g, int bitLength) {
-            public PublicKey(BigInteger n) {
-                this(n, n.multiply(n), n.add(BigInteger.ONE), n.bitLength());
-            }
+        public PublicKey(BigInteger n) {
+            this(n, n.multiply(n), n.add(BigInteger.ONE), n.bitLength());
+        }
 
         public BigInteger encrypt(BigInteger m) {
-                return encryptWithRandomness(m).c;
-            }
-
-            public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
-                BigInteger gm = g.modPow(m, nSquared);
-                BigInteger rn = r.modPow(n, nSquared);
-                return gm.multiply(rn).mod(nSquared);
-            }
-
-            public Encryption encryptWithRandomness(BigInteger m) {
-                SecureRandom random = new SecureRandom();
-                BigInteger r;
-
-                do {
-                    r = new BigInteger(n.bitLength(), random);
-                } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
-
-                BigInteger c = encryptWithRandom(m, r);
-                return new Encryption(c, r);
-            }
-
-            public BigInteger add(BigInteger c1, BigInteger c2) {
-                return c1.multiply(c2).mod(nSquared);
-            }
-
-            public BigInteger multiply(BigInteger c, BigInteger k) {
-                return c.modPow(k, nSquared);
-            }
+            return encryptWithRandomness(m).c;
         }
+
+        public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
+            BigInteger gm = g.modPow(m, nSquared);
+            BigInteger rn = r.modPow(n, nSquared);
+            return gm.multiply(rn).mod(nSquared);
+        }
+
+        public Encryption encryptWithRandomness(BigInteger m) {
+            SecureRandom random = new SecureRandom();
+            BigInteger r;
+
+            do {
+                r = new BigInteger(n.bitLength(), random);
+            } while (r.compareTo(BigInteger.ZERO) <= 0 || r.compareTo(n) >= 0 || !r.gcd(n).equals(BigInteger.ONE));
+
+            BigInteger c = encryptWithRandom(m, r);
+            return new Encryption(c, r);
+        }
+
+        public BigInteger add(BigInteger c1, BigInteger c2) {
+            return c1.multiply(c2).mod(nSquared);
+        }
+
+        public BigInteger multiply(BigInteger c, BigInteger k) {
+            return c.modPow(k, nSquared);
+        }
+    }
 
     public record PrivateKey(BigInteger lambda, BigInteger mu, BigInteger p, BigInteger q, BigInteger n,
                              int bitLength) {

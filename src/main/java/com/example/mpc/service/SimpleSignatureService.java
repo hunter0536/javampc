@@ -779,7 +779,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         return sum;
     }
 
- 
 
     private BigInteger hashMessage(String message, BigInteger curveOrder) {
         try {

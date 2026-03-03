@@ -98,7 +98,7 @@ public final class DbMapUtils {
                 cur.append(c);
             }
         }
-        if (cur.length() > 0) {
+        if (!cur.isEmpty()) {
             parts.add(cur.toString());
         }
         return parts;

@@ -911,18 +911,18 @@ public class NodeService {
     }
 
     // 消息类
-        public record Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck,
-                              String ackForId, boolean rbc, String rbcHash) implements Serializable {
-            public Message(int senderId, MessageType type, Object data) {
-                this(senderId, type, data, null, false, null, false, null);
-            }
+    public record Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck,
+                          String ackForId, boolean rbc, String rbcHash) implements Serializable {
+        public Message(int senderId, MessageType type, Object data) {
+            this(senderId, type, data, null, false, null, false, null);
+        }
 
-            public Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck, String ackForId) {
-                this(senderId, type, data, messageId, requireAck, ackForId, false, null);
-            }
+        public Message(int senderId, MessageType type, Object data, String messageId, boolean requireAck, String ackForId) {
+            this(senderId, type, data, messageId, requireAck, ackForId, false, null);
+        }
 
         public static Message ack(int senderId, String ackForId) {
-                return new Message(senderId, MessageType.NET_ACK, null, null, false, ackForId, false, null);
-            }
+            return new Message(senderId, MessageType.NET_ACK, null, null, false, ackForId, false, null);
         }
+    }
 }

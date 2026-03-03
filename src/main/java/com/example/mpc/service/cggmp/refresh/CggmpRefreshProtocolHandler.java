@@ -360,7 +360,7 @@ public final class CggmpRefreshProtocolHandler {
                 keyShare.setIndexMap(prev.getIndexMap());
                 keyShare.setChainCode(prev.getChainCode());
             }
-            if (!verifyLocalPublicShare(task, newShare, keyShare.getPublicShares())) {
+            if (!verifyLocalPublicShare(newShare, keyShare.getPublicShares())) {
                 logger.error("Refresh public share mismatch for task {} (nodeId={})", task.taskId, svc.nodeId);
                 return false;
             }
@@ -481,7 +481,7 @@ public final class CggmpRefreshProtocolHandler {
         }
     }
 
-    private boolean verifyLocalPublicShare(CggmpRefreshTask task, BigInteger newShare, String publicSharesJson) {
+    private boolean verifyLocalPublicShare(BigInteger newShare, String publicSharesJson) {
         if (publicSharesJson == null) {
             return false;
         }

@@ -716,7 +716,6 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         }
     }
 
- 
 
     private void handleShareMessage(int senderId, NodeService.Message message) {
         if (!(message.data() instanceof Map<?, ?> dataMap)) {

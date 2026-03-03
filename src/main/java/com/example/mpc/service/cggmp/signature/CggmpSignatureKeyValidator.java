@@ -20,9 +20,9 @@ public final class CggmpSignatureKeyValidator {
     }
 
     public static boolean ensurePeerKeyConsistency(Gg20SignatureTask task,
-                                            int peerId,
-                                            PaillierEncryption.PublicKey publicKey,
-                                            ZKSetup zkSetup) {
+                                                   int peerId,
+                                                   PaillierEncryption.PublicKey publicKey,
+                                                   ZKSetup zkSetup) {
         PaillierEncryption.PublicKey existingKey = task.peerPaillierKeys.putIfAbsent(peerId, publicKey);
         if (existingKey != null && !paillierPublicKeyEquals(existingKey, publicKey)) {
             return false;

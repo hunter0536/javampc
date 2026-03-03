@@ -682,11 +682,11 @@ public final class CggmpDkgMessageHandler {
     }
 
     private CompletableFuture<Void> broadcastDkgExclude(CggmpDkgTask task,
-                                                       int offenderId,
-                                                       String reason,
-                                                       String newTaskId,
-                                                       Set<Integer> newParticipants,
-                                                       String newExecutionId) {
+                                                        int offenderId,
+                                                        String reason,
+                                                        String newTaskId,
+                                                        Set<Integer> newParticipants,
+                                                        String newExecutionId) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("executionId", newExecutionId);

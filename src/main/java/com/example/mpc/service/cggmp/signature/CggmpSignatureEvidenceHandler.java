@@ -1,8 +1,5 @@
 package com.example.mpc.service.cggmp.signature;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.PiAffGProof;
 import com.example.mpc.cggmp.proof.PiDecProof;
@@ -16,6 +13,8 @@ import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import org.bouncycastle.math.ec.ECPoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.util.HashMap;
@@ -184,10 +183,10 @@ public final class CggmpSignatureEvidenceHandler {
     }
 
     boolean verifyDecEvidenceConsistencyMap(Gg20SignatureTask task,
-                                           int senderId,
-                                           BigInteger claimedD,
-                                           Map<?, ?> dMap,
-                                           Map<?, ?> fMap) {
+                                            int senderId,
+                                            BigInteger claimedD,
+                                            Map<?, ?> dMap,
+                                            Map<?, ?> fMap) {
         Map<Integer, BigInteger> D = CggmpCodecUtils.decodeBigIntegerMap(dMap);
         Map<Integer, BigInteger> F = CggmpCodecUtils.decodeBigIntegerMap(fMap);
         if (!allPeersPresent(task, senderId, D, F)) {

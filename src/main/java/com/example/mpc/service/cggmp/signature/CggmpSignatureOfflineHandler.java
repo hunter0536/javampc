@@ -594,7 +594,7 @@ public final class CggmpSignatureOfflineHandler {
                             return;
                         }
                         Map<String, String> auxParamStrings = CggmpSignaturePresignHandler.coerceAuxParams(auxParamsFinal);
-                        if (!svc.ensurePeerAuxConsistency(task, resolvedInitiatorId, auxParamStrings)) {
+                        if (svc.ensurePeerAuxConsistency(task, resolvedInitiatorId, auxParamStrings)) {
                             svc.broadcastComplaint(task, resolvedInitiatorId, "Inconsistent AUX params (signature offline init)", Map.of("auxParams", auxParamsFinal));
                             svc.failSignatureTask(task, "Inconsistent AUX params from initiator " + resolvedInitiatorId);
                             svc.signatureInProgress.set(false);
@@ -765,26 +765,26 @@ public final class CggmpSignatureOfflineHandler {
                                 long peerMs) {
 
         static PeerR2Result skipped(int peerId) {
-                return new PeerR2Result(peerId, true, null, null, null, null, null, null, null, null, null, null, null, null, 0L);
-            }
-
-            static PeerR2Result done(int peerId,
-                                     BigInteger beta,
-                                     BigInteger betaHat,
-                                     BigInteger d,
-                                     BigInteger dhat,
-                                     BigInteger f,
-                                     BigInteger fhat,
-                                     BigInteger rho,
-                                     BigInteger mu,
-                                     BigInteger rhoHat,
-                                     BigInteger muHat,
-                                     PiAffGProof proof,
-                                     PiAffGProof proofHat,
-                                     long peerMs) {
-                return new PeerR2Result(peerId, false, beta, betaHat, d, dhat, f, fhat, rho, mu, rhoHat, muHat, proof, proofHat, peerMs);
-            }
+            return new PeerR2Result(peerId, true, null, null, null, null, null, null, null, null, null, null, null, null, 0L);
         }
+
+        static PeerR2Result done(int peerId,
+                                 BigInteger beta,
+                                 BigInteger betaHat,
+                                 BigInteger d,
+                                 BigInteger dhat,
+                                 BigInteger f,
+                                 BigInteger fhat,
+                                 BigInteger rho,
+                                 BigInteger mu,
+                                 BigInteger rhoHat,
+                                 BigInteger muHat,
+                                 PiAffGProof proof,
+                                 PiAffGProof proofHat,
+                                 long peerMs) {
+            return new PeerR2Result(peerId, false, beta, betaHat, d, dhat, f, fhat, rho, mu, rhoHat, muHat, proof, proofHat, peerMs);
+        }
+    }
 
     static final class PresignR2Context {
         final Gg20SignatureTask task;

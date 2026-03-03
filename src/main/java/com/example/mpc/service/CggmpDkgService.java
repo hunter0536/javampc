@@ -143,11 +143,11 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     }
 
     public CggmpDkgTask createDkgTaskInternal(String taskId,
-                                       String executionId,
-                                       int nodesCount,
-                                       int threshold,
-                                       Set<Integer> participants,
-                                       int initiatorId) {
+                                              String executionId,
+                                              int nodesCount,
+                                              int threshold,
+                                              Set<Integer> participants,
+                                              int initiatorId) {
         CggmpDkgTask task = new CggmpDkgTask(taskId, executionId, nodesCount, threshold, participants, initiatorId);
         task.evalPowers = CggmpDkgUtils.precomputeEvalPowers(CggmpDkgUtils.getIndexValue(task, nodeId), threshold);
         return task;

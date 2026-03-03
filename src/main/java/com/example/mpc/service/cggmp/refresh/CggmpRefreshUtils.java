@@ -30,13 +30,13 @@ public final class CggmpRefreshUtils {
     }
 
     public static String computeRefreshCommit(String taskId,
-                                       int senderId,
-                                       Map<Integer, ECPoint> X,
-                                       Map<Integer, ECPoint> Y,
-                                       Map<Integer, ECPoint> A,
-                                       ECPoint Xi,
-                                       byte[] rid,
-                                       byte[] u) {
+                                              int senderId,
+                                              Map<Integer, ECPoint> X,
+                                              Map<Integer, ECPoint> Y,
+                                              Map<Integer, ECPoint> A,
+                                              ECPoint Xi,
+                                              byte[] rid,
+                                              byte[] u) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             md.update(taskId.getBytes(java.nio.charset.StandardCharsets.UTF_8));
