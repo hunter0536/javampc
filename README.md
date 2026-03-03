@@ -229,17 +229,29 @@ mpc/
 
 ---
 
-### Gennaro DKG API
+## CGGMP API
 
-#### 1. 启动 DKG 任务
+### 协议执行流程
+
+```
+AUX → DKG → Sign
+       ↓
+    Refresh
+```
+
+### 1. AUX 接口
+
+#### 1.1 启动 AUX 任务
+
+生成 Paillier 公钥和 Pedersen 参数。
 
 **请求**
-- 方法：`POST`
-- 路径：`/api/gennaro/dkg/start`
+- 方法：`GET`
+- 路径：`/api/cggmp/aux/start`
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/gennaro/dkg/start"
+curl -X GET "http://localhost:8081/api/cggmp/aux/start"
 ```
 
 **响应示例**
@@ -249,22 +261,22 @@ curl -X POST "http://localhost:8081/api/gennaro/dkg/start"
   "message": "success",
   "data": {
     "taskId": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "DKG process started"
+    "status": "CGGMP AUX process started"
   },
   "success": true
 }
 ```
 
-#### 2. 查询 DKG 任务状态
+#### 1.2 查询 AUX 任务状态
 
 **请求**
-- 方法：`GET`
-- 路径：`/api/gennaro/dkg/status`
+- 方法：`POST`
+- 路径：`/api/cggmp/aux/status`
 - 参数：`taskId`（任务 ID）
 
 **示例**
 ```bash
-curl -X GET "http://localhost:8081/api/gennaro/dkg/status?taskId=550e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/aux/status?taskId=550e8400-e29b-41d4-a716-446655440000"
 ```
 
 **响应示例**
@@ -275,52 +287,28 @@ curl -X GET "http://localhost:8081/api/gennaro/dkg/status?taskId=550e8400-e29b-4
   "data": {
     "taskId": "550e8400-e29b-41d4-a716-446655440000",
     "status": "COMPLETED",
-    "inProgress": false,
-    "completed": true,
-    "groupPublicKey": "04a1b2c3...",
-    "errorMessage": null,
-    "receivedCommitments": 4,
-    "receivedShares": 4
+    "currentRound": 3,
+    "participants": [1, 2, 3, 4, 5]
   },
-  "success": true
-}
-```
-
-#### 3. 获取群公钥
-
-**请求**
-- 方法：`GET`
-- 路径：`/api/gennaro/dkg/public-key`
-- 参数：`taskId`（任务 ID）
-
-**示例**
-```bash
-curl -X GET "http://localhost:8081/api/gennaro/dkg/public-key?taskId=550e8400-e29b-41d4-a716-446655440000"
-```
-
-**响应示例**
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": "04a1b2c3d4e5f6...",
   "success": true
 }
 ```
 
 ---
 
-### CGGMP DKG API
+### 2. DKG 接口
 
-#### 4. 启动 CGGMP DKG 任务
+#### 2.1 启动 DKG 任务
+
+生成分布式密钥对。
 
 **请求**
-- 方法：`POST`
+- 方法：`GET`
 - 路径：`/api/cggmp/dkg/start`
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/dkg/start"
+curl -X GET "http://localhost:8081/api/cggmp/dkg/start"
 ```
 
 **响应示例**
@@ -336,16 +324,16 @@ curl -X POST "http://localhost:8081/api/cggmp/dkg/start"
 }
 ```
 
-#### 5. 查询 CGGMP DKG 任务状态
+#### 2.2 查询 DKG 任务状态
 
 **请求**
-- 方法：`GET`
+- 方法：`POST`
 - 路径：`/api/cggmp/dkg/status`
 - 参数：`taskId`（任务 ID）
 
 **示例**
 ```bash
-curl -X GET "http://localhost:8081/api/cggmp/dkg/status?taskId=550e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/dkg/status?taskId=550e8400-e29b-41d4-a716-446655440000"
 ```
 
 **响应示例**
@@ -359,42 +347,50 @@ curl -X GET "http://localhost:8081/api/cggmp/dkg/status?taskId=550e8400-e29b-41d
     "inProgress": false,
     "completed": true,
     "groupPublicKey": "04a1b2c3...",
-    "errorMessage": null,
-    "receivedRound1": 4,
-    "receivedRound2": 4
+    "errorMessage": null
   },
   "success": true
 }
 ```
 
-#### 6. 获取 CGGMP 群公钥
+#### 2.3 获取聚合公钥
 
 **请求**
-- 方法：`GET`
+- 方法：`POST`
 - 路径：`/api/cggmp/dkg/public-key`
 - 参数：`taskId`（任务 ID）
 
 **示例**
 ```bash
-curl -X GET "http://localhost:8081/api/cggmp/dkg/public-key?taskId=550e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/dkg/public-key?taskId=550e8400-e29b-41d4-a716-446655440000"
+```
+
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": "04a1b2c3d4e5f6...",
+  "success": true
+}
 ```
 
 ---
 
-### CGGMP 签名 API
+### 3. Sign 接口
 
-#### 7. 启动签名任务
+#### 3.1 启动签名任务
 
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/sign/start`
 - 参数：
-  - `groupPublicKey`（群公钥，Hex 编码）
-  - `message`（要签名的数据）
+  - `groupPublicKey`（聚合公钥，Hex 编码）
+  - `message`（待签名消息，Hex 编码）
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/sign/start?groupPublicKey=04a1b2c3...&message=Hello%20MPC"
+curl -X POST "http://localhost:8081/api/cggmp/sign/start?groupPublicKey=04a1b2c3...&message=48656c6c6f"
 ```
 
 **响应示例**
@@ -405,23 +401,23 @@ curl -X POST "http://localhost:8081/api/cggmp/sign/start?groupPublicKey=04a1b2c3
   "data": {
     "signatureTaskId": "660e8400-e29b-41d4-a716-446655440000",
     "groupPublicKey": "04a1b2c3...",
-    "message": "Hello MPC",
+    "message": "48656c6c6f",
     "status": "CGGMP signature process started"
   },
   "success": true
 }
 ```
 
-#### 8. 查询签名任务状态
+#### 3.2 查询签名任务状态
 
 **请求**
-- 方法：`GET`
+- 方法：`POST`
 - 路径：`/api/cggmp/sign/status`
 - 参数：`signatureTaskId`（签名任务 ID）
 
 **示例**
 ```bash
-curl -X GET "http://localhost:8081/api/cggmp/sign/status?signatureTaskId=660e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/sign/status?signatureTaskId=660e8400-e29b-41d4-a716-446655440000"
 ```
 
 **响应示例**
@@ -435,28 +431,24 @@ curl -X GET "http://localhost:8081/api/cggmp/sign/status?signatureTaskId=660e840
     "inProgress": false,
     "completed": true,
     "status": "COMPLETED",
-    "message": "Hello MPC",
+    "message": "48656c6c6f",
     "errorMessage": null,
-    "participants": [1, 2, 3],
-    "receivedGammaCommitments": 2,
-    "receivedMtaResponses": 2,
-    "receivedOffline": 2,
-    "receivedPartialS": 2
+    "participants": [1, 2, 3]
   },
   "success": true
 }
 ```
 
-#### 9. 获取签名结果
+#### 3.3 获取签名结果
 
 **请求**
-- 方法：`GET`
+- 方法：`POST`
 - 路径：`/api/cggmp/sign/result`
 - 参数：`signatureTaskId`（签名任务 ID）
 
 **示例**
 ```bash
-curl -X GET "http://localhost:8081/api/cggmp/sign/result?signatureTaskId=660e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/sign/result?signatureTaskId=660e8400-e29b-41d4-a716-446655440000"
 ```
 
 **响应示例**
@@ -467,13 +459,247 @@ curl -X GET "http://localhost:8081/api/cggmp/sign/result?signatureTaskId=660e840
   "data": {
     "taskId": "660e8400-e29b-41d4-a716-446655440000",
     "groupPublicKey": "04a1b2c3...",
-    "signature": "30440220...",
+    "signature": "MEUCIQD...",
     "verified": true,
-    "message": "Hello MPC"
+    "message": "48656c6c6f"
   },
   "success": true
 }
 ```
+
+---
+
+### 4. Refresh 接口
+
+#### 4.1 启动密钥刷新任务
+
+更新各节点的私钥份额，聚合公钥保持不变。
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/cggmp/refresh/start`
+- 参数：`groupPublicKey`（聚合公钥，Hex 编码）
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/cggmp/refresh/start?groupPublicKey=04a1b2c3..."
+```
+
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "taskId": "770e8400-e29b-41d4-a716-446655440000",
+    "groupPublicKey": "04a1b2c3...",
+    "status": "CGGMP refresh started"
+  },
+  "success": true
+}
+```
+
+#### 4.2 查询刷新任务状态
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/cggmp/refresh/status`
+- 参数：`taskId`（任务 ID）
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/cggmp/refresh/status?taskId=770e8400-e29b-41d4-a716-446655440000"
+```
+
+---
+
+### 5. 诊断接口
+
+#### 5.1 零知识证明自检
+
+验证参数配置和证明链正确性。
+
+**请求**
+- 方法：`GET`
+- 路径：`/api/cggmp/proof/self-check`
+
+**示例**
+```bash
+curl -X GET "http://localhost:8081/api/cggmp/proof/self-check"
+```
+
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "piDecProof": true,
+    "piAffGProof": true,
+    "allPassed": true
+  },
+  "success": true
+}
+```
+
+---
+
+### 6. 投诉接口
+
+#### 6.1 查询投诉记录
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/cggmp/complaints`
+- 参数（均为可选）：
+  - `taskId`：任务 ID
+  - `reason`：投诉原因
+  - `reasonLike`：投诉原因模糊匹配
+  - `senderId`：投诉发送方节点 ID
+  - `offenderId`：被投诉节点 ID
+  - `fromTs`：起始时间戳
+  - `toTs`：结束时间戳
+  - `limit`：返回记录数限制（默认 50）
+  - `offset`：偏移量（默认 0）
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/cggmp/complaints?limit=10"
+```
+
+#### 6.2 导出投诉记录（JSONL）
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/cggmp/complaints/export`
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/cggmp/complaints/export" -o complaints.jsonl
+```
+
+#### 6.3 导出投诉记录（CSV）
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/cggmp/complaints/export.csv`
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/cggmp/complaints/export.csv" -o complaints.csv
+```
+
+---
+
+## Gennaro DKG API
+
+### 1. 启动 DKG 任务
+
+**请求**
+- 方法：`GET`
+- 路径：`/api/gennaro/dkg/start`
+
+**示例**
+```bash
+curl -X GET "http://localhost:8081/api/gennaro/dkg/start"
+```
+
+### 2. 查询 DKG 任务状态
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/gennaro/dkg/status`
+- 参数：`taskId`（任务 ID）
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/gennaro/dkg/status?taskId=550e8400-e29b-41d4-a716-446655440000"
+```
+
+### 3. 获取聚合公钥
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/gennaro/dkg/public-key`
+- 参数：`taskId`（任务 ID）
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/gennaro/dkg/public-key?taskId=550e8400-e29b-41d4-a716-446655440000"
+```
+
+---
+
+## Simple Signature API
+
+简化签名接口，适用于测试和演示。
+
+### 1. 启动签名任务
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/simple-sign/sign/start`
+- 参数：
+  - `groupPublicKey`（聚合公钥，Hex 编码）
+  - `message`（待签名消息，Hex 编码）
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/simple-sign/sign/start?groupPublicKey=04a1b2c3...&message=48656c6c6f"
+```
+
+### 2. 查询签名任务状态
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/simple-sign/sign/status`
+- 参数：`taskId`（任务 ID）
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/simple-sign/sign/status?taskId=550e8400-e29b-41d4-a716-446655440000"
+```
+
+### 3. 获取签名结果
+
+**请求**
+- 方法：`POST`
+- 路径：`/api/simple-sign/sign/result`
+- 参数：`taskId`（任务 ID）
+
+**示例**
+```bash
+curl -X POST "http://localhost:8081/api/simple-sign/sign/result?taskId=550e8400-e29b-41d4-a716-446655440000"
+```
+
+---
+
+## API 汇总表
+
+| 模块 | 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|------|
+| **CGGMP AUX** | GET | `/api/cggmp/aux/start` | - | 启动 AUX 任务 |
+| | POST | `/api/cggmp/aux/status` | taskId | 查询 AUX 状态 |
+| **CGGMP DKG** | GET | `/api/cggmp/dkg/start` | - | 启动 DKG 任务 |
+| | POST | `/api/cggmp/dkg/status` | taskId | 查询 DKG 状态 |
+| | POST | `/api/cggmp/dkg/public-key` | taskId | 获取聚合公钥 |
+| **CGGMP Sign** | POST | `/api/cggmp/sign/start` | groupPublicKey, message | 启动签名任务 |
+| | POST | `/api/cggmp/sign/status` | signatureTaskId | 查询签名状态 |
+| | POST | `/api/cggmp/sign/result` | signatureTaskId | 获取签名结果 |
+| **CGGMP Refresh** | POST | `/api/cggmp/refresh/start` | groupPublicKey | 启动刷新任务 |
+| | POST | `/api/cggmp/refresh/status` | taskId | 查询刷新状态 |
+| **诊断** | GET | `/api/cggmp/proof/self-check` | - | 零知识证明自检 |
+| **投诉** | POST | `/api/cggmp/complaints` | 多个可选参数 | 查询投诉记录 |
+| | POST | `/api/cggmp/complaints/export` | 多个可选参数 | 导出 JSONL |
+| | POST | `/api/cggmp/complaints/export.csv` | 多个可选参数 | 导出 CSV |
+| **Gennaro DKG** | GET | `/api/gennaro/dkg/start` | - | 启动 DKG 任务 |
+| | POST | `/api/gennaro/dkg/status` | taskId | 查询 DKG 状态 |
+| | POST | `/api/gennaro/dkg/public-key` | taskId | 获取聚合公钥 |
+| **Simple Sign** | POST | `/api/simple-sign/sign/start` | groupPublicKey, message | 启动签名任务 |
+| | POST | `/api/simple-sign/sign/status` | taskId | 查询签名状态 |
+| | POST | `/api/simple-sign/sign/result` | taskId | 获取签名结果 |
+
+---
 
 ## 技术实现细节
 
@@ -512,7 +738,7 @@ curl -X GET "http://localhost:8081/api/cggmp/sign/result?signatureTaskId=660e840
 | `DKG_INIT` | DKG 初始化 |
 | `CGGMP_DKG_INIT` | CGGMP DKG 初始化 |
 | `CGGMP_DKG_ROUND1/2` | CGGMP DKG 各轮 |
-| `GG20_SIGN_INIT` | GG20 签名初始化 |
+| `CGGMP_SIGN_INIT` | CGGMP 签名初始化 |
 | `GG20_GAMMA_COMMITMENT` | Gamma 承诺 |
 | `GG20_MTA_INIT/RESPONSE` | MtA 协议消息 |
 | `GG20_OFFLINE` | 离线数据 |

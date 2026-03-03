@@ -4,7 +4,7 @@ import com.example.mpc.common.response.ApiResponse;
 import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStartResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
-import com.example.mpc.model.SimpleSignatureTask;
+import com.example.mpc.dto.SimpleSignatureTask;
 import com.example.mpc.service.SimpleSignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +27,13 @@ public class SimpleSignatureController {
     @Autowired
     private SimpleSignatureService simpleSignatureService;
 
+    /**
+     * 启动简单签名任务（适用于测试和演示）
+     *
+     * @param groupPublicKey 聚合公钥（Hex编码）
+     * @param message        待签名消息（Hex编码）
+     * @return 签名任务ID
+     */
     @PostMapping("/sign/start")
     public CompletableFuture<ApiResponse<SignatureTaskStartResponse>> startSignature(
             @RequestParam String groupPublicKey,
@@ -45,7 +52,13 @@ public class SimpleSignatureController {
         });
     }
 
-    @GetMapping("/sign/status")
+    /**
+     * 查询简单签名任务状态
+     *
+     * @param taskId 任务ID
+     * @return 任务状态
+     */
+    @PostMapping("/sign/status")
     public CompletableFuture<ApiResponse<SignatureTaskStatusResponse>> getStatus(@RequestParam String taskId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
@@ -82,7 +95,13 @@ public class SimpleSignatureController {
         });
     }
 
-    @GetMapping("/sign/result")
+    /**
+     * 查询简单签名结果
+     *
+     * @param taskId 任务ID
+     * @return 签名结果（DER编码，Base64）
+     */
+    @PostMapping("/sign/result")
     public CompletableFuture<ApiResponse<SignatureResultResponse>> getResult(@RequestParam String taskId) {
         return CompletableFuture.supplyAsync(() -> {
             try {

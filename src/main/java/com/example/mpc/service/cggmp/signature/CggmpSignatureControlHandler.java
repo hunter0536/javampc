@@ -1,13 +1,17 @@
 package com.example.mpc.service.cggmp.signature;
 
 import com.example.mpc.common.util.JsonCodec;
-import com.example.mpc.model.Gg20SignatureTask;
+import com.example.mpc.dto.CggmpSignatureTask;
 import com.example.mpc.service.CggmpSignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 
+/**
+ * CGGMP签名控制处理器
+ * 负责处理签名过程中的投诉和争议
+ */
 public final class CggmpSignatureControlHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpSignatureControlHandler.class);
     private final CggmpSignatureService svc;
@@ -18,6 +22,9 @@ public final class CggmpSignatureControlHandler {
         this.evidenceHandler = evidenceHandler;
     }
 
+    /**
+     * 处理签名投诉消息
+     */
     void handleCggmpSignComplaint(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -28,7 +35,7 @@ public final class CggmpSignatureControlHandler {
         if (signatureTaskId == null || reason == null) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(signatureTaskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
         if (task == null) {
             return;
         }
@@ -61,6 +68,9 @@ public final class CggmpSignatureControlHandler {
         }
     }
 
+    /**
+     * 处理签名排除消息
+     */
     void handleCggmpSignExclude(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -70,7 +80,7 @@ public final class CggmpSignatureControlHandler {
         if (signatureTaskId == null) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(signatureTaskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
         if (task == null) {
             return;
         }

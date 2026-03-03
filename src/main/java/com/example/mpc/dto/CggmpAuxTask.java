@@ -1,4 +1,4 @@
-package com.example.mpc.model;
+package com.example.mpc.dto;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.BiPrimeBlumProof;

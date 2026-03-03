@@ -9,7 +9,7 @@ import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.CggmpAuxTask;
+import com.example.mpc.dto.CggmpAuxTask;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
@@ -22,6 +22,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * CGGMP辅助密钥消息处理器
+ * 负责接收和处理辅助密钥协议的网络消息
+ */
 public final class CggmpAuxMessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpAuxMessageHandler.class);
     private final CggmpAuxService svc;
@@ -32,6 +36,9 @@ public final class CggmpAuxMessageHandler {
         this.svc = svc;
     }
 
+    /**
+     * 处理辅助密钥初始化消息
+     */
     void handleCggmpAuxInit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -82,6 +89,9 @@ public final class CggmpAuxMessageHandler {
         }
     }
 
+    /**
+     * 处理辅助密钥Round 1消息，接收Paillier公钥
+     */
     void handleCggmpAuxR1(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -109,6 +119,9 @@ public final class CggmpAuxMessageHandler {
         }
     }
 
+    /**
+     * 处理辅助密钥Round 1 Echo消息
+     */
     void handleCggmpAuxR1Echo(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -146,6 +159,9 @@ public final class CggmpAuxMessageHandler {
                 taskId, senderNodeId, task.echoReceived.size(), task.echoLatch.getCount());
     }
 
+    /**
+     * 处理辅助密钥Round 2消息，接收Paillier证明
+     */
     void handleCggmpAuxR2(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -367,6 +383,9 @@ public final class CggmpAuxMessageHandler {
         return a.n().equals(b.n()) && a.nSquared().equals(b.nSquared()) && a.g().equals(b.g()) && a.bitLength() == b.bitLength();
     }
 
+    /**
+     * 处理辅助密钥Round 3消息，接收双素数证明
+     */
     void handleCggmpAuxR3(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -433,6 +452,9 @@ public final class CggmpAuxMessageHandler {
                 taskId, senderNodeId, task.peerModProofs.size(), task.proofLatch.getCount());
     }
 
+    /**
+     * 处理辅助密钥状态消息
+     */
     void handleCggmpAuxStatus(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -450,11 +472,17 @@ public final class CggmpAuxMessageHandler {
         svc.auxStatus.put(senderId, new CggmpAuxService.AuxStatus(hasAux, ts));
     }
 
+    /**
+     * 将消息加入待处理队列
+     */
     void enqueuePending(String taskId, PendingMsg msg) {
         if (taskId == null) return;
         pendingAuxMessages.computeIfAbsent(taskId, id -> new java.util.concurrent.ConcurrentLinkedQueue<>()).add(msg);
     }
 
+    /**
+     * 处理待处理的消息队列
+     */
     public void drainPending(String taskId) {
         java.util.concurrent.ConcurrentLinkedQueue<PendingMsg> q = pendingAuxMessages.get(taskId);
         if (q == null || q.isEmpty()) {

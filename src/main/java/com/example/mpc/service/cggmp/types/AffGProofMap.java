@@ -6,8 +6,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * AffG证明的索引Map，用于存储按节点ID索引的PiAffGProof
+ */
 public record AffGProofMap(Map<Integer, PiAffGProof> values) {
 
+    /**
+     * 创建空的AffG证明Map
+     */
     public static AffGProofMap empty() {
         return new AffGProofMap(Map.of());
     }

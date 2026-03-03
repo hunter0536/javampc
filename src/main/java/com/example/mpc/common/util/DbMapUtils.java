@@ -1,7 +1,7 @@
 package com.example.mpc.common.util;
 
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
-import com.example.mpc.model.AuxInfo;
+import com.example.mpc.dto.AuxInfo;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;

@@ -8,9 +8,9 @@ import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.AuxInfoDao;
 import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.AuxInfo;
-import com.example.mpc.model.CggmpDkgTask;
-import com.example.mpc.model.KeyShare;
+import com.example.mpc.dto.AuxInfo;
+import com.example.mpc.dto.CggmpDkgTask;
+import com.example.mpc.dto.KeyShare;
 import com.example.mpc.service.cggmp.dkg.CggmpDkgMessageDispatcher;
 import com.example.mpc.service.cggmp.dkg.CggmpDkgMessageHandler;
 import com.example.mpc.service.cggmp.dkg.CggmpDkgProtocolHandler;
@@ -36,6 +36,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
+/**
+ * CGGMP分布式密钥生成(DKG)服务
+ * 负责执行DKG协议生成组公钥和成员分片
+ */
 @Service
 public class CggmpDkgService implements NodeService.MessageHandler {
     public static final Logger logger = LoggerFactory.getLogger(CggmpDkgService.class);

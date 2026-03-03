@@ -4,7 +4,7 @@ import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.CggmpDkgTask;
+import com.example.mpc.dto.CggmpDkgTask;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -22,6 +22,10 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * CGGMP DKG消息处理器
+ * 负责接收和处理DKG协议各轮次的网络消息
+ */
 public final class CggmpDkgMessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpDkgMessageHandler.class);
     private final CggmpDkgService svc;
@@ -32,6 +36,9 @@ public final class CggmpDkgMessageHandler {
         this.svc = svc;
     }
 
+    /**
+     * 广播DKG Round 1 Echo消息
+     */
     CompletableFuture<Void> sendDkgRound1Echo(CggmpDkgTask task) {
         String echo = CggmpDkgUtils.computeDkgEchoHash(task);
         Map<String, Object> data = new HashMap<>();
@@ -42,6 +49,9 @@ public final class CggmpDkgMessageHandler {
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1_ECHO, data));
     }
 
+    /**
+     * 处理DKG初始化消息
+     */
     void onDkgInit(int senderId, Object data) {
         if (data instanceof Map<?, ?> dataMap) {
             String taskId = (String) dataMap.get("taskId");
@@ -99,6 +109,9 @@ public final class CggmpDkgMessageHandler {
         return true;
     }
 
+    /**
+     * 处理DKG Round 1消息，接收承诺和公钥分片
+     */
     void onDkgRound1(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             logger.debug("Skip DKG Round1: invalid payload type from node {} (type={})", senderId,
@@ -147,6 +160,9 @@ public final class CggmpDkgMessageHandler {
         }
     }
 
+    /**
+     * 处理DKG Round 1 Echo消息，验证承诺一致性
+     */
     void onDkgRound1Echo(int senderId, Object data) {
         if (!svc.dkgEchoEnabled) {
             return;
@@ -192,6 +208,9 @@ public final class CggmpDkgMessageHandler {
         }
     }
 
+    /**
+     * 处理DKG Round 2消息，接收加密的秘密分片
+     */
     void onDkgRound2(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -247,6 +266,9 @@ public final class CggmpDkgMessageHandler {
         task.round2ReceivedLatch.countDown();
     }
 
+    /**
+     * 处理DKG Round 2广播消息
+     */
     void onDkgRound2Broad(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -290,6 +312,9 @@ public final class CggmpDkgMessageHandler {
         processDkgRound2Open(task, senderNodeId, open);
     }
 
+    /**
+     * 处理DKG Round 2批量消息
+     */
     void onDkgRound2Batch(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -335,6 +360,9 @@ public final class CggmpDkgMessageHandler {
         onDkgRound2(senderId, flat);
     }
 
+    /**
+     * 处理DKG Round 3消息，接收公开值和验证数据
+     */
     void onDkgRound3(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -376,6 +404,9 @@ public final class CggmpDkgMessageHandler {
         verifyAndAcceptRound3(task, senderNodeId, proof, A);
     }
 
+    /**
+     * 处理DKG投诉消息
+     */
     void onDkgComplaint(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -421,6 +452,9 @@ public final class CggmpDkgMessageHandler {
         }
     }
 
+    /**
+     * 处理DKG排除消息
+     */
     void onDkgExclude(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -456,6 +490,9 @@ public final class CggmpDkgMessageHandler {
         }
     }
 
+    /**
+     * 处理待处理的Round 1 Echo消息
+     */
     public void drainPendingRound1Echoes(CggmpDkgTask task) {
         if (!svc.dkgEchoEnabled) {
             return;
@@ -490,6 +527,9 @@ public final class CggmpDkgMessageHandler {
         }
     }
 
+    /**
+     * 处理待处理的Round 3证明
+     */
     void drainPendingRound3(CggmpDkgTask task) {
         if (task == null || task.rid == null || task.pendingRound3Proofs.isEmpty()) {
             return;
@@ -507,6 +547,9 @@ public final class CggmpDkgMessageHandler {
         }
     }
 
+    /**
+     * 处理待处理的Round 1消息
+     */
     public void drainPendingRound1(CggmpDkgTask task) {
         ConcurrentHashMap<Integer, Map<String, Object>> pending = pendingRound1ByTask.remove(task.taskId);
         if (pending == null || pending.isEmpty()) {

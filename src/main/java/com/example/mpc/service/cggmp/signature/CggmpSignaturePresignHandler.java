@@ -9,7 +9,7 @@ import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonCodec;
-import com.example.mpc.model.Gg20SignatureTask;
+import com.example.mpc.dto.CggmpSignatureTask;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
@@ -29,6 +29,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * CGGMP签名预计算处理器
+ * 负责协调预签名各轮的分布式计算
+ */
 public final class CggmpSignaturePresignHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpSignaturePresignHandler.class);
     private final CggmpSignatureService svc;
@@ -56,7 +60,7 @@ public final class CggmpSignaturePresignHandler {
         return out;
     }
 
-    static String computePresignR1EchoHash(Gg20SignatureTask task) {
+    static String computePresignR1EchoHash(CggmpSignatureTask task) {
         try {
             String sid = "CGGMP24:SIGN:" + task.taskId;
             List<Integer> ids = new ArrayList<>(task.participants);
@@ -117,6 +121,9 @@ public final class CggmpSignaturePresignHandler {
         return out;
     }
 
+    /**
+     * 处理预签名Round 1消息，接收K和Gamma承诺
+     */
     void handlePresignR1(int senderId, Object data) {
         Map<?, ?> dataMap = CggmpProtocolUtils.asMap(data);
         if (dataMap == null) {
@@ -147,7 +154,7 @@ public final class CggmpSignaturePresignHandler {
         if (senderNodeId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(signatureTaskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
         if (task == null) {
             cachePendingPresignR1(signatureTaskId, senderId, dataMap);
             return;
@@ -263,6 +270,9 @@ public final class CggmpSignaturePresignHandler {
         }
     }
 
+    /**
+     * 处理预签名Round 1 Echo消息，验证承诺一致性
+     */
     void handlePresignR1Echo(int senderId, Object data) {
         if (!svc.presignEchoEnabled) {
             return;
@@ -280,7 +290,7 @@ public final class CggmpSignaturePresignHandler {
         if (senderNodeId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(signatureTaskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
         if (task == null || !task.participants.contains(senderId)) {
             return;
         }
@@ -305,7 +315,10 @@ public final class CggmpSignaturePresignHandler {
         }
     }
 
-    void validatePendingPresignR1Echo(Gg20SignatureTask task) {
+    /**
+     * 验证待处理的预签名Round 1 Echo
+     */
+    void validatePendingPresignR1Echo(CggmpSignatureTask task) {
         if (task == null || task.pendingPresignR1Echo.isEmpty()) {
             return;
         }
@@ -331,6 +344,9 @@ public final class CggmpSignaturePresignHandler {
         }
     }
 
+    /**
+     * 处理预签名Round 2消息，接收MtA协议结果
+     */
     void handlePresignR2(int senderId, Object data) {
         Map<?, ?> dataMap = CggmpProtocolUtils.asMap(data);
         if (dataMap == null) {
@@ -345,7 +361,7 @@ public final class CggmpSignaturePresignHandler {
         if (senderNodeId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(signatureTaskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
         if (task == null || !task.participants.contains(senderId)) {
             return;
         }
@@ -357,7 +373,10 @@ public final class CggmpSignaturePresignHandler {
         processPresignR2(task, senderId, dataMap);
     }
 
-    void processPresignR2(Gg20SignatureTask task, int senderId, Map<?, ?> dataMap) {
+    /**
+     * 处理预签名Round 2数据
+     */
+    void processPresignR2(CggmpSignatureTask task, int senderId, Map<?, ?> dataMap) {
         String gammaHex = CggmpProtocolUtils.asString(dataMap.get("Gamma"));
         if (gammaHex == null) {
             return;
@@ -513,6 +532,9 @@ public final class CggmpSignaturePresignHandler {
         }
     }
 
+    /**
+     * 处理预签名Round 3消息，接收delta和chi分片
+     */
     void handlePresignR3(int senderId, Object data) {
         Map<?, ?> dataMap = CggmpProtocolUtils.asMap(data);
         if (dataMap == null) {
@@ -529,7 +551,7 @@ public final class CggmpSignaturePresignHandler {
         if (senderNodeId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(signatureTaskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
         if (task == null || !task.participants.contains(senderId)) {
             return;
         }
@@ -539,7 +561,10 @@ public final class CggmpSignaturePresignHandler {
         processPresignR3(task, senderId, dataMap);
     }
 
-    void processPresignR3(Gg20SignatureTask task, int senderId, Map<?, ?> dataMap) {
+    /**
+     * 处理预签名Round 3数据
+     */
+    void processPresignR3(CggmpSignatureTask task, int senderId, Map<?, ?> dataMap) {
         String deltaHex = CggmpProtocolUtils.asString(dataMap.get("delta"));
         String deltaPointHex = CggmpProtocolUtils.asString(dataMap.get("Delta"));
         String sPointHex = CggmpProtocolUtils.asString(dataMap.get("S"));
@@ -598,6 +623,9 @@ public final class CggmpSignaturePresignHandler {
         return copy;
     }
 
+    /**
+     * 缓存待处理的预签名Round 1数据
+     */
     void cachePendingPresignR1(String taskId, int senderId, Map<?, ?> dataMap) {
         if (taskId == null) {
             return;
@@ -614,7 +642,10 @@ public final class CggmpSignaturePresignHandler {
         logger.debug("Cached presign R1 from node {} for task {} (waiting for task creation)", senderId, taskId);
     }
 
-    void drainPendingPresignR1(Gg20SignatureTask task) {
+    /**
+     * 处理待处理的预签名Round 1数据
+     */
+    void drainPendingPresignR1(CggmpSignatureTask task) {
         ConcurrentHashMap<Integer, Map<String, Object>> pending = pendingPresignR1ByTask.remove(task.taskId);
         if (pending == null || pending.isEmpty()) {
             return;

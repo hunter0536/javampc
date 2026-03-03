@@ -11,7 +11,7 @@ import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.CggmpAuxTask;
+import com.example.mpc.dto.CggmpAuxTask;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -24,6 +24,10 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
+/**
+ * CGGMP辅助密钥协议处理器
+ * 负责执行辅助密钥生成协议的Round 1-2
+ */
 public final class CggmpAuxProtocolHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpAuxProtocolHandler.class);
     private static final ExecutorService auxExecutorService = com.example.mpc.common.util.ThreadPoolUtil.getAuxThreadPool();
@@ -34,6 +38,9 @@ public final class CggmpAuxProtocolHandler {
         this.svc = svc;
     }
 
+    /**
+     * 异步执行辅助密钥生成协议
+     */
     public CompletableFuture<Void> runAuxProtocolAsync(CggmpAuxTask task) {
         final long auxStartNs = System.nanoTime();
         logger.debug("AUX protocol starting: taskId={}, executionId={}", task.taskId, task.executionId);

@@ -14,8 +14,8 @@ import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.Gg20SignatureTask;
-import com.example.mpc.model.KeyShare;
+import com.example.mpc.dto.CggmpSignatureTask;
+import com.example.mpc.dto.KeyShare;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -38,6 +38,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * CGGMP签名离线阶段处理器
+ * 负责执行签名的预计算阶段(presign)，生成可重用的签名分片
+ */
 public final class CggmpSignatureOfflineHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpSignatureOfflineHandler.class);
     private final CggmpSignatureService svc;
@@ -46,7 +50,10 @@ public final class CggmpSignatureOfflineHandler {
         this.svc = svc;
     }
 
-    public CompletableFuture<Void> runOfflinePhase(Gg20SignatureTask task) {
+    /**
+     * 执行签名离线阶段（预签名），生成可重用的签名分片
+     */
+    public CompletableFuture<Void> runOfflinePhase(CggmpSignatureTask task) {
         logger.debug("Signature offline phase start for task {} (node={}, participants={})",
                 task.taskId, svc.nodeId, task.participants);
         CompletableFuture<CggmpPresignR1Context> r1Future = CompletableFuture.supplyAsync(() -> {
@@ -319,7 +326,7 @@ public final class CggmpSignatureOfflineHandler {
                 });
     }
 
-    public CompletableFuture<Void> broadcastOfflineInit(Gg20SignatureTask task) {
+    public CompletableFuture<Void> broadcastOfflineInit(CggmpSignatureTask task) {
         logger.debug("Broadcasting CGGMP_SIGN_OFFLINE_INIT for task {} (participants={})", task.taskId, task.participants);
         Map<String, Object> initData = new HashMap<>();
         initData.put("signatureTaskId", task.taskId);
@@ -344,7 +351,10 @@ public final class CggmpSignatureOfflineHandler {
         });
     }
 
-    CompletableFuture<Void> broadcastPresignR1(Gg20SignatureTask task,
+    /**
+     * 广播预签名Round 1消息
+     */
+    CompletableFuture<Void> broadcastPresignR1(CggmpSignatureTask task,
                                                BigInteger K,
                                                BigInteger G,
                                                ECPoint Y,
@@ -395,7 +405,10 @@ public final class CggmpSignatureOfflineHandler {
                 });
     }
 
-    CompletableFuture<Void> broadcastPresignR1Echo(Gg20SignatureTask task) {
+    /**
+     * 广播预签名Round 1 Echo消息
+     */
+    CompletableFuture<Void> broadcastPresignR1Echo(CggmpSignatureTask task) {
         String hash = CggmpSignaturePresignHandler.computePresignR1EchoHash(task);
         if (hash == null) {
             return CompletableFuture.failedFuture(new RuntimeException("Missing presign R1 data for echo"));
@@ -411,7 +424,10 @@ public final class CggmpSignatureOfflineHandler {
         return svc.nodeService.broadcastMessage(msg);
     }
 
-    CompletableFuture<Void> broadcastPresignR2(Gg20SignatureTask task,
+    /**
+     * 广播预签名Round 2消息
+     */
+    CompletableFuture<Void> broadcastPresignR2(CggmpSignatureTask task,
                                                ECPoint Gamma,
                                                BigIntIndexMap D,
                                                BigIntIndexMap Dhat,
@@ -436,7 +452,10 @@ public final class CggmpSignatureOfflineHandler {
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_PRESIGN_R2, data));
     }
 
-    CompletableFuture<Void> broadcastPresignR3(Gg20SignatureTask task,
+    /**
+     * 广播预签名Round 3消息
+     */
+    CompletableFuture<Void> broadcastPresignR3(CggmpSignatureTask task,
                                                BigInteger delta,
                                                ECPoint Delta,
                                                ECPoint S,
@@ -451,7 +470,7 @@ public final class CggmpSignatureOfflineHandler {
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_PRESIGN_R3, data));
     }
 
-    private void initSignaturePaillier(Gg20SignatureTask task) {
+    private void initSignaturePaillier(CggmpSignatureTask task) {
         if (task.paillier == null) {
             long startNs = System.nanoTime();
             var auxInfo = svc.ensureLocalAuxReady(task);
@@ -483,7 +502,10 @@ public final class CggmpSignatureOfflineHandler {
         }
     }
 
-    public void initSignatureContext(Gg20SignatureTask task) {
+    /**
+     * 初始化签名上下文，加载Paillier和ZKSetup
+     */
+    public void initSignatureContext(CggmpSignatureTask task) {
         if (task.messageHash == null) {
             task.messageHash = CggmpProtocolUtils.hashMessage(task.message);
         }
@@ -493,7 +515,7 @@ public final class CggmpSignatureOfflineHandler {
         ensureKeyShareData(task);
     }
 
-    private void ensureKeyShareData(Gg20SignatureTask task) {
+    private void ensureKeyShareData(CggmpSignatureTask task) {
         if (task.publicShares != null && task.indexMap != null) {
             return;
         }
@@ -507,7 +529,7 @@ public final class CggmpSignatureOfflineHandler {
                     svc.nodeId,
                     task.groupPublicKey,
                     keyShare.getDkgTaskId(),
-                    sha256Hex(keyShare.getKeyShare()));
+                    HexUtils.sha256Hex(keyShare.getKeyShare()));
         }
         if (task.publicShares == null) {
             task.publicShares = DbMapUtils.parsePublicShares(keyShare.getPublicShares());
@@ -524,14 +546,20 @@ public final class CggmpSignatureOfflineHandler {
         }
     }
 
-    CompletableFuture<Void> sendOfflineReady(Gg20SignatureTask task) {
+    /**
+     * 发送离线阶段就绪消息
+     */
+    CompletableFuture<Void> sendOfflineReady(CggmpSignatureTask task) {
         Map<String, Object> data = new HashMap<>();
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", svc.nodeId);
         return svc.nodeService.sendMessage(task.initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_OFFLINE_READY, data));
     }
 
-    void markOfflineReady(Gg20SignatureTask task, int senderId) {
+    /**
+     * 标记节点离线阶段就绪
+     */
+    void markOfflineReady(CggmpSignatureTask task, int senderId) {
         if (task.offlineReady.putIfAbsent(senderId, Boolean.TRUE) == null) {
             if (task.offlineReadyLatch.getCount() > 0) {
                 task.offlineReadyLatch.countDown();
@@ -539,6 +567,9 @@ public final class CggmpSignatureOfflineHandler {
         }
     }
 
+    /**
+     * 处理离线签名初始化消息
+     */
     void handleCggmpSignOfflineInit(int senderId, Object data) {
         if (data instanceof Map<?, ?> dataMap) {
             String signatureTaskId = (String) dataMap.get("signatureTaskId");
@@ -578,7 +609,7 @@ public final class CggmpSignatureOfflineHandler {
                     logger.debug("Created CGGMP signature task from OFFLINE_INIT: {} (initiator={}, participants={})",
                             signatureTaskId, resolvedInitiatorId, participantsSet);
                     CompletableFuture.runAsync(() -> {
-                        Gg20SignatureTask task = svc.signatureTasks.get(signatureTaskId);
+                        CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
                         if (task == null) {
                             return;
                         }
@@ -620,6 +651,9 @@ public final class CggmpSignatureOfflineHandler {
         }
     }
 
+    /**
+     * 处理离线签名就绪消息
+     */
     void handleCggmpSignOfflineReady(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -633,7 +667,7 @@ public final class CggmpSignatureOfflineHandler {
         if (senderNodeId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(signatureTaskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
         if (task == null || svc.nodeId != task.initiatorId) {
             return;
         }
@@ -725,6 +759,9 @@ public final class CggmpSignatureOfflineHandler {
                         .thenRunAsync(() -> finalizePresign(r3ctx), ThreadPoolUtil.getIoThreadPool()));
     }
 
+    /**
+     * 完成预签名，验证delta并生成预签名分片
+     */
     void finalizePresign(CggmpPresignR3Context r3ctx) {
         CggmpPresignR2Context ctx = r3ctx.ctx();
         BigInteger delta = CggmpProtocolUtils.sumShares(ctx.task().presignDelta, ctx.curveOrder());
@@ -834,19 +871,9 @@ public final class CggmpSignatureOfflineHandler {
                     svc.nodeId,
                     groupPublicKey,
                     keyShare.getDkgTaskId(),
-                    sha256Hex(keyShare.getKeyShare()));
+                    HexUtils.sha256Hex(keyShare.getKeyShare()));
         }
         BigInteger share = new BigInteger(keyShare.getKeyShare(), 16);
         return share.mod(Secp256k1CurveUtils.n());
-    }
-
-    private static String sha256Hex(String hex) {
-        try {
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            md.update(hex.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            return HexUtils.bytesToHex(md.digest());
-        } catch (Exception e) {
-            return "error";
-        }
     }
 }

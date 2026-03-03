@@ -24,11 +24,11 @@ public class GennaroController {
     private GennaroDkgService gennaroDkgService;
 
     /**
-     * 使用Gennaro协议生成分布式私钥并返回UUID
+     * 启动 Gennaro DKG 任务，生成分布式密钥对
      *
-     * @return 包含任务ID的响应
+     * @return 任务ID
      */
-    @PostMapping("/dkg/start")
+    @GetMapping("/dkg/start")
     public CompletableFuture<ApiResponse<DkgTaskStartResponse>> generateKey() {
         return CompletableFuture.supplyAsync(() -> {
             try {
@@ -52,12 +52,12 @@ public class GennaroController {
     }
 
     /**
-     * 根据UUID查询对应的Gennaro协议DKG任务是否执行完成
+     * 查询 Gennaro DKG 任务状态
      *
      * @param taskId 任务ID
      * @return 任务状态
      */
-    @GetMapping("/dkg/status")
+    @PostMapping("/dkg/status")
     public CompletableFuture<ApiResponse<DkgTaskStatusResponse>> getTaskStatus(@RequestParam(required = true) String taskId) {
         return CompletableFuture.supplyAsync(() -> {
             try {
@@ -75,12 +75,12 @@ public class GennaroController {
     }
 
     /**
-     * 根据UUID查询Gennaro协议DKG生成的群公钥
+     * 查询 Gennaro DKG 生成的聚合公钥
      *
      * @param taskId 任务ID
-     * @return 群公钥
+     * @return 聚合公钥（Hex编码）
      */
-    @GetMapping("/dkg/public-key")
+    @PostMapping("/dkg/public-key")
     public CompletableFuture<ApiResponse<String>> getGroupPublicKey(@RequestParam(required = true) String taskId) {
         return CompletableFuture.supplyAsync(() -> {
             try {

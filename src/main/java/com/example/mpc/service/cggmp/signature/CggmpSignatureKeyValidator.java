@@ -5,11 +5,15 @@ import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonCodec;
-import com.example.mpc.model.Gg20SignatureTask;
+import com.example.mpc.dto.CggmpSignatureTask;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 
 import java.math.BigInteger;
 
+/**
+ * CGGMP签名密钥验证器
+ * 验证Paillier公钥和ZKSetup的有效性
+ */
 public final class CggmpSignatureKeyValidator {
     private CggmpSignatureKeyValidator() {
     }
@@ -22,7 +26,7 @@ public final class CggmpSignatureKeyValidator {
         return publicKey.n().compareTo(q.pow(8)) >= 0;
     }
 
-    public static boolean ensurePeerKeyConsistency(Gg20SignatureTask task,
+    public static boolean ensurePeerKeyConsistency(CggmpSignatureTask task,
                                                    int peerId,
                                                    PaillierEncryption.PublicKey publicKey,
                                                    ZKSetup zkSetup) {
@@ -34,7 +38,7 @@ public final class CggmpSignatureKeyValidator {
         return existingZk == null || existingZk.equals(zkSetup);
     }
 
-    public static boolean ensurePeerKeyMatchesAux(Gg20SignatureTask task,
+    public static boolean ensurePeerKeyMatchesAux(CggmpSignatureTask task,
                                                   int peerId,
                                                   PaillierEncryption.PublicKey publicKey,
                                                   ZKSetup zkSetup) {

@@ -6,7 +6,7 @@ import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.CggmpRefreshTask;
+import com.example.mpc.dto.CggmpRefreshTask;
 import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -29,6 +29,10 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * CGGMP密钥刷新消息处理器
+ * 负责接收和处理密钥刷新协议的网络消息
+ */
 public final class CggmpRefreshMessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpRefreshMessageHandler.class);
     private final CggmpRefreshService svc;
@@ -37,6 +41,9 @@ public final class CggmpRefreshMessageHandler {
         this.svc = svc;
     }
 
+    /**
+     * 广播刷新初始化消息
+     */
     CompletableFuture<Void> sendRefreshInit(CggmpRefreshTask task) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
@@ -49,6 +56,9 @@ public final class CggmpRefreshMessageHandler {
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_INIT, data));
     }
 
+    /**
+     * 广播刷新Round 1消息
+     */
     CompletableFuture<Void> sendRefreshR1(CggmpRefreshTask task, String commit) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
@@ -60,6 +70,9 @@ public final class CggmpRefreshMessageHandler {
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R1, data));
     }
 
+    /**
+     * 处理刷新初始化消息
+     */
     void onRefreshInit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -104,6 +117,9 @@ public final class CggmpRefreshMessageHandler {
         }
     }
 
+    /**
+     * 广播刷新Round 2消息
+     */
     CompletableFuture<Void> sendRefreshR2(CggmpRefreshTask task, CggmpRefreshTask.RefreshRound2Data r2) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
@@ -117,6 +133,9 @@ public final class CggmpRefreshMessageHandler {
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R2, data));
     }
 
+    /**
+     * 广播刷新Round 3消息
+     */
     CompletableFuture<Void> sendRefreshR3(CggmpRefreshTask task, CggmpRefreshTask.RefreshRound3Data r3) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
@@ -126,6 +145,9 @@ public final class CggmpRefreshMessageHandler {
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R3, data));
     }
 
+    /**
+     * 广播刷新投诉消息
+     */
     CompletableFuture<Void> broadcastRefreshComplaint(CggmpRefreshTask task, Integer offenderId, String reason, Map<String, Object> evidence) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
@@ -140,6 +162,8 @@ public final class CggmpRefreshMessageHandler {
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_COMPLAINT, data));
     }
 
+    /**
+     * 广播刷新排除消息，     */
     CompletableFuture<Void> broadcastRefreshExclude(CggmpRefreshTask task, int offenderId, String reason, String newTaskId, Set<Integer> newParticipants) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
@@ -152,6 +176,9 @@ public final class CggmpRefreshMessageHandler {
         return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_EXCLUDE, data));
     }
 
+    /**
+     * 处理刷新Round 1消息
+     */
     void onRefreshR1(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -203,6 +230,9 @@ public final class CggmpRefreshMessageHandler {
         }
     }
 
+    /**
+     * 处理刷新Round 2消息
+     */
     void onRefreshR2(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -274,6 +304,9 @@ public final class CggmpRefreshMessageHandler {
         }
     }
 
+    /**
+     * 处理刷新Round 3消息
+     */
     void onRefreshR3(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -312,6 +345,9 @@ public final class CggmpRefreshMessageHandler {
         }
     }
 
+    /**
+     * 处理刷新投诉消息
+     */
     void onRefreshComplaint(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -346,6 +382,9 @@ public final class CggmpRefreshMessageHandler {
         task.fail("Refresh complaint: " + reason);
     }
 
+    /**
+     * 处理刷新排除消息
+     */
     void onRefreshExclude(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;

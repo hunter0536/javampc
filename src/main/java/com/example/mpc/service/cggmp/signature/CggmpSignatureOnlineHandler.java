@@ -13,7 +13,7 @@ import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.Gg20SignatureTask;
+import com.example.mpc.dto.CggmpSignatureTask;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -39,6 +39,10 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
+/**
+ * CGGMP签名在线阶段处理器
+ * 负责执行实际签名计算，生成最终签名
+ */
 public final class CggmpSignatureOnlineHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpSignatureOnlineHandler.class);
     private final CggmpSignatureService svc;
@@ -47,7 +51,7 @@ public final class CggmpSignatureOnlineHandler {
         this.svc = svc;
     }
 
-    private void logProgress(Gg20SignatureTask task, String stage) {
+    private void logProgress(CggmpSignatureTask task, String stage) {
         if (task == null || !logger.isDebugEnabled()) {
             return;
         }
@@ -81,7 +85,10 @@ public final class CggmpSignatureOnlineHandler {
                 sShare, participants);
     }
 
-    public CompletableFuture<Void> runOnlinePhase(Gg20SignatureTask task) {
+    /**
+     * 执行签名在线阶段，生成最终签名
+     */
+    public CompletableFuture<Void> runOnlinePhase(CggmpSignatureTask task) {
         logger.debug("Signature online phase start for task {} (node={}, initiator={})",
                 task.taskId, svc.nodeId, task.initiatorId);
         return svc.waitForLatchAsync(task.offlineDoneLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "offline phase")
@@ -166,6 +173,9 @@ public final class CggmpSignatureOnlineHandler {
                 });
     }
 
+    /**
+     * 处理在线签名初始化消息
+     */
     void handleCggmpSignOnlineInit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -175,7 +185,7 @@ public final class CggmpSignatureOnlineHandler {
         if (signatureTaskId == null || !(hashValue instanceof String hashString)) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(signatureTaskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
         if (task == null) {
             return;
         }
@@ -192,7 +202,7 @@ public final class CggmpSignatureOnlineHandler {
         });
     }
 
-    public CompletableFuture<Void> broadcastOnlineInit(Gg20SignatureTask task) {
+    public CompletableFuture<Void> broadcastOnlineInit(CggmpSignatureTask task) {
         Map<String, Object> data = new HashMap<>();
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", svc.nodeId);
@@ -209,6 +219,9 @@ public final class CggmpSignatureOnlineHandler {
                 });
     }
 
+    /**
+     * 处理Gamma承诺消息
+     */
     void handleCggmpSignGammaCommit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -226,7 +239,7 @@ public final class CggmpSignatureOnlineHandler {
         if (senderNodeId != senderId || senderId == svc.nodeId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null || !task.participants.contains(senderId)) {
             return;
         }
@@ -265,6 +278,9 @@ public final class CggmpSignatureOnlineHandler {
         }
     }
 
+    /**
+     * 处理Gamma公开消息，验证承诺并计算R点
+     */
     void handleCggmpSignGammaOpen(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -280,7 +296,7 @@ public final class CggmpSignatureOnlineHandler {
         if (senderNodeId != senderId || senderId == svc.nodeId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null || !task.participants.contains(senderId)) {
             return;
         }
@@ -332,6 +348,9 @@ public final class CggmpSignatureOnlineHandler {
         }
     }
 
+    /**
+     * 处理MtA-Ka协议初始化消息
+     */
     void handleCggmpSignMtaKaInit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -347,7 +366,7 @@ public final class CggmpSignatureOnlineHandler {
         if (initiatorId != senderId || receiverId != svc.nodeId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null || !task.participants.contains(svc.nodeId)) {
             return;
         }
@@ -439,6 +458,9 @@ public final class CggmpSignatureOnlineHandler {
         }
     }
 
+    /**
+     * 处理MtA-Ka协议响应消息
+     */
     void handleCggmpSignMtaKaResponse(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -454,7 +476,7 @@ public final class CggmpSignatureOnlineHandler {
         if (initiatorId != svc.nodeId || responderId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null) {
             return;
         }
@@ -501,6 +523,9 @@ public final class CggmpSignatureOnlineHandler {
         }
     }
 
+    /**
+     * 处理U分片消息
+     */
     void handleCggmpSignUShare(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -516,7 +541,7 @@ public final class CggmpSignatureOnlineHandler {
         if (senderNodeId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null || svc.nodeId != task.initiatorId) {
             return;
         }
@@ -545,6 +570,9 @@ public final class CggmpSignatureOnlineHandler {
         }
     }
 
+    /**
+     * 处理U公开消息
+     */
     void handleCggmpSignUOpen(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -559,7 +587,7 @@ public final class CggmpSignatureOnlineHandler {
         if (senderNodeId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null) {
             return;
         }
@@ -572,6 +600,9 @@ public final class CggmpSignatureOnlineHandler {
         logProgress(task, "u_open");
     }
 
+    /**
+     * 处理U承诺消息
+     */
     void handleCggmpSignUCommit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -586,7 +617,7 @@ public final class CggmpSignatureOnlineHandler {
         if (senderNodeId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null || svc.nodeId != task.initiatorId) {
             return;
         }
@@ -599,6 +630,9 @@ public final class CggmpSignatureOnlineHandler {
         logProgress(task, "u_commit");
     }
 
+    /**
+     * 处理MtA-St协议初始化消息
+     */
     void handleCggmpSignMtaStInit(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -614,7 +648,7 @@ public final class CggmpSignatureOnlineHandler {
         if (initiatorId != senderId || receiverId != svc.nodeId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null || !task.participants.contains(svc.nodeId)) {
             return;
         }
@@ -706,6 +740,9 @@ public final class CggmpSignatureOnlineHandler {
         }
     }
 
+    /**
+     * 处理MtA-St协议响应消息
+     */
     void handleCggmpSignMtaStResponse(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -721,7 +758,7 @@ public final class CggmpSignatureOnlineHandler {
         if (initiatorId != svc.nodeId || responderId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null) {
             return;
         }
@@ -768,6 +805,9 @@ public final class CggmpSignatureOnlineHandler {
         }
     }
 
+    /**
+     * 处理S分片消息，计算最终签名
+     */
     void handleCggmpSignSShare(int senderId, Object data) {
         if (!(data instanceof Map<?, ?> dataMap)) {
             return;
@@ -782,7 +822,7 @@ public final class CggmpSignatureOnlineHandler {
         if (senderNodeId != senderId) {
             return;
         }
-        Gg20SignatureTask task = svc.signatureTasks.get(taskId);
+        CggmpSignatureTask task = svc.signatureTasks.get(taskId);
         if (task == null || svc.nodeId != task.initiatorId) {
             return;
         }
@@ -847,7 +887,7 @@ public final class CggmpSignatureOnlineHandler {
         logger.info("CGGMP signature task {} completed successfully, verified: {}", ctx.task().taskId, verified);
     }
 
-    private List<Integer> findInvalidSigmaShares(Gg20SignatureTask task) {
+    private List<Integer> findInvalidSigmaShares(CggmpSignatureTask task) {
         List<Integer> offenders = new ArrayList<>();
         for (Map.Entry<Integer, BigInteger> e : task.sShares.entrySet()) {
             if (!verifySigmaShare(task, e.getKey(), e.getValue())) {
@@ -857,14 +897,14 @@ public final class CggmpSignatureOnlineHandler {
         return offenders;
     }
 
-    private BigInteger resolveSignShift(Gg20SignatureTask task, BigInteger q) {
+    private BigInteger resolveSignShift(CggmpSignatureTask task, BigInteger q) {
         if (!svc.hdEnabled) {
             return BigInteger.ZERO;
         }
         return deriveShiftFromChainCode(task, q);
     }
 
-    private BigInteger deriveShiftFromChainCode(Gg20SignatureTask task, BigInteger q) {
+    private BigInteger deriveShiftFromChainCode(CggmpSignatureTask task, BigInteger q) {
         if (task == null || task.chainCode == null || task.messageHash == null) {
             return BigInteger.ZERO;
         }
@@ -880,7 +920,7 @@ public final class CggmpSignatureOnlineHandler {
         }
     }
 
-    private boolean verifySigmaShare(Gg20SignatureTask task, int senderId, BigInteger sigma) {
+    private boolean verifySigmaShare(CggmpSignatureTask task, int senderId, BigInteger sigma) {
         if (task.presignature == null || task.messageHash == null) {
             return false;
         }
@@ -929,7 +969,7 @@ public final class CggmpSignatureOnlineHandler {
         }
     }
 
-    private CompletableFuture<Void> sendSShare(Gg20SignatureTask task, BigInteger s_i) {
+    private CompletableFuture<Void> sendSShare(CggmpSignatureTask task, BigInteger s_i) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
         data.put("senderId", svc.nodeId);

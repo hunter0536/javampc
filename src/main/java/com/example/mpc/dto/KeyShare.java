@@ -1,4 +1,4 @@
-package com.example.mpc.model;
+package com.example.mpc.dto;
 
 public class KeyShare {
     private Long id;

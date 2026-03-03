@@ -26,10 +26,17 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * CGGMP编解码工具类
+ * 提供协议消息的序列化和反序列化方法
+ */
 public final class CggmpCodecUtils {
     private CggmpCodecUtils() {
     }
 
+    /**
+     * 编码Paillier公钥
+     */
     public static Map<String, Object> encodePaillierPublicKey(PaillierEncryption.PublicKey key) {
         Map<String, Object> map = new HashMap<>();
         map.put("n", HexUtils.toHex(key.n()));
@@ -39,6 +46,9 @@ public final class CggmpCodecUtils {
         return map;
     }
 
+    /**
+     * 解码Paillier公钥
+     */
     public static PaillierEncryption.PublicKey decodePaillierPublicKey(Map<?, ?> map) {
         BigInteger n = HexUtils.fromHex(map.get("n"));
         BigInteger nsq = HexUtils.fromHex(map.get("nsquare"));
@@ -47,6 +57,9 @@ public final class CggmpCodecUtils {
         return new PaillierEncryption.PublicKey(n, nsq, g, bitLength);
     }
 
+    /**
+     * 编码ZKSetup
+     */
     public static Map<String, Object> encodeZkSetup(ZKSetup setup) {
         Map<String, Object> map = new HashMap<>();
         map.put("hatN", HexUtils.toHex(setup.hatN()));
@@ -55,6 +68,9 @@ public final class CggmpCodecUtils {
         return map;
     }
 
+    /**
+     * 解码ZKSetup
+     */
     public static ZKSetup decodeZkSetup(Map<?, ?> map) {
         BigInteger hatN = HexUtils.fromHex(map.get("hatN"));
         BigInteger h1 = HexUtils.fromHex(map.get("h1"));
@@ -62,6 +78,9 @@ public final class CggmpCodecUtils {
         return new ZKSetup(hatN, h1, h2);
     }
 
+    /**
+     * 编码Paillier范围证明
+     */
     public static Map<String, Object> encodePaillierRangeProof(PaillierRangeProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("z", HexUtils.toBase64(proof.z()));
@@ -83,6 +102,9 @@ public final class CggmpCodecUtils {
         return new PaillierRangeProof(z, u, w, s, s1, s2);
     }
 
+    /**
+     * 编码Paillier响应者证明
+     */
     public static Map<String, Object> encodePaillierRespondentProof(PaillierRespondentProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("z", HexUtils.toBase64(proof.z()));
@@ -112,6 +134,9 @@ public final class CggmpCodecUtils {
         return new PaillierRespondentProof(z, zPrime, t, v, w, s, s1, s2, t1, t2);
     }
 
+    /**
+     * 编码双素数证明
+     */
     public static Map<String, Object> encodeBiPrimeProof(BiPrimeBlumProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("N", HexUtils.toHex(proof.N()));
@@ -139,6 +164,9 @@ public final class CggmpCodecUtils {
         return new BiPrimeBlumProof(N, w, sigmas, xs, aBits, bBits, zs, sfRounds, blumRounds);
     }
 
+    /**
+     * 编码无小因子证明
+     */
     public static Map<String, Object> encodeNoSmallFactorProof(NoSmallFactorProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("P", HexUtils.toBase64(proof.P()));
@@ -168,6 +196,9 @@ public final class CggmpCodecUtils {
         return new NoSmallFactorProof(P, Q, A, B, T, z1, z2, w1, w2, v);
     }
 
+    /**
+     * 编码MtA发起者消息
+     */
     public static Map<String, Object> encodeMtAInitiatorMessage(MtAInitiatorMessage msg) {
         Map<String, Object> map = new HashMap<>();
         map.put("cA", HexUtils.toHex(msg.cA()));
@@ -185,6 +216,9 @@ public final class CggmpCodecUtils {
         return new MtAInitiatorMessage(cA, rangeProof, biPrime, factor);
     }
 
+    /**
+     * 编码MtA结果
+     */
     public static Map<String, Object> encodeMtAResult(MtAResult result) {
         Map<String, Object> map = new HashMap<>();
         map.put("c_j", HexUtils.toHex(result.c_j()));
@@ -211,6 +245,9 @@ public final class CggmpCodecUtils {
         return new MtAResult(c_j, y, r);
     }
 
+    /**
+     * 编码PiEnc证明
+     */
     public static Map<String, Object> encodePiEncProof(PiEncProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("kProof", encodePaillierRangeProof(proof.kProof()));
@@ -224,6 +261,9 @@ public final class CggmpCodecUtils {
         return new PiEncProof(kProof, gProof);
     }
 
+    /**
+     * 编码PiEncElg证明
+     */
     public static Map<String, Object> encodePiEncElgProof(PiEncElgProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("S", HexUtils.toHex(proof.S()));
@@ -251,6 +291,9 @@ public final class CggmpCodecUtils {
         return new PiEncElgProof(S, T, D, Y, Z, z1, z2, z3, w);
     }
 
+    /**
+     * 编码PiAffG证明
+     */
     public static Map<String, Object> encodePiAffGProof(PiAffGProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("A", encodeBigIntegerList(proof.A()));
@@ -274,6 +317,9 @@ public final class CggmpCodecUtils {
         return new PiAffGProof(A, B, R, z, zPrime, w, lambda);
     }
 
+    /**
+     * 编码PiLogStar证明
+     */
     public static Map<String, Object> encodePiLogStarProof(PiLogStarProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("A", toHexPoint(proof.A()));
@@ -287,6 +333,9 @@ public final class CggmpCodecUtils {
         return new PiLogStarProof(A, z);
     }
 
+    /**
+     * 编码PiSch证明
+     */
     public static Map<String, Object> encodePiSchProof(PiSchProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("A", toHexPoint(proof.A()));
@@ -300,6 +349,9 @@ public final class CggmpCodecUtils {
         return new PiSchProof(A, z);
     }
 
+    /**
+     * 编码PiPrm证明
+     */
     public static Map<String, Object> encodePiPrmProof(PiPrmProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("A", HexUtils.toHex(proof.A()));
@@ -313,6 +365,9 @@ public final class CggmpCodecUtils {
         return new PiPrmProof(A, z);
     }
 
+    /**
+     * 编码PiLog证明
+     */
     public static Map<String, Object> encodePiLogProof(PiLogProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("U1", toHexPoint(proof.U1()));
@@ -332,6 +387,9 @@ public final class CggmpCodecUtils {
         return new PiLogProof(U1, U2, U3, z1, z2);
     }
 
+    /**
+     * 编码PiDec证明
+     */
     public static Map<String, Object> encodePiDecProof(PiDecProof proof) {
         Map<String, Object> map = new HashMap<>();
         map.put("A", encodeBigIntegerList(proof.A()));
@@ -353,6 +411,9 @@ public final class CggmpCodecUtils {
         return new PiDecProof(A, B, C, z, w, nu);
     }
 
+    /**
+     * 编码BigInteger Map
+     */
     public static Map<String, String> encodeBigIntegerMap(Map<Integer, BigInteger> map) {
         Map<String, String> out = new HashMap<>();
         for (Map.Entry<Integer, BigInteger> e : map.entrySet()) {
@@ -361,6 +422,9 @@ public final class CggmpCodecUtils {
         return out;
     }
 
+    /**
+     * 解码BigInteger Map
+     */
     public static Map<Integer, BigInteger> decodeBigIntegerMap(Map<?, ?> map) {
         Map<Integer, BigInteger> out = new HashMap<>();
         for (Map.Entry<?, ?> e : map.entrySet()) {
@@ -371,6 +435,9 @@ public final class CggmpCodecUtils {
         return out;
     }
 
+    /**
+     * 编码BigInteger列表
+     */
     private static List<String> encodeBigIntegerList(List<BigInteger> list) {
         List<String> out = new ArrayList<>(list.size());
         for (BigInteger v : list) {
@@ -379,6 +446,9 @@ public final class CggmpCodecUtils {
         return out;
     }
 
+    /**
+     * 解码BigInteger列表
+     */
     private static List<BigInteger> decodeBigIntegerList(List<?> list) {
         List<BigInteger> out = new ArrayList<>(list.size());
         for (Object v : list) {
@@ -387,6 +457,9 @@ public final class CggmpCodecUtils {
         return out;
     }
 
+    /**
+     * 编码ECPoint列表
+     */
     private static List<String> encodeECPointList(List<ECPoint> list) {
         List<String> out = new ArrayList<>(list.size());
         for (ECPoint p : list) {
@@ -395,6 +468,9 @@ public final class CggmpCodecUtils {
         return out;
     }
 
+    /**
+     * 解码ECPoint列表
+     */
     private static List<ECPoint> decodeECPointList(List<?> list) {
         List<ECPoint> out = new ArrayList<>(list.size());
         for (Object v : list) {
@@ -411,6 +487,9 @@ public final class CggmpCodecUtils {
         return Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(hex));
     }
 
+    /**
+     * 编码Schnorr证明Map
+     */
     public static Map<String, Object> encodeSchProofMap(Map<Integer, PiSchProof> map) {
         Map<String, Object> out = new HashMap<>();
         for (Map.Entry<Integer, PiSchProof> e : map.entrySet()) {
@@ -419,6 +498,9 @@ public final class CggmpCodecUtils {
         return out;
     }
 
+    /**
+     * 解码Schnorr证明Map
+     */
     public static Map<Integer, PiSchProof> decodeSchProofMap(Map<?, ?> map) {
         Map<Integer, PiSchProof> out = new HashMap<>();
         for (Map.Entry<?, ?> e : map.entrySet()) {

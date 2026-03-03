@@ -1,6 +1,5 @@
-package com.example.mpc.model;
+package com.example.mpc.dto;
 
-import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.service.cggmp.types.BigIntIndexMap;
 import com.example.mpc.service.cggmp.types.ECPointIndexMap;
@@ -8,7 +7,6 @@ import com.example.mpc.service.cggmp.types.SchProofMap;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;

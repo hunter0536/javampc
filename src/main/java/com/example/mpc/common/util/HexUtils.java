@@ -1,6 +1,8 @@
 package com.example.mpc.common.util;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Base64;
 
 public class HexUtils {
@@ -45,5 +47,13 @@ public class HexUtils {
 
     public static byte[] fromBase64(Object base64) {
         return Base64.getDecoder().decode((String) base64);
+    }
+
+    public static String sha256Hex(String input) {
+        try {
+            return bytesToHex(MessageDigest.getInstance("SHA-256").digest(input.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            return "error";
+        }
     }
 }

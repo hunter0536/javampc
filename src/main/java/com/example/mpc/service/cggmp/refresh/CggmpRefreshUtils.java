@@ -3,7 +3,7 @@ package com.example.mpc.service.cggmp.refresh;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.CggmpRefreshTask;
+import com.example.mpc.dto.CggmpRefreshTask;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
@@ -13,6 +13,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * CGGMP密钥刷新工具类
+ * 提供刷新协议的上下文构建和哈希计算方法
+ */
 public final class CggmpRefreshUtils {
     private CggmpRefreshUtils() {
     }

@@ -1,4 +1,4 @@
-package com.example.mpc.model;
+package com.example.mpc.dto;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class Gg20SignatureTask {
+public class CggmpSignatureTask {
     public final String taskId;
     public final String message;
     public final String groupPublicKey;
@@ -119,11 +119,11 @@ public class Gg20SignatureTask {
     public volatile String errorMessage;
     public final AtomicReference<TaskStatus> status = new AtomicReference<>(TaskStatus.PENDING);
 
-    public Gg20SignatureTask(String taskId, String message, String groupPublicKey, int nodesCount, int threshold, int initiatorId) {
+    public CggmpSignatureTask(String taskId, String message, String groupPublicKey, int nodesCount, int threshold, int initiatorId) {
         this(taskId, message, groupPublicKey, nodesCount, threshold, initiatorId, null);
     }
 
-    public Gg20SignatureTask(String taskId, String message, String groupPublicKey, int nodesCount, int threshold, int initiatorId, Set<Integer> participantsOverride) {
+    public CggmpSignatureTask(String taskId, String message, String groupPublicKey, int nodesCount, int threshold, int initiatorId, Set<Integer> participantsOverride) {
         this.taskId = taskId;
         this.message = message;
         this.groupPublicKey = groupPublicKey;

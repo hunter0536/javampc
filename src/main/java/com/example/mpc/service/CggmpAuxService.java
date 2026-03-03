@@ -8,8 +8,8 @@ import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.AuxInfoDao;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.enums.TaskStatus;
-import com.example.mpc.model.AuxInfo;
-import com.example.mpc.model.CggmpAuxTask;
+import com.example.mpc.dto.AuxInfo;
+import com.example.mpc.dto.CggmpAuxTask;
 import com.example.mpc.service.cggmp.auxiliary.CggmpAuxMessageDispatcher;
 import com.example.mpc.service.cggmp.auxiliary.CggmpAuxMessageHandler;
 import com.example.mpc.service.cggmp.auxiliary.CggmpAuxProtocolHandler;
@@ -35,6 +35,10 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * CGGMP辅助密钥生成服务
+ * 负责生成Paillier公钥和Pedersen承诺所需的密钥材料
+ */
 @Service
 public class CggmpAuxService implements NodeService.MessageHandler {
     public static final Logger logger = LoggerFactory.getLogger(CggmpAuxService.class);

@@ -254,5 +254,5 @@ sk = Σ_{j=1}^{n} a₀_j
 ## 代码参考
 
 - 服务实现: [GennaroDkgService.java](../src/main/java/com/example/mpc/service/GennaroDkgService.java)
-- 任务模型: [GennaroDkgTask.java](../src/main/java/com/example/mpc/model/GennaroDkgTask.java)
+- 任务模型: [GennaroDkgTask.java](../src/main/java/com/example/mpc/dto/GennaroDkgTask.java)
 - 消息类型: [MessageType.java](../src/main/java/com/example/mpc/enums/MessageType.java)

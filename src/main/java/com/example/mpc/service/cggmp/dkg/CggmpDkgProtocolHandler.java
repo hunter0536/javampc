@@ -6,8 +6,8 @@ import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.AuxInfo;
-import com.example.mpc.model.CggmpDkgTask;
+import com.example.mpc.dto.AuxInfo;
+import com.example.mpc.dto.CggmpDkgTask;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -29,6 +29,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * CGGMP DKG协议处理器
+ * 负责执行DKG的Round 1-4，完成分布式密钥生成流程
+ */
 public final class CggmpDkgProtocolHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpDkgProtocolHandler.class);
     private static final ExecutorService dkgExecutorService = CggmpDkgService.dkgExecutorService;
@@ -39,6 +43,9 @@ public final class CggmpDkgProtocolHandler {
         this.svc = svc;
     }
 
+    /**
+     * 启动DKG协议执行流程
+     */
     public CompletableFuture<Void> startDkgProcessInternal(String taskId, boolean broadcastInit) {
         logger.info("=================== startDkgProcess START: taskId={} ===================", taskId);
         final long dkgStartNs = System.nanoTime();
@@ -125,6 +132,9 @@ public final class CggmpDkgProtocolHandler {
         });
     }
 
+    /**
+     * 验证所有节点都参与
+     */
     private boolean validateFullParticipation(CggmpDkgTask task) {
         if (task == null || task.participants == null) {
             return false;
@@ -140,6 +150,9 @@ public final class CggmpDkgProtocolHandler {
         return true;
     }
 
+    /**
+     * 执行DKG各轮次协议（阈值模式和非阈值模式）
+     */
     private CompletableFuture<Void> executeDkgRounds(CggmpDkgTask task) {
         final long roundsStart = System.nanoTime();
         if (task.nonThreshold) {
@@ -319,6 +332,9 @@ public final class CggmpDkgProtocolHandler {
                         (System.nanoTime() - roundsStart) / 1_000_000));
     }
 
+    /**
+     * 执行非阈值模式DKG协议
+     */
     private CompletableFuture<Void> executeDkgRoundsNonThreshold(CggmpDkgTask task) {
         logger.info("Node {} executing CGGMP24 DKG Round 1 (n-of-n)", svc.nodeId);
         return CompletableFuture.supplyAsync(() -> {
@@ -425,6 +441,9 @@ public final class CggmpDkgProtocolHandler {
                 }, dkgExecutorService));
     }
 
+    /**
+     * 异步等待CountDownLatch
+     */
     private CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds);
         CompletableFuture<Void> future = new CompletableFuture<>();
@@ -441,6 +460,9 @@ public final class CggmpDkgProtocolHandler {
         return future;
     }
 
+    /**
+     * 等待DKG任务的Latch
+     */
     private CompletableFuture<Void> waitForDkgLatch(CggmpDkgTask task, CountDownLatch latch, String label) {
         return waitForLatchAsync(latch, Constants.DKG_ROUND_TIMEOUT_SECONDS, label)
                 .exceptionally(ex -> {
@@ -449,6 +471,9 @@ public final class CggmpDkgProtocolHandler {
                 });
     }
 
+    /**
+     * 确保本地辅助密钥已就绪
+     */
     private CompletableFuture<Void> ensureLocalAuxReady() {
         boolean hasAux = loadLatestAuxInfo(svc.nodeId) != null;
         if (!hasAux) {

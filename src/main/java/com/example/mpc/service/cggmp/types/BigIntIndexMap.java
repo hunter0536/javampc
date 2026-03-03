@@ -5,8 +5,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * BigInteger的索引Map，用于存储按节点ID索引的大整数
+ */
 public record BigIntIndexMap(Map<Integer, BigInteger> values) {
 
+    /**
+     * 创建空的BigInt索引Map
+     */
     public static BigIntIndexMap empty() {
         return new BigIntIndexMap(Map.of());
     }

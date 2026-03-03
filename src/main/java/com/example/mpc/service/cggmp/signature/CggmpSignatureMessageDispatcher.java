@@ -10,6 +10,10 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+/**
+ * CGGMP签名消息调度器
+ * 负责将签名相关消息路由到对应的处理器
+ */
 public final class CggmpSignatureMessageDispatcher {
     private static final Logger logger = LoggerFactory.getLogger(CggmpSignatureMessageDispatcher.class);
     private final CggmpSignatureService svc;
@@ -35,7 +39,7 @@ public final class CggmpSignatureMessageDispatcher {
                 Object data = message.data();
                 logger.info("=== CGGMP processing: type={} ===", message.type());
                 switch (message.type()) {
-                    case GG20_SIGN_INIT:
+                    case CGGMP_SIGN_INIT:
                     case CGGMP_SIGN_OFFLINE_INIT:
                         svc.offlineHandler.handleCggmpSignOfflineInit(senderId, data);
                         break;

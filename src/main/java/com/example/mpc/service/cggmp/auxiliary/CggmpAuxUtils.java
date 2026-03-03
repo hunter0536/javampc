@@ -1,7 +1,7 @@
 package com.example.mpc.service.cggmp.auxiliary;
 
-import com.example.mpc.model.AuxInfo;
-import com.example.mpc.model.CggmpAuxTask;
+import com.example.mpc.dto.AuxInfo;
+import com.example.mpc.dto.CggmpAuxTask;
 import com.example.mpc.service.CggmpAuxService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +12,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * CGGMP辅助密钥工具类
+ * 提供辅助密钥协议的通用方法
+ */
 public final class CggmpAuxUtils {
     private static final Logger logger = LoggerFactory.getLogger(CggmpAuxUtils.class);
 

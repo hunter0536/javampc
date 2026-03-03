@@ -6,8 +6,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * ECPoint的索引Map，用于存储按节点ID索引的椭圆曲线点
+ */
 public record ECPointIndexMap(Map<Integer, ECPoint> values) {
 
+    /**
+     * 创建空的ECPoint索引Map
+     */
     public static ECPointIndexMap empty() {
         return new ECPointIndexMap(Map.of());
     }

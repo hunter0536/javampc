@@ -2,7 +2,7 @@
 
 ## 概述
 
-本文档详细描述了CGGMP门限签名协议的完整计算流程，包括每个阶段的本地计算、广播数据、验证过程和数学公式。
+本文档详细描述了CGGMP门限签名协议的完整计算流程，包括每个阶段的本地计算、广播数据、验证过程和数学公式。本文档基于实际代码实现编写。
 
 ## 总览
 
@@ -12,12 +12,17 @@
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  离线阶段 (Offline Phase):                                                   │
-│  ├── Round 1: 生成随机数、加密、承诺                                          │
-│  ├── Round 2: MtA协议、证明                                                   │
-│  └── Round 3: 计算中间值、聚合                                                │
+│  ├── Round 1: 生成随机数、加密、承诺、广播Paillier公钥和ZKSetup              │
+│  ├── R1-Echo: 可选的承诺确认机制                                             │
+│  ├── Round 2: MtA协议(P2P)、生成PiAffGProof、广播PiLogProof                 │
+│  ├── Round 3: 计算delta_i/chi_i、聚合Gamma、广播PiLogProof                   │
+│  └── finalizePresign: 验证并生成Presignature                                │
 │                                                                              │
 │  在线阶段 (Online Phase):                                                    │
-│  └── 计算签名份额、聚合签名                                                   │
+│  ├── Gamma-Commit: 广播Gamma承诺                                             │
+│  ├── Gamma-Open: 打开Gamma承诺                                               │
+│  ├── 计算签名份额sigma_i                                                     │
+│  └── 聚合签名、验证、生成最终签名                                             │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -36,7 +41,7 @@
 | k_i | 节点i的随机数份额 |
 | m | 消息哈希 |
 | N | Paillier模数 |
-| Ñ | ZKSetup模数 |
+| Ñ | ZKSetup模数 |
 | Enc(m) | Paillier加密 |
 
 ---
@@ -51,99 +56,69 @@
 • x_i: 私钥份额 (DKG生成)
 • X_i = G × x_i: 公钥份额
 • Paillier密钥对 (N, p, q)
-• ZKSetup参数 (Ñ, s, t)
+• ZKSetup参数 (Ñ, h1, h2)
 ```
 
 #### 计算过程
 
-```
+```java
+// 代码实现: CggmpSignatureOfflineHandler.java runOfflinePhase()
+
 1. 生成随机数:
-   k_i ← Z_q (随机选择)
-   gamma_i ← Z_q (随机选择)
+   k_i ← Z_q (随机选择，非零)
+   gamma_i ← Z_q (随机选择，非零)
 
 2. 计算椭圆曲线点:
-   K_i = G × k_i
    Gamma_i = G × gamma_i
 
-3. Paillier加密:
-   encK = Enc(k_i) = (1+N)^k_i × r^N mod N²
-   encG = Enc(gamma_i) = (1+N)^gamma_i × r'^N mod N²
-
-4. 生成承诺随机数 (Pedersen承诺方案):
-   y_i ← Z_q (随机选择，承诺基点的秘密值)
+3. 生成承诺随机数:
+   y_i ← Z_q (随机选择，承诺基点)
    a_i ← Z_q (随机选择，k_i承诺的随机数)
    b_i ← Z_q (随机选择，gamma_i承诺的随机数)
 
-5. 计算承诺点 (类似Pedersen承诺结构):
-   Y_i = G × y_i                           // 承诺基点
-   
-   // 对k_i的承诺 (嵌入秘密值k_i)
-   A1 = G × a_i                            // Pedersen承诺第一部分
-   A2 = Y_i × a_i + G × k_i                // Pedersen承诺第二部分，嵌入k_i
-        = G × (y_i × a_i + k_i)            // 展开形式
-   
-   // 对gamma_i的承诺 (嵌入秘密值gamma_i)
-   B1 = G × b_i                            // Pedersen承诺第一部分
-   B2 = Y_i × b_i + G × gamma_i            // Pedersen承诺第二部分，嵌入gamma_i
-        = G × (y_i × b_i + gamma_i)        // 展开形式
+4. 计算承诺点:
+   Y_i = G × y_i                                    // 承诺基点
+   A1 = G × a_i                                     // Pedersen承诺第一部分
+   A2 = Y_i × a_i + G × k_i = G × (y_i × a_i + k_i) // 嵌入k_i
+   B1 = G × b_i                                     // Pedersen承诺第一部分
+   B2 = Y_i × b_i + G × gamma_i = G × (y_i × b_i + gamma_i) // 嵌入gamma_i
+
+5. Paillier加密 (使用随机数r):
+   encK = task.paillier.encryptWithRandomness(k_i)
+   encG = task.paillier.encryptWithRandomness(gamma_i)
+   K = encK.c()   // 加密值
+   G = encG.c()   // 加密值
+   r_K = encK.r() // 随机数
+   r_G = encG.r() // 随机数
 
 6. 生成零知识证明:
-   PiEncElgProof(K): 证明encK中的k_i在有效范围内，同时证明知道承诺中的k_i和a_i
-   PiEncElgProof(G): 证明encG中的gamma_i在有效范围内，同时证明知道承诺中的gamma_i和b_i
+   PiEncElgProof(K): 使用参数(A1, Y_i, A2, k_i, r_K, a_i, y_i)
+   PiEncElgProof(G): 使用参数(B1, Y_i, B2, gamma_i, r_G, b_i, y_i)
+
+   证明内容:
+   - k_i, gamma_i ∈ [0, q) 范围证明
+   - 加密值与承诺点的一致性证明
+
+7. 本地验证 (发送前):
+   验证本地生成的PiEncElgProof是否正确
+   如果验证失败，记录错误信息但继续广播（允许其他节点投诉）
 ```
 
-#### 承诺方案详解
+#### 存储数据
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Pedersen承诺结构                                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  参数:                                                                       │
-│  • G: 椭圆曲线生成元 (公开)                                                  │
-│  • Y_i = G × y_i: 承诺基点 (y_i 是秘密，只有节点i知道)                        │
-│                                                                              │
-│  对k_i的承诺:                                                                │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │ Com(k_i) = (A1, A2)                                                   │   │
-│  │                                                                     │   │
-│  │ A1 = G × a_i                        // 随机掩码部分                   │   │
-│  │ A2 = Y_i × a_i + G × k_i            // 嵌入秘密值                     │   │
-│  │     = G × (y_i × a_i + k_i)         // 展开形式                       │   │
-│  │                                                                     │   │
-│  │ 承诺绑定: 知道 a_i 和 y_i 才能打开承诺                                 │   │
-│  │ 承诺隐藏: 只看 A1, A2 无法知道 k_i 的值                                │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  对gamma_i的承诺:                                                            │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │ Com(gamma_i) = (B1, B2)                                               │   │
-│  │                                                                     │   │
-│  │ B1 = G × b_i                        // 随机掩码部分                   │   │
-│  │ B2 = Y_i × b_i + G × gamma_i        // 嵌入秘密值                     │   │
-│  │     = G × (y_i × b_i + gamma_i)     // 展开形式                       │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  安全性质:                                                                   │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │ 1. 隐藏性: 只看承诺点无法知道 k_i 或 gamma_i 的值                      │   │
-│  │ 2. 绑定性: 一旦广播承诺，无法更改 k_i 或 gamma_i 的值                  │   │
-│  │ 3. 零知识性: PiEncElgProof证明知道秘密值，但不泄露                     │   │
-│  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-#### 承诺随机数的后续使用
-
-```
-存储的随机数用于后续轮次的证明:
-
-• y_i → task.presignYScalar    // 用于验证承诺一致性
-• a_i → task.presignAScalar    // 用于 Round 3 的 PiLogProof
-• b_i → task.presignBScalar    // 用于 Round 2 的 PiLogProof
-
-这些随机数必须保密，泄露会导致秘密值 k_i 和 gamma_i 被推断。
+```java
+task.k_i = k_i;
+task.presignGamma.put(svc.nodeId, Gamma_i);
+task.presignYScalar = y_i;      // 存储用于后续验证
+task.presignAScalar = a_i;
+task.presignBScalar = b_i;
+task.presignY.put(svc.nodeId, Y_i);
+task.presignA1.put(svc.nodeId, A1);
+task.presignA2.put(svc.nodeId, A2);
+task.presignB1.put(svc.nodeId, B1);
+task.presignB2.put(svc.nodeId, B2);
+task.presignK.put(svc.nodeId, K);
+task.presignG.put(svc.nodeId, G);
 ```
 
 ### 1.2 广播数据
@@ -152,42 +127,73 @@
 
 ```json
 {
-  "encK": "Enc(k_i)",           // Paillier加密的k_i
-  "encG": "Enc(gamma_i)",       // Paillier加密的gamma_i
-  "Gamma_i": "ECPoint",         // G × gamma_i
-  "A1": "ECPoint",              // 承诺点
-  "A2": "ECPoint",              // 承诺点
-  "B1": "ECPoint",              // 承诺点
-  "B2": "ECPoint",              // 承诺点
-  "Y_i": "ECPoint",             // 聚合承诺点
-  "encElgK": "PiEncElgProof",   // k的范围证明
-  "encElgG": "PiEncElgProof"    // gamma的范围证明
+  "signatureTaskId": "task-uuid",
+  "senderId": 1,
+  "K": "hex-encoded",           // Paillier加密的k_i
+  "G": "hex-encoded",           // Paillier加密的gamma_i
+  "Y": "hex-encoded-ecpoint",   // G × y_i
+  "A1": "hex-encoded-ecpoint",  // 承诺点
+  "A2": "hex-encoded-ecpoint",  // 承诺点
+  "B1": "hex-encoded-ecpoint",  // 承诺点
+  "B2": "hex-encoded-ecpoint", // 承诺点
+  "encElgProofK": {             // PiEncElgProof (k_i)
+    "S": "hex", "T": "hex", "D": "hex",
+    "Y": "hex-ecpoint", "Z": "hex-ecpoint",
+    "z1": "hex", "z2": "hex", "z3": "hex", "w": "hex"
+  },
+  "encElgProofG": { ... },      // PiEncElgProof (gamma_i)
+  "paillierPublicKey": {        // Paillier公钥
+    "n": "hex", "nsquare": "hex", "g": "hex", "bitLength": 2048
+  },
+  "zkSetup": {                  // ZKSetup参数
+    "hatN": "hex", "h1": "hex", "h2": "hex"
+  },
+  "auxParams": { ... }          // 辅助参数
 }
 ```
 
 ### 1.3 验证过程
 
-#### 验证方程
+```java
+// 代码: CggmpSignatureMessageHandler.handleCggmpSignPresignR1()
 
+1. 接收并存储所有节点的R1数据:
+   peerPaillierKeys.put(senderId, paillierPublicKey);
+   peerZkSetups.put(senderId, zkSetup);
+   presignK.put(senderId, K);
+   presignG.put(senderId, G);
+   presignGamma.put(senderId, Gamma_i);
+   presignY.put(senderId, Y_i);
+   presignA1.put(senderId, A1);
+   presignA2.put(senderId, A2);
+   presignB1.put(senderId, B1);
+   presignB2.put(senderId, B2);
+
+2. 验证PiEncElgProof:
+   verifyEncElgProof(encElgProofK, pk, zk, G, A1, Y_i, A2, K)
+   verifyEncElgProof(encElgProofG, pk, zk, G, B1, Y_i, B2, G)
+
+3. 记录验证结果 (允许继续流程，即使验证失败):
+   // 验证失败会记录日志，但不会立即中止
+   // 后续可以通过投诉机制处理
 ```
-1. 验证PiEncElgProof:
-   verify(encElgK) → 证明k_i ∈ [0, q)，同时证明知道承诺中的k_i和a_i
-   verify(encElgG) → 证明gamma_i ∈ [0, q)，同时证明知道承诺中的gamma_i和b_i
 
-2. PiEncElgProof验证内容:
-   验证加密值与承诺点的一致性:
-   • encK 中的 k_i 与 A2 中嵌入的 k_i 是同一个值
-   • encG 中的 gamma_i 与 B2 中嵌入的 gamma_i 是同一个值
-   • 承诺点 A1, A2, B1, B2, Y_i 的代数关系正确
-```
+### 1.4 R1-Echo (可选确认)
 
-#### 存储数据
+```java
+// 如果启用 presignEchoEnabled
 
-```
-• peerEncK[j] = encK from node j
-• peerEncG[j] = encG from node j
-• peerGamma[j] = Gamma_j from node j
-• peerY[j] = Y_j from node j
+1. 计算R1数据的哈希:
+   hash = SHA256(JsonUtils.toJson(r1Data))
+
+2. 广播R1-Echo:
+   {
+     "signatureTaskId": "task-uuid",
+     "senderId": 1,
+     "hash": "sha256-hash"
+   }
+
+3. 等待所有节点的Echo，确认共识
 ```
 
 ---
@@ -200,70 +206,88 @@
 
 ```
 • k_i, gamma_i: 本地随机数
-• x_i: 私钥份额
-• peerEncK[j]: 其他节点的Enc(k_j)
-• peerEncG[j]: 其他节点的Enc(gamma_j)
+• x_i: 私钥份额 (乘以拉格朗日系数lambda_i)
+• peerPaillierKeys: 其他节点的Paillier公钥
+• peerPresignK: 其他节点的Enc(k_j)
+• Gamma_i = G × gamma_i
 ```
 
 #### 计算过程
 
-**1. MtA-KA协议 (计算 k × gamma)**
+```java
+// 代码: CggmpSignatureOfflineHandler runOfflinePhase() -> R2部分
+
+1. 计算本地私钥份额:
+   x_i_raw = loadLocalShare(groupPublicKey)
+   lambda_i = computeSignatureLagrange(task, nodeId, curveOrder)
+   x_i = x_i_raw.multiply(lambda_i).mod(curveOrder)
+
+2. 对每个其他节点j执行MtA协议:
+   // MtA-KA: 计算 k_i × gamma_j (通过j的Paillier公钥)
+   for (peerId : participants) {
+     if (peerId == nodeId) continue;
+
+     pk_j = peerPaillierKeys.get(peerId);
+     K_j = peerPresignK.get(peerId);
+
+     // 生成随机掩码
+     beta = randomNonZero(curveOrder)
+     betaHat = randomNonZero(curveOrder)
+
+     // 计算 D_ji = Enc(k_j)^gamma_i × Enc(beta) = Enc(k_j × gamma_i + beta)
+     // 代码: pk_j.multiply(K_peer, ctx.gamma_i()).multiply(encNegBeta.c())
+     D_ji = pk_j.multiply(K_j, gamma_i).multiply(encNegBeta.c()).mod(n^2)
+
+     // 计算 F_ji = Enc(beta) 用于后续解密
+     F_ji = encrypt(beta)
+
+     // MtA-X: 计算 k_j × x_i
+     Dhat_ji = pk_j.multiply(K_j, x_i).multiply(encNegBetaHat.c()).mod(n^2)
+     Fhat_ji = encrypt(betaHat)
+
+     // 生成PiAffGProof证明
+     proof = createAffGProofNegY(G, Gamma_i, pk_j.n, our_n, K_j, D_ji, F_ji, gamma_i, beta, ...)
+     proofHat = createAffGProofNegY(G, X_i, pk_j.n, our_n, K_j, Dhat_ji, Fhat_ji, x_i, betaHat, ...)
+   }
+```
+
+#### MtA协议详解
 
 ```
-作为发起方 (对节点j):
+目标: 节点i和节点j共同计算 a × b = alpha + beta
+
+发起方(i, 持有k_i):
   cA = Enc(k_i)
-  发送 cA + 范围证明给节点j
+  发送 cA 给响应方j
 
-作为响应方 (对节点j的请求):
-  收到 Enc(k_j) from node j
-  生成随机掩码 y
-  D_ji = Enc(k_j)^gamma_i × Enc(y) = Enc(k_j × gamma_i + y)
-  F_ji = Enc(y)
-  beta_ji = -y
-  发送 D_ji, F_ji + PiAffGProof 给节点j
+响应方(j, 持有a_j):
+  生成随机掩码 beta
+  cB = cA^a_j × Enc(beta) = Enc(k_i × a_j + beta)
+  发送 cB 给发起方i
 
-收到响应后:
-  alpha_ij = Dec(D_ij) = k_i × gamma_j + y
-  // beta_ji 来自节点j
+发起方i:
+  alpha = Dec(cB) = k_i × a_j + beta
+  (响应方j持有beta)
+
+结果: alpha + beta = k_i × a_j ✓
 ```
 
-**2. MtA-X协议 (计算 k × x)**
+### 2.2 广播数据
 
-```
-类似MtA-KA，但使用:
-  发起方: Enc(k_i)
-  响应方: x_j (私钥份额)
-  结果: alpha'_ij + beta'_ji = k_i × x_j
-```
+#### P2P消息
 
-**3. 计算中间值**
+直接发送给对应节点:
 
-```
-delta_i = k_i × gamma_i + Σ_alpha_ij + Σ_beta_ji
-chi_i = k_i × x_i + Σ_alpha'_ij + Σ_beta'_ji
-```
-
-**4. 生成PiLogProof**
-
-```
-证明知道gamma_i使得 Gamma_i = G × gamma_i
-```
-
-### 2.2 广播/点对点数据
-
-#### 点对点消息
-
-**消息类型**: `CGGMP_PRESIGN_R2_P2P`
-
-发送给节点j:
 ```json
 {
-  "D_ji": "Enc(k_j × gamma_i + y)",    // MtA-KA响应
-  "F_ji": "Enc(y)",                    // 掩码加密
-  "Dhat_ji": "Enc(k_j × x_i + y')",    // MtA-X响应
-  "Fhat_ji": "Enc(y')",                // 掩码加密
-  "affGProof": "PiAffGProof",          // 仿射变换证明
-  "affGProofX": "PiAffGProof"          // MtA-X的仿射变换证明
+  "targetId": 2,
+  "signatureTaskId": "task-uuid",
+  "D_ji": "hex-encoded",
+  "F_ji": "hex-encoded",
+  "Dhat_ji": "hex-encoded",
+  "Fhat_ji": "hex-encoded",
+  "affGProof": { "A": [...], "B": [...], ... },
+  "affGProofHat": { ... }
 }
 ```
 
@@ -273,25 +297,43 @@ chi_i = k_i × x_i + Σ_alpha'_ij + Σ_beta'_ji
 
 ```json
 {
-  "logProof": "PiLogProof",    // 离散对数证明
-  "Y_i_r2": "ECPoint",         // R2承诺点
-  "B1_r2": "ECPoint",          // R2承诺点
-  "B2_r2": "ECPoint"           // R2承诺点
+  "signatureTaskId": "task-uuid",
+  "senderId": 1,
+  "Gamma": "hex-encoded-ecpoint",    // G × gamma_i
+  "D": { "2": "hex", "3": "hex", ... },   // D_ji map
+  "Dhat": { "2": "hex", "3": "hex", ... },
+  "F": { "2": "hex", "3": "hex", ... },
+  "Fhat": { "2": "hex", "3": "hex", ... },
+  "affGProofs": { "2": {...}, "3": {...}, ... },
+  "affGProofsHat": { ... },
+  "logProof": { "U1": "...", "U2": "...", "z1": "...", "z2": "..." },
+  "X": "hex-encoded-ecpoint"  // G × x_i × lambda_i
 }
 ```
 
 ### 2.3 验证过程
 
-#### 验证方程
+```java
+// 代码: handleCggmpSignPresignR2()
 
-```
-1. 验证PiAffGProof:
-   验证 D = C^x × Enc(y) 的正确性
-   其中 C = Enc(k_j), x = gamma_i, y = 掩码
+1. 接收并解密:
+   for (peerId : peerIds) {
+     // 从peerId接收P2P消息，包含D_ij, F_ij等
+     // 使用本地Paillier私钥解密
+     alpha = decrypt(D_ij)
+     alphaHat = decrypt(Dhat_ij)
 
-2. 验证PiLogProof:
-   验证证明者知道gamma_j使得 Gamma_j = G × gamma_j
-   Schnorr验证: g^z = A × Y^e mod p
+     // 存储beta (来自发送方广播的F_ij)
+     // 注意: beta = -y，其中y是响应方生成的掩码
+   }
+
+2. 验证PiAffGProof:
+   verifyAffGProof(proof, G, Gamma_i, pk.n, K_peer, D_ji, F_ji)
+   verifyAffGProof(proofHat, G, X_i, pk.n, K_peer, Dhat_ji, Fhat_ji)
+
+3. 验证PiLogProof:
+   // 证明Gamma_i = G × gamma_i
+   verifyLogProof(logProof, G, G, Gamma_i, Y_i, B1, B2)
 ```
 
 ---
@@ -300,27 +342,38 @@ chi_i = k_i × x_i + Σ_alpha'_ij + Σ_beta'_ji
 
 ### 3.1 本地计算
 
-#### 输入数据
+```java
+// 代码: continuePresignAfterR2()
 
-```
-• k_i, gamma_i: 本地随机数
-• delta_i, chi_i: Round 2计算的中间值
-• peerGamma[j]: 其他节点的Gamma_j
-• X = G × x: 聚合公钥
-```
+1. 收集所有节点的D和beta，计算中间值:
+   delta_i = k_i × gamma_i
+   chi_i = x_i × k_i
 
-#### 计算过程
+   for (peerId : peerIds) {
+     D_ij = task.presignD.get(peerId)
+     Dhat_ij = task.presignDhat.get(peerId)
+     beta = task.presignBeta.get(peerId)
+     betaHat = task.presignBetaHat.get(peerId)
 
-```
-1. 计算聚合Gamma:
-   Gamma = Σ Gamma_j = G × Σ gamma_j = G × gamma
+     // 解密MtA结果
+     alpha = decrypt(D_ij)
+     alphaHat = decrypt(Dhat_ij)
+
+     // 累加
+     delta_i += alpha + beta
+     chi_i += alphaHat + betaHat
+   }
+   delta_i = delta_i mod q
+   chi_i = chi_i mod q
 
 2. 计算椭圆曲线点:
+   Gamma = sum(peerPresignGamma)  // 聚合Gamma
    Delta_i = Gamma × k_i
    S_i = Gamma × chi_i
 
 3. 生成PiLogProof:
-   证明知道k_i使得 Delta_i = Gamma × k_i
+   // 证明Delta_i = Gamma × k_i
+   logProofR3 = createLogProof(G, Gamma, Delta_i, Y_i, A1, A2, k_i, a_i)
 ```
 
 ### 3.2 广播数据
@@ -329,220 +382,251 @@ chi_i = k_i × x_i + Σ_alpha'_ij + Σ_beta'_ji
 
 ```json
 {
-  "delta_i": "BigInteger",     // k_i × gamma_i 的份额
-  "Delta_i": "ECPoint",        // Gamma × k_i
-  "S_i": "ECPoint",            // Gamma × chi_i
-  "logProof": "PiLogProof"     // 离散对数证明
+  "signatureTaskId": "task-uuid",
+  "senderId": 1,
+  "delta": "hex-encoded",           // k_i × gamma_i + sum(alpha + beta)
+  "Delta": "hex-encoded-ecpoint",  // Gamma × k_i
+  "S": "hex-encoded-ecpoint",      // Gamma × chi_i
+  "logProof": { "U1": "...", "U2": "...", "z1": "...", "z2": "..." }
 }
 ```
 
 ### 3.3 验证过程
 
-#### 验证方程
+```java
+// 代码: finalizePresign()
 
-```
-1. 验证PiLogProof:
-   验证证明者知道k_j使得 Delta_j = Gamma × k_j
+1. 聚合delta:
+   delta = sum(peerDeltas)
 
-2. 验证点一致性:
-   收集所有delta_i后: delta = Σ delta_i
-   验证: G × delta = Σ Delta_i
-```
+2. 验证delta:
+   left = G × delta
+   right = sum(Delta_i)
+   if (left != right) {
+     // 验证失败，广播投诉
+     evidence = buildDecEvidenceDelta(task, gamma_i, delta_i)
+     broadcastComplaint("Presign delta verification failed", evidence)
+     return
+   }
 
-### 3.4 finalizePresign计算
+3. 验证S点:
+   leftS = X × delta
+   rightS = sum(S_i)
+   if (leftS != rightS) {
+     // 验证失败，识别作恶节点
+     identifyMaliciousPeer(...)
+     return
+   }
 
-```
-1. delta = Σ delta_i
-2. deltaInv = delta⁻¹ mod q
-3. kTilde = k_i × deltaInv mod q
-4. chiTilde = chi_i × deltaInv mod q
-5. S̃_j = S_j × deltaInv (对每个节点j)
+4. 计算Presignature:
+   deltaInv = delta^(-1) mod q
+   kTilde = k_i × deltaInv mod q
+   chiTilde = chi_i × deltaInv mod q
+   S̃_i = S_i × deltaInv
 
-Presignature = {Gamma, kTilde, chiTilde}
+5. 存储Presignature:
+   task.presignature = Presignature(Gamma, kTilde, chiTilde)
+   task.presignDeltaTilde.put(nodeId, Delta_i × deltaInv)
+   task.presignSTilde.put(nodeId, S_i × deltaInv)
 ```
 
 ---
 
 ## 四、Online Phase
 
-### 4.1 本地计算
+### 4.1 阶段1: Gamma-Commit (可选)
 
-#### 输入数据
+```java
+// 代码: handleCggmpSignGammaCommit()
 
+1. 计算Gamma_commit:
+   commit = hash(messageHash || Gamma || "GAMMA-COMMIT")
+
+2. 生成EcChaumPedersenProof:
+   证明知道gamma使得 Gamma = G × gamma
+
+3. 广播:
+   {
+     "taskId": "...",
+     "senderId": 1,
+     "commit": "hex-ecpoint",
+     "proofA": "hex-ecpoint",
+     "proofR": "hex",
+     "proofS": "hex"
+   }
 ```
-• m: 消息哈希
-• Presignature: {Gamma, kTilde, chiTilde}
-• S̃_j: 每个节点的验证点
-```
 
-#### 计算过程
+### 4.2 阶段2: 计算签名份额
 
-```
-1. 计算 r:
-   r = Gamma.x mod q  (Gamma点的x坐标)
-   
-   注意: Gamma = G × gamma，而不是 G × k⁻¹
-   这与标准ECDSA不同，但最终签名仍然有效（见下方数学推导）
+```java
+// 代码: runOnlinePhase()
 
-2. 计算签名份额:
-   e = m mod q
-   
+1. 获取Presignature:
+   Gamma = presignature.Gamma()
+   kTilde = presignature.kTilde()
+   chiTilde = presignature.chiTilde()
+
+2. 计算r:
+   r = Gamma.x mod q
+   if (r == 0) restart
+
+3. 处理HD钱包偏移 (可选):
+   if (hdEnabled) {
+     shift = HMAC(chainCode, messageHash) mod q
+     chiTilde = chiTilde + kTilde × shift
+   }
+
+4. 计算消息哈希e:
+   e = Hash(message) mod q
+
+5. 计算签名份额:
    sigma_i = kTilde × e + r × chiTilde mod q
-           = (k_i × delta⁻¹) × m + r × (chi_i × delta⁻¹) mod q
-           = delta⁻¹ × (k_i × m + r × chi_i) mod q
 
-3. 数学推导 (验证与ECDSA的一致性):
-   
-   标准ECDSA签名公式:
-   ┌──────────────────────────────────────────────────────────────────────┐
-   │ R = k × G,  r = R.x                                                  │
-   │ s = k⁻¹ × (m + r × x) mod q                                          │
-    │                                                                      │
-    │ 验证: s⁻¹ × m × G + s⁻¹ × r × X = R                                  │
-   └──────────────────────────────────────────────────────────────────────┘
-   
-   CGGMP签名计算:
-   ┌──────────────────────────────────────────────────────────────────────┐
-   │ Gamma = G × gamma,  r = Gamma.x                                      │
-   │                                                                      │
-   │ 聚合签名份额:                                                         │
-   │ s = Σ sigma_i                                                        │
-    │   = Σ[delta⁻¹ × (k_i × m + r × chi_i)]                              │
-    │   = delta⁻¹ × (m × Σk_i + r × Σchi_i)                               │
-    │   = delta⁻¹ × (m × k + r × k × x)                                   │
-    │   = (k × gamma)⁻¹ × k × (m + r × x)                                 │
-    │   = gamma⁻¹ × (m + r × x)                                           │
-   └──────────────────────────────────────────────────────────────────────┘
-   
-   验证CGGMP签名是有效的ECDSA签名:
-   ┌──────────────────────────────────────────────────────────────────────┐
-    │ u1 = s⁻¹ × m = gamma × (m + r × x)⁻¹ × m                            │
-    │ u2 = s⁻¹ × r = gamma × (m + r × x)⁻¹ × r                            │
-    │                                                                      │
-    │ R' = u1 × G + u2 × X                                                │
-    │    = gamma × (m + r × x)⁻¹ × m × G + gamma × (m + r × x)⁻¹ × r × x × G │
-    │    = gamma × (m + r × x)⁻¹ × (m + r × x) × G                        │
-    │    = gamma × G                                                      │
-    │    = Gamma                                                          │
-    │                                                                      │
-    │ R'.x = Gamma.x = r ✓                                                │
-   └──────────────────────────────────────────────────────────────────────┘
-   
-   结论: CGGMP签名(r, s)是有效的ECDSA签名，只是随机数表示方式不同:
-   • 标准ECDSA: 使用k，R = k × G
-   • CGGMP: 使用gamma，Gamma = G × gamma
-   • 两者都满足ECDSA验证方程
+6. 本地验证份额:
+   if (!verifySigmaShare(task, nodeId, sigma_i)) {
+     fail("Local signature share verification failed")
+   }
+
+7. 广播sigma_i:
+   发送给签名发起方
 ```
 
-### 4.2 发送数据
+### 4.3 签名份额验证
 
-**消息类型**: `CGGMP_SIGN_S_SHARE`
+```java
+// 代码: verifySigmaShare()
 
-发送内容 (非发起方发送给发起方):
-```json
-{
-  "sigma_i": "BigInteger"   // 签名份额 s_i
-}
-```
-
-### 4.3 验证过程
-
-#### 验证方程
-
-```
-对每个签名份额 sigma_j:
-
-  验证: Gamma × sigma_j = DeltaTilde_j × m + STilde_j × r
+验证方程:
+  Gamma × sigma_i = DeltaTilde_i × e + STilde_i × r
 
 其中:
-  • Gamma = G × gamma (聚合的Gamma点)
-  • DeltaTilde_j = Delta_j × delta⁻¹
-  • STilde_j = S_j × delta⁻¹
-  • m = 消息哈希
-  • r = Gamma.x mod q
+  DeltaTilde_i = Delta_i × delta^(-1)
+  STilde_i = S_i × delta^(-1)
 
-验证方程推导:
-  左边 = Gamma × sigma_j
-       = G × gamma × delta⁻¹ × (k_j × m + r × chi_j)
-       = G × gamma × delta⁻¹ × k_j × m + G × gamma × delta⁻¹ × chi_j × r
-  
-  右边 = DeltaTilde_j × m + STilde_j × r
-       = (Delta_j × delta⁻¹) × m + (S_j × delta⁻¹) × r
-       = (Gamma × k_j × delta⁻¹) × m + (Gamma × chi_j × delta⁻¹) × r
-       = Gamma × k_j × delta⁻¹ × m + Gamma × chi_j × delta⁻¹ × r
-       = G × gamma × k_j × delta⁻¹ × m + G × gamma × chi_j × delta⁻¹ × r
-  
-  左边 = 右边 ✓
-
-代码实现:
-  left = Gamma × sigma_j
-  right = DeltaTilde_j × m + STilde_j × r
-  验证: left == right
+验证:
+  left = Gamma.multiply(sigma_i)
+  right = DeltaTilde.multiply(e).add(sTilde.multiply(r))
+  return left.equals(right.normalize())
 ```
 
-#### 聚合签名
+### 4.4 最终签名聚合
 
-```
-s = Σ sigma_i mod q
+```java
+// 代码: finalizeSignatureAsInitiator()
 
-最终签名: (r, s)
+1. 收集所有sigma_i:
+   sShares.put(senderId, sigma_i)
 
-验证完整签名 (标准ECDSA验证):
-  u1 = s⁻¹ × m mod q
-  u2 = s⁻¹ × r mod q
-  R' = u1 × G + u2 × X
-  验证: R'.x mod q = r
+2. 验证所有份额:
+   offenders = []
+   for (peerId : participants) {
+     if (!verifySigmaShare(task, peerId, sShares.get(peerId))) {
+       offenders.add(peerId)
+     }
+   }
+   if (!offenders.isEmpty()) {
+     broadcastComplaint("Invalid signature share", ...)
+     return
+   }
 
-代码实现:
-  s = sumShares(sShares, curveOrder)
-  // 规范化: 如果s > q/2，则s = q - s
-  if (s > curveOrder/2) {
-      s = curveOrder - s
-  }
-  // DER编码签名
-  signature = DER_encode(r, s)
-  // 验证签名
-  verified = verifySignature(publicKey, messageHash, r, s)
+3. 聚合签名:
+   s = sum(sShares) mod q
+
+4. 规范化s (防止R=0签名):
+   if (s > q/2) {
+     s = q - s
+   }
+
+5. DER编码:
+   der = DER_encode(r, s)
+
+6. 最终验证:
+   verified = verifySignature(publicKey, messageHash, r, s, domain)
+
+7. 输出:
+   signature = Base64(der)
 ```
 
 ---
 
-## 五、完整数据流总结
+## 五、完整数据流图
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    完整数据流                                                 │
+│                    CGGMP签名完整数据流                                         │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│  Round 1:                                                                    │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │ 计算: k_i, gamma_i, K_i, Gamma_i, encK, encG, 承诺, PiEncElgProof     │   │
-│  │ 广播: encK, encG, Gamma_i, 承诺, PiEncElgProof                         │   │
-│  │ 验证: PiEncElgProof, 承诺一致性                                         │   │
+│  │ Round 1 (Offline):                                                     │   │
+│  │                                                                        │   │
+│  │  Local: k_i, gamma_i, Gamma_i, encK, encG, commitments, proofs       │   │
+│  │  ─────────────────────────────────────────────────────────────────── │   │
+│  │  Broadcast: CGGMP_PRESIGN_R1                                          │   │
+│  │    ├── encK, encG (Paillier加密)                                       │   │
+│  │    ├── Gamma_i, Y_i, A1, A2, B1, B2 (椭圆曲线点)                       │   │
+│  │    ├── PiEncElgProof (k), PiEncElgProof (gamma)                       │   │
+│  │    ├── Paillier公钥, ZKSetup                                          │   │
+│  │    └── auxParams                                                       │   │
+│  │                                                                        │   │
+│  │  Echo (optional): CGGMP_PRESIGN_R1_ECHO (SHA256 hash)                │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  Round 2:                                                                    │
+│                                    ↓                                         │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │ 计算: MtA-KA, MtA-X, delta_i, chi_i, PiAffGProof, PiLogProof           │   │
-│  │ P2P: D_ji, F_ji, Dhat_ji, Fhat_ji, PiAffGProof                         │   │
-│  │ 广播: PiLogProof, 承诺                                                 │   │
-│  │ 验证: PiAffGProof, PiLogProof                                          │   │
+│  │ Round 2 (Offline):                                                     │   │
+│  │                                                                        │   │
+│  │  Local: MtA-KA, MtA-X, alpha, alphaHat, beta, betaHat                │   │
+│  │  ─────────────────────────────────────────────────────────────────── │   │
+│  │  P2P (to each peer): CGGMP_PRESIGN_R2_P2P                            │   │
+│  │    ├── D_ji, F_ji (MtA-KA响应)                                        │   │
+│  │    ├── Dhat_ji, Fhat_ji (MtA-X响应)                                  │   │
+│  │    ├── PiAffGProof, PiAffGProofHat                                   │   │
+│  │                                                                        │   │
+│  │  Broadcast: CGGMP_PRESIGN_R2                                          │   │
+│  │    ├── Gamma_i, X_i                                                   │   │
+│  │    ├── D, Dhat, F, Fhat (map per peer)                                │   │
+│  │    ├── affGProofs, affGProofsHat (per peer)                          │   │
+│  │    └── PiLogProof                                                     │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  Round 3:                                                                    │
+│                                    ↓                                         │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │ 计算: Gamma, Delta_i, S_i, PiLogProof                                  │   │
-│  │ 广播: delta_i, Delta_i, S_i, PiLogProof                                │   │
-│  │ 验证: PiLogProof, G × delta = Σ Delta_i                                │   │
-│  │ 输出: Presignature = {Gamma, kTilde, chiTilde}, S̃_i                   │   │
+│  │ Round 3 (Offline):                                                     │   │
+│  │                                                                        │   │
+│  │  Local: delta_i, chi_i, Delta_i, S_i                                  │   │
+│  │  ─────────────────────────────────────────────────────────────────── │   │
+│  │  Broadcast: CGGMP_PRESIGN_R3                                          │   │
+│  │    ├── delta_i                                                         │   │
+│  │    ├── Delta_i = Gamma × k_i                                         │   │
+│  │    ├── S_i = Gamma × chi_i                                            │   │
+│  │    └── PiLogProof                                                     │   │
+│  │                                                                        │   │
+│  │  finalizePresign:                                                      │   │
+│  │    ├── verify G×delta = ΣDelta_i                                      │   │
+│  │    ├── verify X×delta = ΣS_i                                          │   │
+│  │    └── output: Presignature = (Gamma, kTilde, chiTilde)              │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
-│                                                                              │
-│  Online:                                                                     │
+│                                    ↓                                         │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │ 计算: r, sigma_i                                                       │   │
-│  │ 发送: sigma_i (给发起方)                                               │   │
-│  │ 验证: G × sigma_j = S̃_j                                               │   │
-│  │ 输出: 签名 (r, s)                                                      │   │
+│  │ Online Phase:                                                          │   │
+│  │                                                                        │   │
+│  │  1. Gamma-Commit (optional):                                           │   │
+│  │     Broadcast: Gamma_commit + EcChaumPedersenProof                   │   │
+│  │                                                                        │   │
+│  │  2. Gamma-Open:                                                        │   │
+│  │     Broadcast: Gamma (打开承诺)                                        │   │
+│  │                                                                        │   │
+│  │  3. Compute sigma:                                                     │   │
+│  │     r = Gamma.x mod q                                                 │   │
+│  │     sigma_i = kTilde×e + r×chiTilde                                    │   │
+│  │                                                                        │   │
+│  │  4. Send to initiator: CGGMP_SIGN_S_SHARE                            │   │
+│  │     { signatureTaskId, senderId, sigma_i }                            │   │
+│  │                                                                        │   │
+│  │  5. Finalize:                                                         │   │
+│  │     ├── verify each sigma_i                                           │   │
+│  │     ├── s = Σsigma_i                                                  │   │
+│  │     ├── normalize s (s > q/2 ? q-s : s)                              │   │
+│  │     ├── DER encode                                                     │   │
+│  │     └── output: (r, s) signature                                       │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -554,66 +638,39 @@ s = Σ sigma_i mod q
 
 | 阶段 | 证明类型 | 证明目标 | 验证方程 |
 |------|---------|---------|---------|
-| R1 | PiEncElgProof | 加密值范围 | k_i, gamma_i ∈ [0, q) |
-| R2 | PiAffGProof | MtA仿射变换 | D = C^x × Enc(y) |
-| R2 | PiLogProof | 离散对数知识 | Gamma_i = G × gamma_i |
-| R3 | PiLogProof | 离散对数知识 | Delta_i = Gamma × k_i |
+| R1 | PiEncElgProof(K) | 加密值k_i范围 + 承诺一致性 | 验证k_i ∈ [0, q) |
+| R1 | PiEncElgProof(G) | 加密值gamma_i范围 + 承诺一致性 | 验证gamma_i ∈ [0, q) |
+| R2 | PiAffGProof | MtA仿射变换 D = C^x × Enc(y) | 验证 D·F^(-e) = A·Y^e |
+| R2 | PiLogProof | 离散对数 Gamma_i = G × gamma_i | Schnorr验证 |
+| R3 | PiLogProof | 离散对数 Delta_i = Gamma × k_i | Schnorr验证 |
+| Online | EcChaumPedersenProof | Gamma承诺 | 验证知道gamma |
 
 ---
 
-## 七、关键数学公式
-
-### ECDSA签名
-
-```
-签名生成:
-  R = k⁻¹ × G mod q
-  r = R.x mod q
-  s = k⁻¹ × (m + r × x) mod q
-
-签名验证:
-  u1 = s⁻¹ × m mod q
-  u2 = s⁻¹ × r mod q
-  R' = u1 × G + u2 × X
-  验证: R'.x = r
-```
-
-### Paillier同态性质
-
-```
-加法同态:
-  Enc(m1) × Enc(m2) = Enc(m1 + m)
-
-标量乘法:
-  Enc(m)^k = Enc(k × m)
-```
-
-### MtA协议
-
-```
-目标: α + β = a × b
-
-发起方:
-  cA = Enc(a)
-  发送 cA 给响应方
-
-响应方:
-  cB = cA^b × Enc(y) = Enc(a × b + y)
-  β = -y
-  发送 cB 给发起方
-
-发起方:
-  α = Dec(cB) = a × b + y
-
-结果: α + β = a × b + y + (-y) = a × b
-```
-
----
-
-## 八、安全性要点
+## 七、安全性要点
 
 1. **随机数保护**: k_i 和 gamma_i 必须是真正的随机数，且每次签名都不同
 2. **范围证明**: 所有加密值必须在有效范围内，防止溢出攻击
 3. **零知识证明**: 每一步都有对应的证明，确保协议正确执行
 4. **可识别中止**: 如果有人作弊，可以被识别并投诉
 5. **前向安全**: 即使部分私钥份额泄露，历史签名仍然安全
+6. **HD钱包支持**: 通过chaincode派生偏移量，增强密钥安全性
+7. **双重验证**: Presignature生成时验证delta和S，签名时验证sigma_i
+
+---
+
+## 八、附录: 消息类型
+
+| 消息类型 | 方向 | 说明 |
+|---------|------|------|
+| CGGMP_SIGN_OFFLINE_INIT | Broadcast | 初始化离线阶段 |
+| CGGMP_PRESIGN_R1 | Broadcast | Round 1数据 |
+| CGGMP_PRESIGN_R1_ECHO | Broadcast | R1确认 |
+| CGGMP_PRESIGN_R2 | Broadcast | Round 2数据 |
+| CGGMP_PRESIGN_R2_P2P | P2P | MtA响应 |
+| CGGMP_PRESIGN_R3 | Broadcast | Round 3数据 |
+| CGGMP_SIGN_ONLINE_INIT | Broadcast | 初始化在线阶段 |
+| CGGMP_SIGN_GAMMA_COMMIT | Broadcast | Gamma承诺 |
+| CGGMP_SIGN_GAMMA_OPEN | Broadcast | 打开Gamma |
+| CGGMP_SIGN_S_SHARE | P2P | 签名份额 |
+| CGGMP_SIGN_COMPLAINT | Broadcast | 投诉 |

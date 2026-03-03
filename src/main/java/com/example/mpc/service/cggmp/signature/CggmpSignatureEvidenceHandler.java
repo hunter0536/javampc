@@ -7,7 +7,7 @@ import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.Gg20SignatureTask;
+import com.example.mpc.dto.CggmpSignatureTask;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -24,6 +24,10 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * CGGMP签名证据处理器
+ * 负责构建和验证签名的零知识证据
+ */
 public final class CggmpSignatureEvidenceHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpSignatureEvidenceHandler.class);
     private final CggmpSignatureService svc;
@@ -33,7 +37,7 @@ public final class CggmpSignatureEvidenceHandler {
     }
 
 
-    Map<String, Object> buildDecEvidenceDelta(Gg20SignatureTask task, BigInteger gamma_i, BigInteger delta_i) {
+    Map<String, Object> buildDecEvidenceDelta(CggmpSignatureTask task, BigInteger gamma_i, BigInteger delta_i) {
         try {
             BigInteger K = task.presignK.get(svc.nodeId);
             if (K == null) return null;
@@ -78,7 +82,7 @@ public final class CggmpSignatureEvidenceHandler {
         }
     }
 
-    Map<String, Object> buildDecEvidenceChi(Gg20SignatureTask task, BigInteger x_i, BigInteger chi_i) {
+    Map<String, Object> buildDecEvidenceChi(CggmpSignatureTask task, BigInteger x_i, BigInteger chi_i) {
         try {
             BigInteger K = task.presignK.get(svc.nodeId);
             if (K == null) return null;
@@ -122,7 +126,10 @@ public final class CggmpSignatureEvidenceHandler {
         }
     }
 
-    boolean verifyDecEvidence(Gg20SignatureTask task, int senderId, Map<?, ?> evidence) {
+    /**
+     * 验证解密证据
+     */
+    boolean verifyDecEvidence(CggmpSignatureTask task, int senderId, Map<?, ?> evidence) {
         try {
             if (!verifyDecEvidenceConsistency(task, senderId, evidence)) {
                 return false;
@@ -165,7 +172,10 @@ public final class CggmpSignatureEvidenceHandler {
         }
     }
 
-    boolean verifyDecEvidenceConsistency(Gg20SignatureTask task, int senderId, Map<?, ?> evidence) {
+    /**
+     * 验证解密证据一致性
+     */
+    boolean verifyDecEvidenceConsistency(CggmpSignatureTask task, int senderId, Map<?, ?> evidence) {
         String dHex = (String) evidence.get("D");
         if (dHex == null) {
             return false;
@@ -184,7 +194,10 @@ public final class CggmpSignatureEvidenceHandler {
         return true;
     }
 
-    boolean verifyDecEvidenceConsistencyMap(Gg20SignatureTask task,
+    /**
+     * 验证解密证据一致性（Map版本）
+     */
+    boolean verifyDecEvidenceConsistencyMap(CggmpSignatureTask task,
                                             int senderId,
                                             BigInteger claimedD,
                                             Map<?, ?> dMap,
@@ -214,7 +227,7 @@ public final class CggmpSignatureEvidenceHandler {
         return sum.mod(nSquared).equals(BigInteger.ONE);
     }
 
-    Map<String, Object> buildAffGEvidenceDelta(Gg20SignatureTask task, BigInteger gamma_i) {
+    Map<String, Object> buildAffGEvidenceDelta(CggmpSignatureTask task, BigInteger gamma_i) {
         try {
             Map<String, Object> ev = new HashMap<>();
             BigIntIndexMap D = BigIntIndexMap.empty();
@@ -263,7 +276,7 @@ public final class CggmpSignatureEvidenceHandler {
         }
     }
 
-    Map<String, Object> buildAffGEvidenceChi(Gg20SignatureTask task, BigInteger x_i) {
+    Map<String, Object> buildAffGEvidenceChi(CggmpSignatureTask task, BigInteger x_i) {
         try {
             Map<String, Object> ev = new HashMap<>();
             BigIntIndexMap D = BigIntIndexMap.empty();
@@ -309,7 +322,10 @@ public final class CggmpSignatureEvidenceHandler {
         }
     }
 
-    boolean verifyAffGEvidence(Gg20SignatureTask task, int senderId, Map<?, ?> evidence) {
+    /**
+     * 验证AffG证据
+     */
+    boolean verifyAffGEvidence(CggmpSignatureTask task, int senderId, Map<?, ?> evidence) {
         try {
             Map<?, ?> proofs = (Map<?, ?>) evidence.get("affGProofs");
             Map<?, ?> proofsHat = (Map<?, ?>) evidence.get("affGProofsHat");
@@ -399,7 +415,10 @@ public final class CggmpSignatureEvidenceHandler {
         }
     }
 
-    boolean allPeersPresent(Gg20SignatureTask task,
+    /**
+     * 检查所有对等方是否都存在
+     */
+    boolean allPeersPresent(CggmpSignatureTask task,
                             int senderId,
                             Map<?, ?> proofs,
                             Map<?, ?> dMap,
@@ -415,7 +434,7 @@ public final class CggmpSignatureEvidenceHandler {
         return false;
     }
 
-    boolean allPeersPresent(Gg20SignatureTask task,
+    boolean allPeersPresent(CggmpSignatureTask task,
                             int senderId,
                             Map<?, ?> dMap,
                             Map<?, ?> fMap) {
@@ -430,7 +449,7 @@ public final class CggmpSignatureEvidenceHandler {
         return true;
     }
 
-    private BigInteger computePresignDForSelf(Gg20SignatureTask task,
+    private BigInteger computePresignDForSelf(CggmpSignatureTask task,
                                               Map<Integer, BigInteger> incomingD,
                                               Map<Integer, BigInteger> outgoingF) {
         BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
@@ -450,7 +469,10 @@ public final class CggmpSignatureEvidenceHandler {
         return acc;
     }
 
-    void attemptExcludeAndRestart(Gg20SignatureTask task, int offenderId, String reason) {
+    /**
+     * 尝试排除故障节点并重启签名任务
+     */
+    void attemptExcludeAndRestart(CggmpSignatureTask task, int offenderId, String reason) {
         if (!task.participants.contains(offenderId)) {
             svc.failSignatureTask(task, "Complaint (offender not participant): " + reason);
             return;
@@ -467,7 +489,7 @@ public final class CggmpSignatureEvidenceHandler {
 
         String newTaskId = task.taskId + "-excl-" + offenderId + "-" + System.currentTimeMillis();
         svc.createSignatureTaskWithIdAndGroupKey(newTaskId, task.groupPublicKey, task.message, task.initiatorId, newParticipants);
-        Gg20SignatureTask newTask = svc.signatureTasks.get(newTaskId);
+        CggmpSignatureTask newTask = svc.signatureTasks.get(newTaskId);
         if (newTask == null) {
             return;
         }
@@ -480,7 +502,7 @@ public final class CggmpSignatureEvidenceHandler {
         });
     }
 
-    private CompletableFuture<Void> broadcastExclude(Gg20SignatureTask task, int offenderId) {
+    private CompletableFuture<Void> broadcastExclude(CggmpSignatureTask task, int offenderId) {
         Map<String, Object> data = new HashMap<>();
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", svc.nodeId);

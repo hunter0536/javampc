@@ -11,10 +11,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * CGGMP哈希工具类
+ * 提供协议专用的哈希计算方法，如标签哈希、消息哈希等
+ */
 public final class CggmpHashUtils {
     private CggmpHashUtils() {
     }
 
+    /**
+     * 计算带标签的哈希值（十六进制输出）
+     */
     public static String computeTaggedHashHex(String tag, Object... parts) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -28,6 +35,9 @@ public final class CggmpHashUtils {
         }
     }
 
+    /**
+     * 计算CGGMP协议专用的带标签哈希值
+     */
     public static String computeCggmpTaggedHashHex(String tag, Object... parts) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");

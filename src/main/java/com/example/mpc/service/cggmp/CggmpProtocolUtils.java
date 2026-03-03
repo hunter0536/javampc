@@ -2,8 +2,8 @@ package com.example.mpc.service.cggmp;
 
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
-import com.example.mpc.model.CggmpAuxTask;
-import com.example.mpc.model.Gg20SignatureTask;
+import com.example.mpc.dto.CggmpAuxTask;
+import com.example.mpc.dto.CggmpSignatureTask;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 
@@ -15,25 +15,41 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * CGGMP协议工具类
+ * 提供协议通用的工具方法，如哈希、编码、消息处理等
+ */
 public final class CggmpProtocolUtils {
 
+    /**
+     * 构建MtA协议上下文
+     */
     public static byte[] buildMtaContext(String taskId, int senderId, int receiverId) {
         String ctx = taskId + ":" + senderId + ":" + receiverId;
         return ctx.getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * 构建预签名上下文
+     */
     public static byte[] buildPresignContext(String taskId, int senderId, String round) {
         String sid = buildSignSid(taskId);
         String ctx = "PRESIGN:" + round + ":" + sid + ":" + senderId;
         return ctx.getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * 构建签名上下文
+     */
     public static byte[] buildSignContext(String taskId, int senderId, byte[] messageHash, String stage) {
         String sid = buildSignSid(taskId);
         String ctx = "SIGN:" + stage + ":" + sid + ":" + senderId + ":" + HexUtils.bytesToHex(messageHash);
         return ctx.getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * 构建辅助密钥上下文
+     */
     public static byte[] buildAuxContext(String taskId, String executionId, int senderId, String label) {
         String sid = buildAuxSid(executionId, taskId);
         String base = "AUX:" + label + ":" + sid + ":" + senderId + ":";
@@ -51,6 +67,9 @@ public final class CggmpProtocolUtils {
         return out;
     }
 
+    /**
+     * 计算消息的SHA-256哈希
+     */
     public static byte[] hashMessage(String message) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -60,10 +79,16 @@ public final class CggmpProtocolUtils {
         }
     }
 
+    /**
+     * 计算带标签的哈希值
+     */
     public static String computeTaggedHashHex(String tag, Object... parts) {
         return CggmpHashUtils.computeCggmpTaggedHashHex(tag, parts);
     }
 
+    /**
+     * 计算辅助密钥Echo哈希
+     */
     public static String computeAuxEchoHash(CggmpAuxTask task) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -95,10 +120,16 @@ public final class CggmpProtocolUtils {
         return computeTaggedHashHex("AUX_HASH_COM", sid, senderId, pkMap, hatN, s, t, prmMap, rho, u);
     }
 
+    /**
+     * 模N取负
+     */
     public static BigInteger negateModN(BigInteger value, BigInteger n) {
         return value.negate().mod(n);
     }
 
+    /**
+     * 解码有符号整数
+     */
     public static BigInteger decodeSigned(BigInteger value, BigInteger n) {
         if (value.compareTo(n) < 0) {
             return value;
@@ -106,7 +137,10 @@ public final class CggmpProtocolUtils {
         return value.subtract(n);
     }
 
-    public static BigInteger computeSignatureLagrange(Gg20SignatureTask task, int signerId, BigInteger mod) {
+    /**
+     * 计算签名的拉格朗日系数
+     */
+    public static BigInteger computeSignatureLagrange(CggmpSignatureTask task, int signerId, BigInteger mod) {
         if (task == null) {
             return BigInteger.ONE;
         }
@@ -116,7 +150,10 @@ public final class CggmpProtocolUtils {
         return lagrangeCoefficientAtZero(signerId, task.participants, task.indexMap, mod);
     }
 
-    public static ECPoint resolvePublicShare(Gg20SignatureTask task, int signerId, BigInteger lambda, BigInteger x_i) {
+    /**
+     * 解析公钥分片
+     */
+    public static ECPoint resolvePublicShare(CggmpSignatureTask task, int signerId, BigInteger lambda, BigInteger x_i) {
         if (task.publicShares != null) {
             ECPoint base = task.publicShares.get(signerId);
             if (base != null) {
@@ -126,7 +163,7 @@ public final class CggmpProtocolUtils {
         return Secp256k1CurveUtils.G().multiply(x_i).normalize();
     }
 
-    public static ECPoint resolvePublicShareFromMap(Gg20SignatureTask task, int signerId, BigInteger lambda) {
+    public static ECPoint resolvePublicShareFromMap(CggmpSignatureTask task, int signerId, BigInteger lambda) {
         if (task.publicShares == null) {
             return null;
         }
@@ -137,6 +174,9 @@ public final class CggmpProtocolUtils {
         return base.multiply(lambda).normalize();
     }
 
+    /**
+     * 求和分片值
+     */
     public static BigInteger sumShares(Map<Integer, BigInteger> shares, BigInteger mod) {
         if (shares == null || shares.isEmpty()) {
             return BigInteger.ZERO;
@@ -151,7 +191,10 @@ public final class CggmpProtocolUtils {
         return sum.mod(mod);
     }
 
-    public static ECPoint sumPresignGamma(Gg20SignatureTask task) {
+    /**
+     * 求和预签名Gamma点
+     */
+    public static ECPoint sumPresignGamma(CggmpSignatureTask task) {
         ECPoint sum = Secp256k1CurveUtils.G().getCurve().getInfinity();
         for (ECPoint p : task.presignGamma.values()) {
             sum = sum.add(p).normalize();
@@ -159,6 +202,9 @@ public final class CggmpProtocolUtils {
         return sum;
     }
 
+    /**
+     * 生成非零随机数
+     */
     public static BigInteger randomNonZero(BigInteger n) {
         SecureRandom rnd = new SecureRandom();
         BigInteger r;
@@ -172,14 +218,23 @@ public final class CggmpProtocolUtils {
         return value instanceof Map<?, ?> map ? map : null;
     }
 
+    /**
+     * 类型转换为String
+     */
     public static String asString(Object value) {
         return value instanceof String s ? s : null;
     }
 
+    /**
+     * 类型转换为Integer
+     */
     public static Integer asInt(Object value) {
         return value instanceof Number n ? n.intValue() : null;
     }
 
+    /**
+     * 发送并忘记（异步执行，仅记录错误）
+     */
     public static void fireAndForget(CompletableFuture<Void> future, Logger logger, String name) {
         future.whenComplete((v, ex) -> {
             if (ex != null) {
@@ -194,8 +249,27 @@ public final class CggmpProtocolUtils {
         return out;
     }
 
-    private static boolean signatureUsesLagrange(Gg20SignatureTask task) {
+    private static boolean signatureUsesLagrange(CggmpSignatureTask task) {
         return task.threshold < task.nodesCount;
+    }
+
+    public static BigInteger lagrangeAtZero(int id, Set<Integer> participants, Map<Integer, BigInteger> indexMap, BigInteger mod) {
+        if (participants == null || participants.isEmpty()) {
+            return BigInteger.ZERO;
+        }
+        BigInteger num = BigInteger.ONE;
+        BigInteger den = BigInteger.ONE;
+        BigInteger idBi = indexMap != null && indexMap.get(id) != null ? indexMap.get(id) : BigInteger.valueOf(id);
+        for (int peerId : participants) {
+            if (peerId == id) {
+                continue;
+            }
+            BigInteger peerBi = indexMap != null && indexMap.get(peerId) != null ? indexMap.get(peerId) : BigInteger.valueOf(peerId);
+            num = num.multiply(peerBi).mod(mod);
+            BigInteger diff = peerBi.subtract(idBi).mod(mod);
+            den = den.multiply(diff).mod(mod);
+        }
+        return num.multiply(den.modInverse(mod)).mod(mod);
     }
 
     private static BigInteger lagrangeCoefficientAtZero(int id, Set<Integer> participants, Map<Integer, BigInteger> indexMap, BigInteger mod) {

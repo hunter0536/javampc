@@ -6,8 +6,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
+/**
+ * Schnorr证明的索引Map，用于存储按节点ID索引的PiSchProof
+ */
 public record SchProofMap(Map<Integer, PiSchProof> values) {
 
+    /**
+     * 创建空的Schnorr证明Map
+     */
     public static SchProofMap empty() {
         return new SchProofMap(Map.of());
     }

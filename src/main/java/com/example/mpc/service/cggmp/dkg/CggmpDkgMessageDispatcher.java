@@ -10,6 +10,10 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+/**
+ * DKG消息分发器
+ * 根据消息类型将消息分发到对应的处理方法
+ */
 public final class CggmpDkgMessageDispatcher {
     private static final Logger logger = LoggerFactory.getLogger(CggmpDkgMessageDispatcher.class);
     private final CggmpDkgService svc;

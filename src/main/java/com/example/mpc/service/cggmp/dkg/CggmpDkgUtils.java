@@ -4,9 +4,8 @@ import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.model.CggmpDkgTask;
+import com.example.mpc.dto.CggmpDkgTask;
 import com.example.mpc.service.cggmp.CggmpHashUtils;
-import com.example.mpc.service.cggmp.types.ECPointIndexMap;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
@@ -16,6 +15,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * CGGMP DKG工具类
+ * 提供分布式密钥生成协议专用的工具方法
+ */
 public final class CggmpDkgUtils {
     private CggmpDkgUtils() {
     }

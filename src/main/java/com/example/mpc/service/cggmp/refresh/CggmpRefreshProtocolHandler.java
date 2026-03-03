@@ -7,8 +7,8 @@ import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.DbMapUtils;
 import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.model.CggmpRefreshTask;
-import com.example.mpc.model.KeyShare;
+import com.example.mpc.dto.CggmpRefreshTask;
+import com.example.mpc.dto.KeyShare;
 import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import com.example.mpc.service.cggmp.types.BigIntIndexMap;
@@ -24,7 +24,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
@@ -32,6 +31,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * CGGMP密钥刷新协议处理器
+ * 负责执行密钥刷新协议的Round 1-3
+ */
 public final class CggmpRefreshProtocolHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpRefreshProtocolHandler.class);
     private static final ExecutorService refreshExecutorService = CggmpRefreshService.refreshExecutorService;
@@ -42,6 +45,9 @@ public final class CggmpRefreshProtocolHandler {
         this.svc = svc;
     }
 
+    /**
+     * 启动密钥刷新任务（由发起方调用）
+     */
     public CompletableFuture<Void> startRefreshTask(String taskId) {
         CggmpRefreshTask task = svc.refreshTasks.get(taskId);
         if (task == null) {
@@ -61,6 +67,9 @@ public final class CggmpRefreshProtocolHandler {
         return runRefreshProtocolAsync(task, true);
     }
 
+    /**
+     * 从消息启动密钥刷新任务（由非发起方调用）
+     */
     public CompletableFuture<Void> startRefreshTaskFromMessage(String taskId, int senderId) {
         CggmpRefreshTask task = svc.refreshTasks.get(taskId);
         if (task == null) {
@@ -80,6 +89,9 @@ public final class CggmpRefreshProtocolHandler {
         return runRefreshProtocolAsync(task, false);
     }
 
+    /**
+     * 异步执行密钥刷新协议
+     */
     private CompletableFuture<Void> runRefreshProtocolAsync(CggmpRefreshTask task, boolean broadcastInit) {
         return waitForNetworkReadyAsync()
                 .thenCompose(ready -> {
@@ -207,6 +219,9 @@ public final class CggmpRefreshProtocolHandler {
                 });
     }
 
+    /**
+     * 生成刷新用的秘密分片
+     */
     private void generateRefreshShares(CggmpRefreshTask task, BigInteger q, Map<Integer, BigInteger> indexMap) {
         int threshold = Math.min(Constants.THRESHOLD, task.participants.size());
         if (threshold <= 1) {
@@ -348,8 +363,8 @@ public final class CggmpRefreshProtocolHandler {
         BigInteger newShare = oldShare.add(deltaSum).mod(q);
         try {
             KeyShare prev = svc.keyShareDao.findByGroupPublicKeySync(svc.nodeId, task.groupPublicKey);
-            String oldHash = sha256Hex(oldShare.toString(16));
-            String newHash = sha256Hex(newShare.toString(16));
+            String oldHash = HexUtils.sha256Hex(oldShare.toString(16));
+            String newHash = HexUtils.sha256Hex(newShare.toString(16));
             logger.info("Refresh key share computed (taskId={}, nodeId={}, groupPublicKey={}, oldShareHash={}, newShareHash={})",
                     task.taskId, svc.nodeId, task.groupPublicKey, oldHash, newHash);
             KeyShare keyShare = new KeyShare(svc.nodeId, newShare.toString(16), task.groupPublicKey, task.taskId);
@@ -400,16 +415,6 @@ public final class CggmpRefreshProtocolHandler {
         }, 0, 50, TimeUnit.MILLISECONDS);
         future.whenComplete((v, ex) -> tick.cancel(false));
         return future;
-    }
-
-    private static String sha256Hex(String hex) {
-        try {
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            md.update(hex.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            return HexUtils.bytesToHex(md.digest());
-        } catch (Exception e) {
-            return "error";
-        }
     }
 
     private boolean validateFullParticipation(CggmpRefreshTask task) {
@@ -515,25 +520,9 @@ public final class CggmpRefreshProtocolHandler {
             if (xjk == null) {
                 return false;
             }
-            BigInteger lambda = lagrangeAtZero(k, task.participants, indexMap, mod);
+            BigInteger lambda = CggmpProtocolUtils.lagrangeAtZero(k, task.participants, indexMap, mod);
             sum = sum.add(xjk.multiply(lambda)).normalize();
         }
         return sum.isInfinity();
-    }
-
-    private BigInteger lagrangeAtZero(int id, Set<Integer> participants, Map<Integer, BigInteger> indexMap, BigInteger mod) {
-        BigInteger num = BigInteger.ONE;
-        BigInteger den = BigInteger.ONE;
-        BigInteger idBi = indexMap != null && indexMap.get(id) != null ? indexMap.get(id) : BigInteger.valueOf(id);
-        for (int peerId : participants) {
-            if (peerId == id) {
-                continue;
-            }
-            BigInteger peerBi = indexMap != null && indexMap.get(peerId) != null ? indexMap.get(peerId) : BigInteger.valueOf(peerId);
-            num = num.multiply(peerBi).mod(mod);
-            BigInteger diff = peerBi.subtract(idBi).mod(mod);
-            den = den.multiply(diff).mod(mod);
-        }
-        return num.multiply(den.modInverse(mod)).mod(mod);
     }
 }

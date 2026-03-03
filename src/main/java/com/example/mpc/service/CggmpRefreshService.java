@@ -8,8 +8,8 @@ import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.enums.TaskStatus;
-import com.example.mpc.model.CggmpRefreshTask;
-import com.example.mpc.model.KeyShare;
+import com.example.mpc.dto.CggmpRefreshTask;
+import com.example.mpc.dto.KeyShare;
 import com.example.mpc.service.cggmp.refresh.CggmpRefreshMessageDispatcher;
 import com.example.mpc.service.cggmp.refresh.CggmpRefreshMessageHandler;
 import com.example.mpc.service.cggmp.refresh.CggmpRefreshProtocolHandler;
@@ -33,6 +33,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
+/**
+ * CGGMP密钥刷新服务
+ * 负责定期刷新成员的分片密钥，更新组公钥
+ */
 @Service
 public class CggmpRefreshService implements NodeService.MessageHandler {
     public static final Logger logger = LoggerFactory.getLogger(CggmpRefreshService.class);
