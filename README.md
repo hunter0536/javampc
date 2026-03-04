@@ -19,6 +19,9 @@
 - ✅ **UUID 任务标识**：使用 UUID 作为任务唯一标识，支持异步跟踪 DKG 和签名过程
 - ✅ **统一的 RESTful 响应**：所有 API 返回统一格式的响应体
 - ✅ **专用线程池**：为不同类型的任务提供专用线程池（CPU * 4），优化线程资源使用
+- ✅ **完整的零知识证明**：实现多种零知识证明，包括 Paillier 范围证明、BiPrime 证明等
+- ✅ **预签名机制**：支持 CGGMP 预签名流程，提高签名性能
+- ✅ **MtA 协议**：实现安全的乘法到加法转换协议
 
 ## 技术栈
 
@@ -31,6 +34,7 @@
 - **API 设计**：RESTful API + JSON 格式响应
 - **日志框架**：SLF4J
 - **并发工具**：ConcurrentHashMap, CountDownLatch, Atomic 变量
+- **本地库**：MPC GMP 本地库（提高大整数运算性能）
 
 ## 项目结构
 
@@ -43,22 +47,19 @@ mpc/
 │   │   │       └── example/
 │   │   │           └── mpc/
 │   │   │               ├── cggmp/            # CGGMP 协议实现
+│   │   │               │   ├── mta/           # MtA 协议实现
+│   │   │               │   ├── presign/       # 预签名相关
+│   │   │               │   ├── proof/         # 零知识证明实现
+│   │   │               │   ├── sign/          # 签名相关
+│   │   │               │   ├── util/          # 工具类
+│   │   │               │   ├── zk/            # 零知识证明框架
 │   │   │               │   ├── CGGMP.java
-│   │   │               │   ├── Gg20Codec.java
+│   │   │               │   ├── HomomorphicEncryption.java
 │   │   │               │   ├── PaillierEncryption.java
 │   │   │               │   └── PedersenCommitment.java
 │   │   │               ├── common/           # 通用组件
 │   │   │               │   ├── response/     # 响应类
-│   │   │               │   │   ├── ApiResponse.java
-│   │   │               │   │   ├── ResponseCode.java
-│   │   │               │   │   ├── DkgTaskStartResponse.java
-│   │   │               │   │   ├── DkgTaskStatusResponse.java
-│   │   │               │   │   ├── SignatureTaskStartResponse.java
-│   │   │               │   │   ├── SignatureTaskStatusResponse.java
-│   │   │               │   │   └── SignatureResultResponse.java
 │   │   │               │   └── util/         # 工具类
-│   │   │               │       ├── HexUtils.java
-│   │   │               │       └── ThreadPoolUtil.java
 │   │   │               ├── config/           # 配置和初始化
 │   │   │               │   └── ApplicationInitializer.java
 │   │   │               ├── constant/         # 常量定义
@@ -67,28 +68,53 @@ mpc/
 │   │   │               │   ├── CggmpController.java
 │   │   │               │   └── GennaroController.java
 │   │   │               ├── dao/              # 数据访问层
-│   │   │               │   ├── KeyShareDao.java
+│   │   │               │   ├── AuxInfoDao.java
 │   │   │               │   ├── ComplaintDao.java
-│   │   │               │   └── AuxInfoDao.java
+│   │   │               │   └── KeyShareDao.java
+│   │   │               ├── dto/              # 数据传输对象
+│   │   │               │   ├── AuxInfo.java
+│   │   │               │   ├── CggmpAuxTask.java
+│   │   │               │   ├── CggmpDkgTask.java
+│   │   │               │   ├── CggmpRefreshTask.java
+│   │   │               │   ├── CggmpSignatureTask.java
+│   │   │               │   ├── GennaroDkgTask.java
+│   │   │               │   └── KeyShare.java
 │   │   │               ├── enums/            # 枚举类
 │   │   │               │   ├── MessageType.java
 │   │   │               │   └── TaskStatus.java
-│   │   │               ├── model/            # 数据模型
-│   │   │               │   ├── CggmpDkgTask.java
-│   │   │               │   ├── GennaroDkgTask.java
-│   │   │               │   ├── Gg20SignatureTask.java
-│   │   │               │   └── KeyShare.java
 │   │   │               ├── service/          # 业务逻辑服务
-│   │   │               │   ├── netty/
+│   │   │               │   ├── cggmp/         # CGGMP 服务实现
+│   │   │               │   │   ├── auxiliary/  # AUX 协议
+│   │   │               │   │   ├── dkg/        # DKG 协议
+│   │   │               │   │   ├── refresh/    # 份额刷新
+│   │   │               │   │   ├── signature/  # 签名协议
+│   │   │               │   │   ├── types/      # 类型定义
+│   │   │               │   │   ├── CggmpCodecUtils.java
+│   │   │               │   │   ├── CggmpHashUtils.java
+│   │   │               │   │   └── CggmpProtocolUtils.java
+│   │   │               │   ├── netty/         # 网络通信
 │   │   │               │   │   ├── ClientHandler.java
+│   │   │               │   │   ├── MessageSigner.java
 │   │   │               │   │   ├── NettyService.java
-│   │   │               │   │   └── ServerHandler.java
+│   │   │               │   │   ├── ServerHandler.java
+│   │   │               │   │   └── SignedMessage.java
+│   │   │               │   ├── CggmpAuxService.java
+│   │   │               │   ├── CggmpDiagnosticsService.java
+│   │   │               │   ├── CggmpDkgService.java
+│   │   │               │   ├── CggmpRefreshService.java
 │   │   │               │   ├── CggmpSignatureService.java
 │   │   │               │   ├── DatabaseService.java
 │   │   │               │   ├── GennaroDkgService.java
+│   │   │               │   ├── KeyShareService.java
 │   │   │               │   └── NodeService.java
+│   │   │               ├── util/             # 通用工具
+│   │   │               │   └── PresignUsageStore.java
 │   │   │               └── MpcApplication.java
+│   │   ├── native/                          # 本地库
+│   │   │   └── mpc_gmp.c
 │   │   └── resources/
+│   │       ├── native/                      # 编译后的本地库
+│   │       │   └── libmpc_gmp.dylib
 │   │       ├── application.yml           # 默认配置
 │   │       ├── application-node1.yml     # 节点 1 配置
 │   │       ├── application-node2.yml     # 节点 2 配置
@@ -102,13 +128,17 @@ mpc/
 │                   └── mpc/
 │                       └── cggmp/
 │                           └── CGGMPTest.java
-├── databases/  # 存储各个节点的 SQLite 数据库
-│   ├── share_1.db
-│   ├── share_2.db
-│   ├── share_3.db
-│   ├── share_4.db
-│   └── share_5.db
+├── scripts/                                # 脚本文件
+│   ├── config/                             # 配置文件
+│   ├── build_native.sh                     # 构建本地库脚本
+│   └── generate_dev_tls.sh                 # 生成开发 TLS 证书脚本
+├── .trae/                                  # Trae IDE 配置
+│   └── documents/
+│       └── mpc_wallet_3of5_plan.md
 ├── build.gradle
+├── gradle.properties
+├── gradlew
+├── gradlew.bat
 └── settings.gradle
 ```
 
@@ -141,6 +171,10 @@ mpc/
    - 移除重复的 codec roundtrip 验证
    - 减少不必要的计算开销
 
+6. **本地库优化**
+   - 使用本地 GMP 库加速大整数运算
+   - 优化 BigInteger 操作性能
+
 ### 性能测试结果
 
 | 阶段 | 耗时 |
@@ -158,6 +192,7 @@ mpc/
 
 - Java 17 或更高版本
 - Gradle 8.5 或更高版本
+- （可选）GCC 编译器（用于构建本地库）
 
 ### 安装步骤
 
@@ -168,7 +203,12 @@ mpc/
    ./gradlew build
    ```
 
-3. **运行 5 个节点**
+3. **（可选）构建本地库**
+   ```bash
+   ./scripts/build_native.sh
+   ```
+
+4. **运行 5 个节点**
    - 后台运行模式（推荐）：
    ```bash
    # 节点 1
@@ -196,7 +236,7 @@ mpc/
    ./gradlew bootRunNode5
    ```
 
-4. **访问 API**
+5. **访问 API**
    - 节点 1: `http://localhost:8081/api/gennaro`, `http://localhost:8081/api/cggmp`
    - 节点 2: `http://localhost:8082/api/gennaro`, `http://localhost:8082/api/cggmp`
    - 节点 3: `http://localhost:8083/api/gennaro`, `http://localhost:8083/api/cggmp`
@@ -630,47 +670,7 @@ curl -X POST "http://localhost:8081/api/gennaro/dkg/public-key?taskId=550e8400-e
 
 ---
 
-## Simple Signature API
 
-简化签名接口，适用于测试和演示。
-
-### 1. 启动签名任务
-
-**请求**
-- 方法：`POST`
-- 路径：`/api/simple-sign/sign/start`
-- 参数：
-  - `groupPublicKey`（聚合公钥，Hex 编码）
-  - `message`（待签名消息，Hex 编码）
-
-**示例**
-```bash
-curl -X POST "http://localhost:8081/api/simple-sign/sign/start?groupPublicKey=04a1b2c3...&message=48656c6c6f"
-```
-
-### 2. 查询签名任务状态
-
-**请求**
-- 方法：`POST`
-- 路径：`/api/simple-sign/sign/status`
-- 参数：`taskId`（任务 ID）
-
-**示例**
-```bash
-curl -X POST "http://localhost:8081/api/simple-sign/sign/status?taskId=550e8400-e29b-41d4-a716-446655440000"
-```
-
-### 3. 获取签名结果
-
-**请求**
-- 方法：`POST`
-- 路径：`/api/simple-sign/sign/result`
-- 参数：`taskId`（任务 ID）
-
-**示例**
-```bash
-curl -X POST "http://localhost:8081/api/simple-sign/sign/result?taskId=550e8400-e29b-41d4-a716-446655440000"
-```
 
 ---
 
@@ -695,9 +695,7 @@ curl -X POST "http://localhost:8081/api/simple-sign/sign/result?taskId=550e8400-
 | **Gennaro DKG** | GET | `/api/gennaro/dkg/start` | - | 启动 DKG 任务 |
 | | POST | `/api/gennaro/dkg/status` | taskId | 查询 DKG 状态 |
 | | POST | `/api/gennaro/dkg/public-key` | taskId | 获取聚合公钥 |
-| **Simple Sign** | POST | `/api/simple-sign/sign/start` | groupPublicKey, message | 启动签名任务 |
-| | POST | `/api/simple-sign/sign/status` | taskId | 查询签名状态 |
-| | POST | `/api/simple-sign/sign/result` | taskId | 获取签名结果 |
+
 
 ---
 
@@ -796,6 +794,7 @@ app:
 - **支持更多曲线**：修改 `CURVE_NAME` 常量
 - **增强 P2P 网络**：添加节点身份认证、TLS 加密通信
 - **集成区块链**：集成 Web3j 支持 Ethereum 签名
+- **优化性能**：调整线程池参数、网络配置
 
 ## 故障排除
 
@@ -814,6 +813,10 @@ app:
 
 4. **签名验证失败**：
    - 检查群公钥和签名数据格式
+
+5. **本地库加载失败**：
+   - 确保已运行 `build_native.sh` 脚本
+   - 检查本地库文件是否存在
 
 ## 许可证
 
