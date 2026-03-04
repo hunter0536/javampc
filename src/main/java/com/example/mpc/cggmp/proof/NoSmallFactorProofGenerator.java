@@ -5,6 +5,7 @@ import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.ZkBytes;
 import com.example.mpc.cggmp.util.ZkHash;
 import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.common.util.SecureRandomUtils;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
@@ -32,7 +33,7 @@ public final class NoSmallFactorProofGenerator {
         BigInteger s = zk.h1();
         BigInteger t = zk.h2();
 
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
 
         BigInteger sqrtNiUp = sqrtUpper(Ni);
         BigInteger twoEll = BigInteger.ONE.shiftLeft(ellBits);

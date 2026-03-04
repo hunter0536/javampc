@@ -3,12 +3,14 @@ package com.example.mpc.service.cggmp.dkg;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpDkgTask;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
+import com.example.mpc.common.util.RetryUtils;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,7 +48,11 @@ public final class CggmpDkgMessageHandler {
         data.put("executionId", task.executionId);
         data.put("senderId", svc.nodeId);
         data.put("hash", echo);
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1_ECHO, data));
+        return RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1_ECHO, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_DKG_ROUND1_ECHO");
     }
 
     /**
@@ -721,7 +727,11 @@ public final class CggmpDkgMessageHandler {
         if (evidence != null && !evidence.isEmpty()) {
             data.put("evidence", evidence);
         }
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_COMPLAINT, data));
+        return RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_COMPLAINT, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_DKG_COMPLAINT");
     }
 
     private CompletableFuture<Void> broadcastDkgExclude(CggmpDkgTask task,
@@ -738,7 +748,11 @@ public final class CggmpDkgMessageHandler {
         data.put("reason", reason);
         data.put("newTaskId", newTaskId);
         data.put("participants", new java.util.ArrayList<>(newParticipants));
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_EXCLUDE, data));
+        return RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_EXCLUDE, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_DKG_EXCLUDE");
     }
 
     private void attemptExcludeAndRestartDkg(CggmpDkgTask task, int offenderId, String reason) {

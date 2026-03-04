@@ -5,6 +5,7 @@ import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
 import com.example.mpc.cggmp.proof.NoSmallFactorProof;
 import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
 import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.common.util.SecureRandomUtils;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,7 +43,7 @@ public class CGGMP {
         this.totalNodes = totalNodes;
         this.nodeId = nodeId;
         this.curveName = curveName;
-        this.random = new SecureRandom();
+        this.random = SecureRandomUtils.getInstance();
         this.otherPaillierKeys = new ConcurrentHashMap<>();
         this.otherPublicKeys = new ConcurrentHashMap<>();
 
@@ -67,7 +68,7 @@ public class CGGMP {
         this.totalNodes = totalNodes;
         this.nodeId = nodeId;
         this.curveName = curveName;
-        this.random = new SecureRandom();
+        this.random = SecureRandomUtils.getInstance();
         this.otherPaillierKeys = new ConcurrentHashMap<>();
         this.otherPublicKeys = new ConcurrentHashMap<>();
         this.pedersen = pedersen != null ? pedersen : new PedersenCommitment(curveName);

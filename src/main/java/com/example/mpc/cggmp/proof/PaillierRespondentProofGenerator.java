@@ -4,6 +4,7 @@ import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.ZkBytes;
 import com.example.mpc.cggmp.util.ZkHash;
 import com.example.mpc.cggmp.zk.RespondentProofGenerator;
+import com.example.mpc.common.util.SecureRandomUtils;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
@@ -28,7 +29,7 @@ public class PaillierRespondentProofGenerator implements RespondentProofGenerato
         var q6 = q.pow(6);
         var hatNq = q.multiply(hatN);
 
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
 
         var alpha = BigIntegerUtils.randomZnStar(q2, rnd);
         var beta = BigIntegerUtils.randomZnStar(n, rnd);

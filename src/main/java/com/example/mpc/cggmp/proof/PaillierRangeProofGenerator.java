@@ -4,6 +4,7 @@ import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.ZkBytes;
 import com.example.mpc.cggmp.util.ZkHash;
 import com.example.mpc.cggmp.zk.RangeProofGenerator;
+import com.example.mpc.common.util.SecureRandomUtils;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
@@ -26,7 +27,7 @@ public class PaillierRangeProofGenerator implements RangeProofGenerator {
         var q = witness.q();
         var q2 = q.pow(2);
 
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
 
         var alpha = BigIntegerUtils.randomZnStar(q2, rnd);
         var beta = BigIntegerUtils.randomZnStar(n, rnd);

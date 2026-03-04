@@ -2,6 +2,7 @@ package com.example.mpc.cggmp.zk;
 
 import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
+import com.example.mpc.common.util.SecureRandomUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,7 +19,7 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
 
     public static ZKSetupWithLambda generateWithLambda(int bitLength) {
         InternalSetup setup = generateInternal(bitLength);
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger q = Secp256k1CurveUtils.n();
         BigInteger lambda;
         do {
@@ -36,7 +37,7 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
 
     private static InternalSetup generateInternal(int bitLength) {
         long startNs = System.nanoTime();
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         logger.debug("ZKSetup generate start: bitLength={}", bitLength);
         BigInteger p = generateSafePrime(bitLength / 2, rnd);
         logger.debug("ZKSetup safe prime p generated: bits={} elapsedMs={}",

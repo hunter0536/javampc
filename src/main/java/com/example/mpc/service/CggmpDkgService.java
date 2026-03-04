@@ -55,9 +55,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     @Autowired
     public KeyShareDao keyShareDao;
 
-    @Autowired
-    public AuxInfoDao auxInfoDao;
-
     @Value("${node.id}")
     public int nodeId;
 
@@ -163,10 +160,6 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             throw new RuntimeException("CGGMP DKG task not found: " + taskId);
         }
         return task;
-    }
-
-    public AuxInfo loadLatestAuxInfo(int nodeId) {
-        return auxInfoDao.loadLatestSync(nodeId);
     }
 
     public void saveKeyShareToDatabase(CggmpDkgTask task) {

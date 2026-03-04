@@ -14,6 +14,7 @@ import com.example.mpc.service.cggmp.auxiliary.CggmpAuxMessageDispatcher;
 import com.example.mpc.service.cggmp.auxiliary.CggmpAuxMessageHandler;
 import com.example.mpc.service.cggmp.auxiliary.CggmpAuxProtocolHandler;
 import com.example.mpc.service.cggmp.auxiliary.CggmpAuxUtils;
+import com.example.mpc.common.util.RetryUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -262,7 +263,11 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         msg.put("senderId", nodeId);
         msg.put("hasAux", hasAux);
         msg.put("ts", System.currentTimeMillis());
-        nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_STATUS, msg))
+        RetryUtils.retryAsync(auxScheduler, logger,
+                        () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_STATUS, msg)),
+                        Constants.BROADCAST_RETRY_COUNT,
+                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                        "CGGMP_AUX_STATUS")
                 .exceptionally(ex -> {
                     logger.warn("Failed to broadcast AUX status from node {}: {}", nodeId, ex.getMessage());
                     return null;
@@ -321,7 +326,11 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                     initData.put("executionId", task.executionId);
                     initData.put("initiatorId", nodeId);
                     initData.put("participants", new ArrayList<>(task.participants));
-                    return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_INIT, initData));
+                    return RetryUtils.retryAsync(auxScheduler, logger,
+                            () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_INIT, initData)),
+                            Constants.BROADCAST_RETRY_COUNT,
+                            Constants.BROADCAST_RETRY_INTERVAL_MS,
+                            "CGGMP_AUX_INIT");
                 })
                 .thenCompose(v -> auxProtocolHandler.runAuxProtocolAsync(task));
 

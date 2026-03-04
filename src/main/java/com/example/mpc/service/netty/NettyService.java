@@ -95,7 +95,7 @@ public class NettyService {
                                 pipeline.addLast(serverSslContext().newHandler(ch.alloc()));
                             }
                             pipeline.addLast(new ObjectEncoder());
-                            pipeline.addLast(new ObjectDecoder(Integer.MAX_VALUE, ClassResolvers.cacheDisabled(null)));
+                            pipeline.addLast(new ObjectDecoder(10 * 1024 * 1024, ClassResolvers.weakCachingConcurrentResolver(null)));
                             pipeline.addLast(new ServerHandler(NettyService.this, sharedSecret, sslEnabled));
                         }
                     })
@@ -149,7 +149,7 @@ public class NettyService {
                                 pipeline.addLast(clientSslContext().newHandler(ch.alloc(), host, port));
                             }
                             pipeline.addLast(new ObjectEncoder());
-                            pipeline.addLast(new ObjectDecoder(Integer.MAX_VALUE, ClassResolvers.cacheDisabled(null)));
+                            pipeline.addLast(new ObjectDecoder(10 * 1024 * 1024, ClassResolvers.weakCachingConcurrentResolver(null)));
                             pipeline.addLast(new ClientHandler(nodeId, NettyService.this));
                         }
                     });

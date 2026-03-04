@@ -42,7 +42,16 @@ public class ThreadPoolUtil {
             REJECTED_HANDLER
     );
 
-    private static final ExecutorService ioThreadPool = Executors.newCachedThreadPool();
+    private static final int IO_MAX_POOL_SIZE = Math.max(64, CORE_POOL_SIZE * 4);
+    private static final ExecutorService ioThreadPool = new ThreadPoolExecutor(
+            CORE_POOL_SIZE,
+            IO_MAX_POOL_SIZE,
+            KEEP_ALIVE_TIME,
+            KEEP_ALIVE_TIME_UNIT,
+            new LinkedBlockingQueue<>(500),
+            THREAD_FACTORY,
+            REJECTED_HANDLER
+    );
 
     private static final ExecutorService auxThreadPool = Executors.newFixedThreadPool(
             Math.max(2, CORE_POOL_SIZE / 2),

@@ -1,5 +1,7 @@
 package com.example.mpc.service;
 
+import com.example.mpc.cggmp.PaillierEncryption;
+import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.util.ThreadPoolUtil;
@@ -16,6 +18,7 @@ import com.example.mpc.service.cggmp.signature.CggmpSignatureOfflineHandler;
 import com.example.mpc.service.cggmp.signature.CggmpSignatureOnlineHandler;
 import com.example.mpc.service.cggmp.signature.CggmpSignaturePresignHandler;
 import com.example.mpc.util.PresignUsageStore;
+import com.example.mpc.common.util.RetryUtils;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -146,25 +149,64 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             throw new RuntimeException("Signature process is already in progress");
         }
 
+        AuxInfo auxInfo = auxInfoDao.loadLatestSync(nodeId);
+        if (auxInfo == null) {
+            signatureInProgress.set(false);
+            throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
+        }
+
         String fixedGroupPublicKey;
         fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         String taskId = UUID.randomUUID().toString();
         CggmpSignatureTask task = new CggmpSignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId);
+        task.auxTaskId = auxInfo.getTaskId();
+        initTaskPaillierAndZkSetup(task, auxInfo);
         signatureTasks.put(taskId, task);
         return taskId;
     }
 
-    public void createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants) {
+    public void createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants, String auxTaskId) {
         if (!signatureInProgress.compareAndSet(false, true)) {
             throw new RuntimeException("Signature process is already in progress");
+        }
+
+        AuxInfo auxInfo;
+        if (auxTaskId != null && !auxTaskId.isEmpty()) {
+            auxInfo = auxInfoDao.loadByTaskId(nodeId, auxTaskId);
+        } else {
+            auxInfo = auxInfoDao.loadLatestSync(nodeId);
+        }
+        if (auxInfo == null) {
+            signatureInProgress.set(false);
+            throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
         }
 
         String fixedGroupPublicKey;
         fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
         CggmpSignatureTask task = new CggmpSignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount, threshold, initiatorId, participants);
+        task.auxTaskId = auxInfo.getTaskId();
+        initTaskPaillierAndZkSetup(task, auxInfo);
         signatureTasks.put(signatureTaskId, task);
+    }
+
+    private void initTaskPaillierAndZkSetup(CggmpSignatureTask task, AuxInfo auxInfo) {
+        java.math.BigInteger p = new java.math.BigInteger(auxInfo.getPaillierP(), 16);
+        java.math.BigInteger q = new java.math.BigInteger(auxInfo.getPaillierQ(), 16);
+        java.math.BigInteger n = new java.math.BigInteger(auxInfo.getPaillierN(), 16);
+        java.math.BigInteger g = new java.math.BigInteger(auxInfo.getPaillierG(), 16);
+        task.paillier = new PaillierEncryption(p, q);
+        if (!task.paillier.getPublicKeyInfo().n().equals(n)) {
+            throw new RuntimeException("AUX Paillier n mismatch");
+        }
+        if (!task.paillier.getPublicKeyInfo().g().equals(g)) {
+            throw new RuntimeException("AUX Paillier g mismatch");
+        }
+        java.math.BigInteger hatN = new java.math.BigInteger(auxInfo.getPedersenHatN(), 16);
+        java.math.BigInteger s = new java.math.BigInteger(auxInfo.getPedersenS(), 16);
+        java.math.BigInteger t = new java.math.BigInteger(auxInfo.getPedersenT(), 16);
+        task.zkSetup = new ZKSetup(hatN, s, t);
     }
 
     public CompletableFuture<Void> startSignatureTask(String taskId) {
@@ -193,7 +235,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         logger.debug("Signature task {} started on node {}", taskId, nodeId);
 
         try {
-            ensureLocalAuxReady(task);
             offlineHandler.initSignatureContext(task);
             logger.debug("Signature task {} context initialized (groupPublicKey={})", taskId, task.groupPublicKey);
         } catch (Exception e) {
@@ -353,7 +394,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (evidence != null) {
             data.put("evidence", evidence);
         }
-        return nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_COMPLAINT, data));
+        return RetryUtils.retryAsync(cggmpScheduler, logger,
+                () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_SIGN_COMPLAINT, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_SIGN_COMPLAINT");
     }
 
     @Override

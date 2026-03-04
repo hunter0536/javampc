@@ -5,6 +5,7 @@ import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonCodec;
+import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpRefreshTask;
 import com.example.mpc.service.CggmpRefreshService;
@@ -14,6 +15,7 @@ import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import com.example.mpc.service.cggmp.types.BigIntIndexMap;
 import com.example.mpc.service.cggmp.types.ECPointIndexMap;
 import com.example.mpc.service.cggmp.types.SchProofMap;
+import com.example.mpc.common.util.RetryUtils;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,7 +55,11 @@ public final class CggmpRefreshMessageHandler {
         data.put("participants", new ArrayList<>(task.participants));
         logger.debug("Refresh INIT send (taskId={}, initiatorId={}, participants={})",
                 task.taskId, task.initiatorId, task.participants.size());
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_INIT, data));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_INIT, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_REFRESH_INIT");
     }
 
     /**
@@ -67,7 +73,11 @@ public final class CggmpRefreshMessageHandler {
         data.put("initiatorId", task.initiatorId);
         data.put("participants", new ArrayList<>(task.participants));
         data.put("commit", commit);
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R1, data));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R1, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_REFRESH_R1");
     }
 
     /**
@@ -130,7 +140,11 @@ public final class CggmpRefreshMessageHandler {
         data.put("Xi", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(r2.Xi())));
         data.put("rid", Base64.getEncoder().encodeToString(r2.rid()));
         data.put("u", Base64.getEncoder().encodeToString(r2.u()));
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R2, data));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R2, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_REFRESH_R2");
     }
 
     /**
@@ -142,7 +156,11 @@ public final class CggmpRefreshMessageHandler {
         data.put("senderId", svc.nodeId);
         data.put("C", CggmpCodecUtils.encodeBigIntegerMap(r3.C().toMap()));
         data.put("schProofs", CggmpCodecUtils.encodeSchProofMap(r3.schProofs().toMap()));
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R3, data));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_R3, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_REFRESH_R3");
     }
 
     /**
@@ -159,11 +177,16 @@ public final class CggmpRefreshMessageHandler {
         if (evidence != null) {
             data.put("evidence", evidence);
         }
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_COMPLAINT, data));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_COMPLAINT, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_REFRESH_COMPLAINT");
     }
 
     /**
-     * 广播刷新排除消息，     */
+     * 广播刷新排除消息
+     */
     CompletableFuture<Void> broadcastRefreshExclude(CggmpRefreshTask task, int offenderId, String reason, String newTaskId, Set<Integer> newParticipants) {
         Map<String, Object> data = new HashMap<>();
         data.put("taskId", task.taskId);
@@ -173,7 +196,11 @@ public final class CggmpRefreshMessageHandler {
         data.put("newTaskId", newTaskId);
         data.put("groupPublicKey", task.groupPublicKey);
         data.put("participants", new ArrayList<>(newParticipants));
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_EXCLUDE, data));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_EXCLUDE, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_REFRESH_EXCLUDE");
     }
 
     /**

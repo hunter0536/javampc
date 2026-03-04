@@ -1,6 +1,7 @@
 package com.example.mpc.cggmp.util;
 
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.SecureRandomUtils;
 import org.bouncycastle.asn1.x9.X9ECParameters;
 import org.bouncycastle.crypto.ec.CustomNamedCurves;
 import org.bouncycastle.math.ec.ECPoint;
@@ -58,7 +59,7 @@ public final class Secp256k1CurveUtils {
     }
 
     public static BigInteger randomScalar(BigInteger n) {
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger r;
         do {
             r = new BigInteger(n.bitLength(), rnd).mod(n);

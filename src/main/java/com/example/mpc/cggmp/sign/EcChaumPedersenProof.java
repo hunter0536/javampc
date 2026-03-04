@@ -1,6 +1,7 @@
 package com.example.mpc.cggmp.sign;
 
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
+import com.example.mpc.common.util.SecureRandomUtils;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
@@ -11,7 +12,7 @@ public record EcChaumPedersenProof(ECPoint A, BigInteger r, BigInteger s) {
 
     public static EcChaumPedersenProof create(BigInteger value, BigInteger blinding, ECPoint commitment, byte[] context) {
         BigInteger q = EcPedersen.n();
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger a;
         BigInteger b;
         do {

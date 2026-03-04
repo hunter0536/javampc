@@ -7,6 +7,8 @@ import com.example.mpc.dto.CggmpSignatureTask;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 
+import com.example.mpc.common.util.SecureRandomUtils;
+
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -206,7 +208,7 @@ public final class CggmpProtocolUtils {
      * 生成非零随机数
      */
     public static BigInteger randomNonZero(BigInteger n) {
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger r;
         do {
             r = new BigInteger(n.bitLength(), rnd).mod(n);
@@ -244,9 +246,7 @@ public final class CggmpProtocolUtils {
     }
 
     public static byte[] randomBytes(int len) {
-        byte[] out = new byte[len];
-        new SecureRandom().nextBytes(out);
-        return out;
+        return SecureRandomUtils.randomBytes(len);
     }
 
     private static boolean signatureUsesLagrange(CggmpSignatureTask task) {

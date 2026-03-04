@@ -209,8 +209,8 @@ public final class CggmpSignatureOnlineHandler {
         data.put("messageHash", Base64.getEncoder().encodeToString(task.messageHash));
         return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
                         () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_ONLINE_INIT, data)),
-                        Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
-                        Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
+                        Constants.BROADCAST_RETRY_COUNT,
+                        Constants.BROADCAST_RETRY_INTERVAL_MS,
                         "CGGMP_SIGN_ONLINE_INIT")
                 .whenComplete((v, ex) -> {
                     if (ex != null) {

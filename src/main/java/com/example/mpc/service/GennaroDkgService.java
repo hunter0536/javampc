@@ -1,16 +1,17 @@
 package com.example.mpc.service;
 
+import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.MapUtils;
 import com.example.mpc.common.util.RetryUtils;
+import com.example.mpc.common.util.SecureRandomUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.GennaroDkgTask;
 import com.example.mpc.dto.KeyShare;
-import org.bouncycastle.jce.interfaces.ECPublicKey;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.math.ec.ECCurve;
 import org.bouncycastle.math.ec.ECPoint;
@@ -21,11 +22,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.SecureRandom;
 import java.security.Security;
-import java.security.spec.ECGenParameterSpec;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.EnumSet;
@@ -155,15 +152,6 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             }
         }, ThreadPoolUtil.getSingleThreadPool());
     }
-
-    public CompletableFuture<KeyShare> loadKeyShareByGroupPublicKey(String groupPublicKey) {
-        return keyShareDao.findByGroupPublicKey(nodeId, groupPublicKey);
-    }
-
-    public CompletableFuture<KeyShare> loadKeyShareByIndexAndGroupPublicKey(int shareIndex, String groupPublicKey) {
-        return keyShareDao.findByGroupPublicKey(shareIndex, groupPublicKey);
-    }
-
     public CompletableFuture<Void> startDkgProcess(String taskId) {
         logger.info("startDkgProcess invoked for task {}", taskId);
         return waitForTask(taskId, 20, 200)
@@ -184,13 +172,13 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                                 Map<String, Object> initData = new HashMap<>();
                                 initData.put("taskId", taskId);
                                 return RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_DKG_INIT, initData)),
-                                        Constants.DKG_BROADCAST_RETRY_COUNT,
-                                        Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                                        Constants.BROADCAST_RETRY_COUNT,
+                                        Constants.BROADCAST_RETRY_INTERVAL_MS,
                                         "Broadcast GENNARO_DKG_INIT");
                             })
                             .exceptionally(ex -> {
                                 logger.warn("Failed to broadcast DKG_INIT after {} attempts, proceeding with DKG process anyway",
-                                        Constants.DKG_BROADCAST_RETRY_COUNT);
+                                        Constants.BROADCAST_RETRY_COUNT);
                                 return null;
                             })
                             .thenCompose(v -> generateDistributedKey(taskId))
@@ -259,8 +247,8 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     return new CommitmentContext(task, commitmentData);
                 }, ThreadPoolUtil.getComputationThreadPool()))
                 .thenCompose(ctx -> RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, ctx.commitmentData)),
-                                Constants.DKG_BROADCAST_RETRY_COUNT,
-                                Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                                Constants.BROADCAST_RETRY_COUNT,
+                                Constants.BROADCAST_RETRY_INTERVAL_MS,
                                 "Broadcast GENNARO_COMMITMENT")
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> waitForLatchAsync(ctx.task.commitmentsReceivedLatch, Constants.DKG_COMMITMENT_TIMEOUT_SECONDS, "commitments", ctx.task)
@@ -383,8 +371,8 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             publicKeyData.put("publicKeyPart", publicKeyPart);
 
             return RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
-                            Constants.DKG_BROADCAST_RETRY_COUNT,
-                            Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                            Constants.BROADCAST_RETRY_COUNT,
+                            Constants.BROADCAST_RETRY_INTERVAL_MS,
                             "Broadcast GENNARO_PUBLIC_KEY_PART")
                     .thenRun(() -> logger.info("Broadcasted public key contribution for task: {}", taskId))
                     .thenCompose(v -> waitForLatchAsync(task.publicKeyContributionsReceivedLatch, 60, "public key contributions", task))
@@ -439,12 +427,13 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     private List<BigInteger> generateRandomPolynomial(int degree) throws Exception {
         List<BigInteger> coefficients = new ArrayList<>();
         BigInteger curveOrder = getCurveOrder();
+        java.security.SecureRandom rnd = SecureRandomUtils.getInstance();
 
-        BigInteger secret = new BigInteger(curveOrder.bitLength() - 1, new SecureRandom()).mod(curveOrder);
+        BigInteger secret = new BigInteger(curveOrder.bitLength() - 1, rnd).mod(curveOrder);
         coefficients.add(secret);
 
         for (int i = 1; i <= degree; i++) {
-            coefficients.add(new BigInteger(curveOrder.bitLength() - 1, new SecureRandom()).mod(curveOrder));
+            coefficients.add(new BigInteger(curveOrder.bitLength() - 1, rnd).mod(curveOrder));
         }
 
         return coefficients;
@@ -453,62 +442,27 @@ public class GennaroDkgService implements NodeService.MessageHandler {
     private List<BigInteger> generateMaskingPolynomial(int degree) throws Exception {
         List<BigInteger> coefficients = new ArrayList<>();
         BigInteger curveOrder = getCurveOrder();
+        java.security.SecureRandom rnd = SecureRandomUtils.getInstance();
 
         coefficients.add(BigInteger.ZERO);
 
         for (int i = 1; i <= degree; i++) {
-            coefficients.add(new BigInteger(curveOrder.bitLength() - 1, new SecureRandom()).mod(curveOrder));
+            coefficients.add(new BigInteger(curveOrder.bitLength() - 1, rnd).mod(curveOrder));
         }
 
         return coefficients;
     }
 
     private BigInteger getCurveOrder() throws Exception {
-        String cacheKey = "curveOrder_" + Constants.CURVE_NAME;
-        return (BigInteger) cryptoCache.computeIfAbsent(cacheKey, k -> {
-            try {
-                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-                ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-                keyPairGenerator.initialize(ecSpec);
-                KeyPair keyPair = keyPairGenerator.generateKeyPair();
-                ECPublicKey publicKey = (ECPublicKey) keyPair.getPublic();
-                return publicKey.getParameters().getN();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
+        return Secp256k1CurveUtils.n();
     }
 
     private ECPoint getCurveGenerator() throws Exception {
-        String cacheKey = "curveGenerator_" + Constants.CURVE_NAME;
-        return (ECPoint) cryptoCache.computeIfAbsent(cacheKey, k -> {
-            try {
-                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-                ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-                keyPairGenerator.initialize(ecSpec);
-                KeyPair keyPair = keyPairGenerator.generateKeyPair();
-                ECPublicKey publicKey = (ECPublicKey) keyPair.getPublic();
-                return publicKey.getParameters().getG();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
+        return Secp256k1CurveUtils.G();
     }
 
     private ECCurve getCurve() throws Exception {
-        String cacheKey = "curve_" + Constants.CURVE_NAME;
-        return (ECCurve) cryptoCache.computeIfAbsent(cacheKey, k -> {
-            try {
-                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("EC", "BC");
-                ECGenParameterSpec ecSpec = new ECGenParameterSpec(Constants.CURVE_NAME);
-                keyPairGenerator.initialize(ecSpec);
-                KeyPair keyPair = keyPairGenerator.generateKeyPair();
-                ECPublicKey publicKey = (ECPublicKey) keyPair.getPublic();
-                return publicKey.getParameters().getCurve();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        });
+        return Secp256k1CurveUtils.G().getCurve();
     }
 
     private List<ECPoint> generateVerificationPoints(List<BigInteger> coefficients) throws Exception {
@@ -885,8 +839,8 @@ public class GennaroDkgService implements NodeService.MessageHandler {
         publicKeyData.put("groupPublicKey", groupPublicKey);
 
         return RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_PUBLIC_KEY_PART, publicKeyData)),
-                        Constants.DKG_BROADCAST_RETRY_COUNT,
-                        Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                        Constants.BROADCAST_RETRY_COUNT,
+                        Constants.BROADCAST_RETRY_INTERVAL_MS,
                         "Broadcast GENNARO_GROUP_PUBLIC_KEY")
                 .exceptionally(ex -> {
                     logger.error("Failed to broadcast group public key: {}", ex.getMessage());

@@ -7,20 +7,41 @@ import java.util.Base64;
 
 public class HexUtils {
 
-    public static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
+    private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
+    private static final int[] HEX_VALUE = new int[128];
+
+    static {
+        for (int i = 0; i < HEX_VALUE.length; i++) {
+            HEX_VALUE[i] = -1;
         }
-        return sb.toString();
+        for (int i = '0'; i <= '9'; i++) {
+            HEX_VALUE[i] = i - '0';
+        }
+        for (int i = 'a'; i <= 'f'; i++) {
+            HEX_VALUE[i] = i - 'a' + 10;
+        }
+        for (int i = 'A'; i <= 'F'; i++) {
+            HEX_VALUE[i] = i - 'A' + 10;
+        }
+    }
+
+    public static String bytesToHex(byte[] bytes) {
+        char[] hexChars = new char[bytes.length * 2];
+        for (int i = 0; i < bytes.length; i++) {
+            int v = bytes[i] & 0xFF;
+            hexChars[i * 2] = HEX_CHARS[v >>> 4];
+            hexChars[i * 2 + 1] = HEX_CHARS[v & 0x0F];
+        }
+        return new String(hexChars);
     }
 
     public static byte[] hexToBytes(String hex) {
         int len = hex.length();
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {
-            data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
-                    + Character.digit(hex.charAt(i + 1), 16));
+            int high = HEX_VALUE[hex.charAt(i)];
+            int low = HEX_VALUE[hex.charAt(i + 1)];
+            data[i / 2] = (byte) ((high << 4) + low);
         }
         return data;
     }

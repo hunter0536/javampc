@@ -6,6 +6,7 @@ import com.example.mpc.cggmp.proof.PiDecProof;
 import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
+import com.example.mpc.common.util.SecureRandomUtils;
 import org.bouncycastle.math.ec.ECPoint;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -28,7 +29,7 @@ public class CggmpDiagnosticsService {
         result.put("kappa", proofKappa);
         result.put("epsBits", proofEpsBits);
         try {
-            SecureRandom rnd = new SecureRandom();
+            SecureRandom rnd = SecureRandomUtils.getInstance();
             BigInteger q = Secp256k1CurveUtils.n();
 
             int selfCheckKeyBits = 1024;
@@ -128,7 +129,7 @@ public class CggmpDiagnosticsService {
     }
 
     private static BigInteger randomNonZero(BigInteger n) {
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger r;
         do {
             r = new BigInteger(n.bitLength(), rnd).mod(n);

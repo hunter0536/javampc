@@ -64,3 +64,57 @@ for (int i = 1; i <= 5; i++) {
         mainClass = 'com.example.mpc.MpcApplication'
     }
 }
+
+// 原生库编译任务
+task buildNative(type: Exec) {
+    group = 'build'
+    description = 'Build GMP JNI native library (static linked, no runtime dependency)'
+    
+    workingDir projectDir
+    commandLine 'bash', 'scripts/build_native.sh', '--static'
+    
+    onlyIf {
+        file('src/main/native/mpc_gmp.c').exists()
+    }
+}
+
+// 动态链接版本（需要目标机器安装 GMP）
+task buildNativeDynamic(type: Exec) {
+    group = 'build'
+    description = 'Build GMP JNI native library (dynamic linked, requires GMP at runtime)'
+    
+    workingDir projectDir
+    commandLine 'bash', 'scripts/build_native.sh', '--dynamic'
+    
+    onlyIf {
+        file('src/main/native/mpc_gmp.c').exists()
+    }
+}
+
+// 运行 GMP 性能测试
+tasks.register('benchmarkGMP', JavaExec) {
+    group = 'verification'
+    description = 'Run GMP native library benchmark'
+
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.example.mpc.cggmp.util.NativeBigIntegerBenchmark'
+
+    dependsOn 'compileJava'
+}
+
+// 编译前自动尝试编译原生库
+tasks.named('compileJava') {
+    doFirst {
+        if (file('src/main/native/mpc_gmp.c').exists()) {
+            try {
+                exec {
+                    workingDir projectDir
+                    commandLine 'bash', 'scripts/build_native.sh'
+                    ignoreExitValue = true
+                }
+            } catch (Exception e) {
+                logger.warn("Native library build skipped: ${e.message}")
+            }
+        }
+    }
+}

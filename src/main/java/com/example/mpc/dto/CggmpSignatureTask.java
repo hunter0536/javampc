@@ -22,6 +22,7 @@ public class CggmpSignatureTask {
     public final int initiatorId;
     public final Set<Integer> participants;
 
+    public String auxTaskId;
     public byte[] messageHash;
     public ECPoint groupPublicKeyPoint;
     public java.util.Map<Integer, ECPoint> publicShares;

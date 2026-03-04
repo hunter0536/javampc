@@ -21,6 +21,7 @@ public class AuxInfoDao {
     private static final String SELECT_LAST_ID_SQL = "SELECT last_insert_rowid()";
     private static final String SELECT_LATEST_SQL = "SELECT id, node_id, task_id, paillier_p, paillier_q, paillier_n, paillier_g, paillier_bit_length, pedersen_hat_n, pedersen_s, pedersen_t FROM aux_info WHERE node_id = ? ORDER BY id DESC LIMIT 1";
     private static final String SELECT_BY_TASK_SQL = "SELECT id FROM aux_info WHERE node_id = ? AND task_id = ? LIMIT 1";
+    private static final String SELECT_BY_TASK_ID_SQL = "SELECT id, node_id, task_id, paillier_p, paillier_q, paillier_n, paillier_g, paillier_bit_length, pedersen_hat_n, pedersen_s, pedersen_t FROM aux_info WHERE node_id = ? AND task_id = ? LIMIT 1";
 
     @Autowired
     private DatabaseService databaseService;
@@ -72,10 +73,6 @@ public class AuxInfoDao {
         }
     }
 
-    public CompletableFuture<AuxInfo> loadLatest(int nodeId) {
-        return CompletableFuture.supplyAsync(() -> loadLatestSync(nodeId), ThreadPoolUtil.getIoThreadPool());
-    }
-
     public AuxInfo loadLatestSync(int nodeId) {
         Connection conn = null;
         PreparedStatement pstmt = null;
@@ -102,6 +99,42 @@ public class AuxInfoDao {
             return null;
         } catch (Exception e) {
             logger.error("Error loading aux info: {}", e.getMessage());
+            throw new RuntimeException(e);
+        } finally {
+            closeStatement(pstmt);
+            if (conn != null) {
+                databaseService.releaseShareConnection(conn, nodeId);
+            }
+        }
+    }
+
+    public AuxInfo loadByTaskId(int nodeId, String taskId) {
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        try {
+            conn = databaseService.getShareConnection(nodeId);
+            pstmt = conn.prepareStatement(SELECT_BY_TASK_ID_SQL);
+            pstmt.setInt(1, nodeId);
+            pstmt.setString(2, taskId);
+            var rs = pstmt.executeQuery();
+            if (rs.next()) {
+                AuxInfo info = new AuxInfo();
+                info.setId(rs.getLong("id"));
+                info.setNodeId(rs.getInt("node_id"));
+                info.setTaskId(rs.getString("task_id"));
+                info.setPaillierP(rs.getString("paillier_p"));
+                info.setPaillierQ(rs.getString("paillier_q"));
+                info.setPaillierN(rs.getString("paillier_n"));
+                info.setPaillierG(rs.getString("paillier_g"));
+                info.setPaillierBitLength(rs.getInt("paillier_bit_length"));
+                info.setPedersenHatN(rs.getString("pedersen_hat_n"));
+                info.setPedersenS(rs.getString("pedersen_s"));
+                info.setPedersenT(rs.getString("pedersen_t"));
+                return info;
+            }
+            return null;
+        } catch (Exception e) {
+            logger.error("Error loading aux info by taskId: {}", e.getMessage());
             throw new RuntimeException(e);
         } finally {
             closeStatement(pstmt);

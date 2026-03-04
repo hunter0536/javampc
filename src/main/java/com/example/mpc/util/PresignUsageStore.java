@@ -12,6 +12,7 @@ import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.Base64;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class PresignUsageStore {
     private static volatile Path file = Paths.get("databases", "presign-usage.jsonl");
@@ -21,6 +22,8 @@ public final class PresignUsageStore {
     private static final long CLEANUP_INTERVAL_MILLIS = 60L * 60 * 1000;
     private static long lastCleanupMillis = 0L;
     private static volatile long retentionMillis = DEFAULT_RETENTION_DAYS * MILLIS_PER_DAY;
+    private static volatile boolean cacheLoaded = false;
+    private static final ConcurrentHashMap<String, Long> usageCache = new ConcurrentHashMap<>();
 
     private PresignUsageStore() {
     }
@@ -29,11 +32,13 @@ public final class PresignUsageStore {
         String id = computeId(groupPublicKeyHex, gamma);
         synchronized (LOCK) {
             ensureFile();
+            loadCacheIfNeeded();
             cleanupIfNeeded();
-            if (isUsedInternal(id)) {
+            if (usageCache.containsKey(id)) {
                 return false;
             }
             writeLine(id);
+            usageCache.put(id, System.currentTimeMillis());
             return true;
         }
     }
@@ -42,8 +47,9 @@ public final class PresignUsageStore {
         String id = computeId(groupPublicKeyHex, gamma);
         synchronized (LOCK) {
             ensureFile();
+            loadCacheIfNeeded();
             cleanupIfNeeded();
-            return isUsedInternal(id);
+            return usageCache.containsKey(id);
         }
     }
 
@@ -65,6 +71,10 @@ public final class PresignUsageStore {
             resolved = resolved.replace("{nodeId}", String.valueOf(nodeId));
         }
         file = Paths.get(resolved);
+        synchronized (LOCK) {
+            cacheLoaded = false;
+            usageCache.clear();
+        }
     }
 
     private static Path defaultPath(int nodeId) {
@@ -96,26 +106,38 @@ public final class PresignUsageStore {
         }
     }
 
-    private static boolean isUsedInternal(String id) {
+    private static void loadCacheIfNeeded() {
+        if (cacheLoaded) {
+            return;
+        }
         try {
             if (!Files.exists(file)) {
-                return false;
+                cacheLoaded = true;
+                return;
             }
             List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
+            long cutoff = System.currentTimeMillis() - retentionMillis;
             for (String line : lines) {
                 if (line == null || line.isBlank()) continue;
                 String trimmed = line.trim();
-                if (trimmed.equals(id)) {
-                    return true;
-                }
                 int comma = trimmed.indexOf(',');
-                if (comma > 0 && trimmed.substring(comma + 1).equals(id)) {
-                    return true;
+                if (comma > 0) {
+                    String id = trimmed.substring(comma + 1);
+                    try {
+                        long ts = Long.parseLong(trimmed.substring(0, comma));
+                        if (ts >= cutoff) {
+                            usageCache.put(id, ts);
+                        }
+                    } catch (NumberFormatException e) {
+                        usageCache.put(id, System.currentTimeMillis());
+                    }
+                } else {
+                    usageCache.put(trimmed, System.currentTimeMillis());
                 }
             }
-            return false;
+            cacheLoaded = true;
         } catch (IOException e) {
-            throw new RuntimeException("Read presign usage file failed", e);
+            throw new RuntimeException("Load presign usage cache failed", e);
         }
     }
 
@@ -140,29 +162,11 @@ public final class PresignUsageStore {
             return;
         }
         long cutoff = now - retentionMillis;
+        usageCache.entrySet().removeIf(entry -> entry.getValue() < cutoff);
         try {
-            List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-            if (lines.isEmpty()) {
-                return;
-            }
-            StringBuilder sb = new StringBuilder(lines.size() * 48);
-            for (String line : lines) {
-                if (line == null || line.isBlank()) continue;
-                String trimmed = line.trim();
-                int comma = trimmed.indexOf(',');
-                if (comma <= 0) {
-                    sb.append(trimmed).append(System.lineSeparator());
-                    continue;
-                }
-                String tsStr = trimmed.substring(0, comma);
-                try {
-                    long ts = Long.parseLong(tsStr);
-                    if (ts >= cutoff) {
-                        sb.append(trimmed).append(System.lineSeparator());
-                    }
-                } catch (NumberFormatException e) {
-                    sb.append(trimmed).append(System.lineSeparator());
-                }
+            StringBuilder sb = new StringBuilder(usageCache.size() * 48);
+            for (var entry : usageCache.entrySet()) {
+                sb.append(entry.getValue()).append(',').append(entry.getKey()).append(System.lineSeparator());
             }
             Files.writeString(file, sb.toString(), StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
         } catch (IOException e) {

@@ -4,6 +4,8 @@ import java.math.BigInteger;
 import java.security.SecureRandom;
 
 public final class BigIntegerUtils {
+    private static final boolean USE_NATIVE = NativeBigInteger.isNativeAvailable();
+    
     private BigIntegerUtils() {
     }
 
@@ -16,11 +18,33 @@ public final class BigIntegerUtils {
     }
 
     public static BigInteger powSigned(BigInteger base, BigInteger exp, BigInteger mod) {
+        if (USE_NATIVE) {
+            if (exp.signum() >= 0) {
+                return NativeBigInteger.modPow(base, exp, mod);
+            }
+            BigInteger inv = NativeBigInteger.modInverse(base, mod);
+            return NativeBigInteger.modPow(inv, exp.negate(), mod);
+        }
         if (exp.signum() >= 0) {
             return base.modPow(exp, mod);
         }
         BigInteger inv = base.modInverse(mod);
         return inv.modPow(exp.negate(), mod);
+    }
+    
+    public static BigInteger powSigned(NativeBigInteger.NativeModPowContext ctx, BigInteger base, BigInteger exp) {
+        if (ctx != null && NativeBigInteger.isNativeAvailable()) {
+            if (exp.signum() >= 0) {
+                return ctx.modPow(base, exp);
+            }
+            BigInteger inv = NativeBigInteger.modInverse(base, ctx.getMod());
+            return ctx.modPow(inv, exp.negate());
+        }
+        if (exp.signum() >= 0) {
+            return base.modPow(exp, BigInteger.ONE);
+        }
+        BigInteger inv = base.modInverse(BigInteger.ONE);
+        return inv.modPow(exp.negate(), BigInteger.ONE);
     }
 
     public static int jacobi(BigInteger a, BigInteger n) {

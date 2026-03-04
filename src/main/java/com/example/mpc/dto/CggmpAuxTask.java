@@ -63,11 +63,10 @@ public class CggmpAuxTask {
         this.nodesCount = nodesCount;
         this.initiatorId = initiatorId;
         this.participants = participants;
-        int waitCount = Math.max(0, participants.size() - 1);
-        this.commitLatch = new CountDownLatch(waitCount);
-        this.echoLatch = new CountDownLatch(waitCount);
-        this.revealLatch = new CountDownLatch(waitCount);
-        this.proofLatch = new CountDownLatch(waitCount);
+        this.commitLatch = new CountDownLatch(participants.size());
+        this.echoLatch = new CountDownLatch(participants.size());
+        this.revealLatch = new CountDownLatch(participants.size());
+        this.proofLatch = new CountDownLatch(participants.size());
     }
 
     public boolean start() {

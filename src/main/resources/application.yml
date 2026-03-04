@@ -61,11 +61,9 @@ app:
       usagePath: databases/node-{nodeId}/presign-usage.jsonl # 预签名使用记录路径（支持 {nodeId} 占位）
       echoEnabled: false # 是否启用 presign R1 echo
       useRbc: false # 是否对 presign R1 echo 使用 RBC
-    refresh:
-      paillierBits: 3072 # Paillier 密钥位数（生产环境推荐值：≥3072，提供足够安全强度）
     aux:
-      paillierBits: 1536 # Paillier 密钥位数（生产环境推荐值：≥3072，提供足够安全强度）
-      minPaillierBitsForProof: 1535 # =paillierBits-1 允许的最小 Paillier 模数位数（配合 3072 位目标）
+      paillierBits: 3072 # Paillier 密钥位数（生产环境推荐值：≥3072，提供足够安全强度）
+      minPaillierBitsForProof: 3071 # =paillierBits-1 允许的最小 Paillier 模数位数（配合 3072 位目标）
       autoCheckIntervalSeconds: 60 # 自动 AUX 轮询间隔（秒）
 
 # MPC 全局参数
@@ -73,5 +71,3 @@ mpc:
   dkg:
     echoEnabled: false # DKG 是否启用 echo 可靠性检查
     useRbc: false # DKG 是否对广播通道使用 RBC
-  aux:
-    statusWaitMs: 5000 # 等待 AUX 状态收集的时间（毫秒）

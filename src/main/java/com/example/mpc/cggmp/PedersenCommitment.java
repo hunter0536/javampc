@@ -1,5 +1,6 @@
 package com.example.mpc.cggmp;
 
+import com.example.mpc.common.util.SecureRandomUtils;
 import org.bouncycastle.jce.interfaces.ECPublicKey;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.math.ec.ECPoint;
@@ -43,13 +44,13 @@ public class PedersenCommitment {
         this.G = ecSpec.getG();
         this.curveOrder = ecSpec.getN();
 
-        SecureRandom random = new SecureRandom();
+        SecureRandom random = SecureRandomUtils.getInstance();
         BigInteger h = new BigInteger(curveOrder.bitLength(), random).mod(curveOrder);
         this.H = G.multiply(h);
     }
 
     public Commitment commit(BigInteger value) {
-        SecureRandom random = new SecureRandom();
+        SecureRandom random = SecureRandomUtils.getInstance();
         BigInteger blinding = new BigInteger(curveOrder.bitLength(), random).mod(curveOrder);
         return commit(value, blinding);
     }

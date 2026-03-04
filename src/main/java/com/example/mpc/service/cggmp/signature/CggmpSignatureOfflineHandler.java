@@ -334,21 +334,30 @@ public final class CggmpSignatureOfflineHandler {
         initData.put("message", task.message);
         initData.put("initiatorId", task.initiatorId);
         initData.put("participants", new ArrayList<>(task.participants));
-        try {
-            var auxInfo = svc.ensureLocalAuxReady(task);
-            initData.put("auxParams", DbMapUtils.buildAuxParams(auxInfo));
-        } catch (Exception e) {
-            logger.warn("Missing local AUX when broadcasting OFFLINE_INIT for task {}: {}", task.taskId, e.getMessage());
+        initData.put("auxTaskId", task.auxTaskId);
+        if (task.paillier != null && task.zkSetup != null) {
+            initData.put("auxParams", buildAuxParamsFromPaillierAndZkSetup(task));
         }
         return RetryUtils.retryAsync(svc.cggmpScheduler, logger, () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_OFFLINE_INIT, initData)),
-                Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
-                Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
                 "CGGMP_SIGN_OFFLINE_INIT"
         ).whenComplete((v, ex) -> {
             if (ex != null) {
                 logger.warn("Failed to broadcast CGGMP_SIGN_OFFLINE_INIT, proceeding: {}", ex.getMessage());
             }
         });
+    }
+
+    private Map<String, String> buildAuxParamsFromPaillierAndZkSetup(CggmpSignatureTask task) {
+        Map<String, String> auxParams = new HashMap<>();
+        auxParams.put("paillierN", task.paillier.getPublicKeyInfo().n().toString(16));
+        auxParams.put("paillierG", task.paillier.getPublicKeyInfo().g().toString(16));
+        auxParams.put("paillierBitLength", String.valueOf(task.paillier.getPublicKeyInfo().bitLength()));
+        auxParams.put("pedersenHatN", task.zkSetup.hatN().toString(16));
+        auxParams.put("pedersenS", task.zkSetup.h1().toString(16));
+        auxParams.put("pedersenT", task.zkSetup.h2().toString(16));
+        return auxParams;
     }
 
     /**
@@ -380,11 +389,8 @@ public final class CggmpSignatureOfflineHandler {
         Map<String, Object> zkMap = CggmpCodecUtils.encodeZkSetup(task.zkSetup);
         data.put("paillierPublicKey", pkMap);
         data.put("zkSetup", zkMap);
-        try {
-            var auxInfo = svc.ensureLocalAuxReady(task);
-            data.put("auxParams", DbMapUtils.buildAuxParams(auxInfo));
-        } catch (Exception e) {
-            logger.warn("Missing local AUX when broadcasting PRESIGN_R1 for task {}: {}", task.taskId, e.getMessage());
+        if (task.paillier != null && task.zkSetup != null) {
+            data.put("auxParams", buildAuxParamsFromPaillierAndZkSetup(task));
         }
         if (logger.isDebugEnabled()) {
             String pkHash = CggmpSignaturePresignHandler.hashJsonMap(pkMap);
@@ -395,8 +401,8 @@ public final class CggmpSignatureOfflineHandler {
         }
         return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
                         () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_PRESIGN_R1, data)),
-                        Constants.SIGNATURE_BROADCAST_RETRY_COUNT,
-                        Constants.SIGNATURE_BROADCAST_RETRY_INTERVAL_MS,
+                        Constants.BROADCAST_RETRY_COUNT,
+                        Constants.BROADCAST_RETRY_INTERVAL_MS,
                         "CGGMP_PRESIGN_R1")
                 .whenComplete((v, ex) -> {
                     if (ex != null) {
@@ -449,7 +455,11 @@ public final class CggmpSignatureOfflineHandler {
         data.put("affGProofsHat", CggmpSignaturePresignHandler.encodeAffGProofMap(affGhat.toMap()));
         data.put("logProof", CggmpCodecUtils.encodePiLogProof(logProof));
         data.put("X", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(X)));
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_PRESIGN_R2, data));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_PRESIGN_R2, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_PRESIGN_R2");
     }
 
     /**
@@ -467,38 +477,16 @@ public final class CggmpSignatureOfflineHandler {
         data.put("Delta", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(Delta)));
         data.put("S", HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(S)));
         data.put("logProof", CggmpCodecUtils.encodePiLogProof(logProof));
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_PRESIGN_R3, data));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_PRESIGN_R3, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_PRESIGN_R3");
     }
 
     private void initSignaturePaillier(CggmpSignatureTask task) {
-        if (task.paillier == null) {
-            long startNs = System.nanoTime();
-            var auxInfo = svc.ensureLocalAuxReady(task);
-            java.math.BigInteger p = new java.math.BigInteger(auxInfo.getPaillierP(), 16);
-            java.math.BigInteger q = new java.math.BigInteger(auxInfo.getPaillierQ(), 16);
-            java.math.BigInteger n = new java.math.BigInteger(auxInfo.getPaillierN(), 16);
-            java.math.BigInteger g = new java.math.BigInteger(auxInfo.getPaillierG(), 16);
-            task.paillier = new PaillierEncryption(p, q);
-            if (!task.paillier.getPublicKeyInfo().n().equals(n)) {
-                throw new RuntimeException("AUX Paillier n mismatch");
-            }
-            if (!task.paillier.getPublicKeyInfo().g().equals(g)) {
-                throw new RuntimeException("AUX Paillier g mismatch");
-            }
-            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
-            logger.debug("Signature Paillier loaded from AUX for task {} in {} ms (bitLength={})",
-                    task.taskId, elapsedMs, task.paillier.getPublicKeyInfo().bitLength());
-        }
-        if (task.zkSetup == null) {
-            long startNs = System.nanoTime();
-            var auxInfo = svc.ensureLocalAuxReady(task);
-            java.math.BigInteger hatN = new java.math.BigInteger(auxInfo.getPedersenHatN(), 16);
-            java.math.BigInteger s = new java.math.BigInteger(auxInfo.getPedersenS(), 16);
-            java.math.BigInteger t = new java.math.BigInteger(auxInfo.getPedersenT(), 16);
-            task.zkSetup = new ZKSetup(hatN, s, t);
-            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
-            logger.debug("Signature ZKSetup loaded from AUX for task {} in {} ms (hatNBits={})",
-                    task.taskId, elapsedMs, hatN.bitLength());
+        if (task.paillier == null || task.zkSetup == null) {
+            throw new RuntimeException("Paillier/ZKSetup not initialized for task " + task.taskId + ". This should have been done during task creation.");
         }
     }
 
@@ -575,6 +563,7 @@ public final class CggmpSignatureOfflineHandler {
             String signatureTaskId = (String) dataMap.get("signatureTaskId");
             String groupPublicKey = (String) dataMap.get("groupPublicKey");
             String msg = (String) dataMap.get("message");
+            String auxTaskId = (String) dataMap.get("auxTaskId");
             Map<?, ?> auxParams = null;
             Object auxValue = dataMap.get("auxParams");
             if (auxValue instanceof Map<?, ?> m) {
@@ -588,8 +577,8 @@ public final class CggmpSignatureOfflineHandler {
             }
             if (auxParamsFinal != null) {
                 String auxHash = CggmpSignaturePresignHandler.hashJsonMap(auxParamsFinal);
-                logger.debug("Received OFFLINE_INIT AUX params (taskId={}, senderId={}, initiatorId={}, auxHash={})",
-                        signatureTaskId, senderId, initiatorId, auxHash);
+                logger.debug("Received OFFLINE_INIT AUX params (taskId={}, senderId={}, initiatorId={}, auxTaskId={}, auxHash={})",
+                        signatureTaskId, senderId, initiatorId, auxTaskId, auxHash);
             }
             List<Integer> participants = null;
             Object participantsValue = dataMap.get("participants");
@@ -605,9 +594,9 @@ public final class CggmpSignatureOfflineHandler {
                 if (!svc.signatureTasks.containsKey(signatureTaskId)) {
                     int resolvedInitiatorId = initiatorId != null ? initiatorId : senderId;
                     Set<Integer> participantsSet = participants == null ? null : new LinkedHashSet<>(participants);
-                    svc.createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg, resolvedInitiatorId, participantsSet);
-                    logger.debug("Created CGGMP signature task from OFFLINE_INIT: {} (initiator={}, participants={})",
-                            signatureTaskId, resolvedInitiatorId, participantsSet);
+                    svc.createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg, resolvedInitiatorId, participantsSet, auxTaskId);
+                    logger.debug("Created CGGMP signature task from OFFLINE_INIT: {} (initiator={}, participants={}, auxTaskId={})",
+                            signatureTaskId, resolvedInitiatorId, participantsSet, auxTaskId);
                     CompletableFuture.runAsync(() -> {
                         CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
                         if (task == null) {
@@ -633,7 +622,6 @@ public final class CggmpSignatureOfflineHandler {
                             svc.signatureInProgress.set(false);
                             return;
                         }
-                        svc.ensureLocalAuxReady(task);
                         initSignatureContext(task);
                         svc.presignHandler.drainPendingPresignR1(task);
                         runOfflinePhase(task).exceptionally(ex -> {

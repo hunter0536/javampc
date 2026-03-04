@@ -2,8 +2,10 @@ package com.example.mpc.cggmp.proof;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
+import com.example.mpc.cggmp.util.NativeBigInteger;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.common.util.SecureRandomUtils;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -141,53 +143,82 @@ public final class PresignProofs {
         BigInteger N0sq = N0.multiply(N0);
         BigInteger N1sq = N1.multiply(N1);
         long t0 = System.nanoTime();
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         logger.info("PiAffG start: kappa={}, epsBits={}, negY={}, N0Bits={}, N1Bits={}",
                 effectiveKappa, effectiveEps, negY, N0.bitLength(), N1.bitLength());
 
-        List<BigInteger> A = new ArrayList<>(effectiveKappa);
-        List<BigInteger> B = new ArrayList<>(effectiveKappa);
         List<ECPoint> R = new ArrayList<>(effectiveKappa);
         List<BigInteger> z = new ArrayList<>(effectiveKappa);
         List<BigInteger> zPrime = new ArrayList<>(effectiveKappa);
         List<BigInteger> w = new ArrayList<>(effectiveKappa);
         List<BigInteger> lambda = new ArrayList<>(effectiveKappa);
 
-        List<BigInteger> alpha = new ArrayList<>(effectiveKappa);
-        List<BigInteger> beta = new ArrayList<>(effectiveKappa);
-        List<BigInteger> r = new ArrayList<>(effectiveKappa);
-        List<BigInteger> s = new ArrayList<>(effectiveKappa);
+        BigInteger[] alphaArr = new BigInteger[effectiveKappa];
+        BigInteger[] betaArr = new BigInteger[effectiveKappa];
+        BigInteger[] rArr = new BigInteger[effectiveKappa];
+        BigInteger[] sArr = new BigInteger[effectiveKappa];
 
         BigInteger q = Secp256k1CurveUtils.n();
         BigInteger rangeBound = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps + 1);
         long loop1Start = System.nanoTime();
         for (int i = 0; i < effectiveKappa; i++) {
-            BigInteger ai = randomSigned(rangeBound, rnd);
-            BigInteger bi = randomSigned(rangeBound, rnd);
-            BigInteger ri = randomZnStar(N0, rnd);
-            BigInteger si = randomZnStar(N1, rnd);
-            alpha.add(ai);
-            beta.add(bi);
-            r.add(ri);
-            s.add(si);
-
-            BigInteger bForN0 = negY ? bi.negate() : bi;
-            BigInteger Aj = BigIntegerUtils.powSigned(C, ai, N0sq)
-                    .multiply(BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), bForN0, N0sq))
-                    .multiply(ri.modPow(N0, N0sq))
-                    .mod(N0sq);
-            BigInteger Bj = BigIntegerUtils.powSigned(BigInteger.ONE.add(N1), bi, N1sq)
-                    .multiply(si.modPow(N1, N1sq))
-                    .mod(N1sq);
-            ECPoint Rj = ecMulSigned(g, ai).normalize();
-            A.add(Aj);
-            B.add(Bj);
-            R.add(Rj);
-            if ((i + 1) % 8 == 0 || i + 1 == effectiveKappa) {
-                long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - loop1Start);
-                logger.debug("PiAffG progress: built {}/{} tuples in {} ms", i + 1, effectiveKappa, elapsedMs);
-            }
+            alphaArr[i] = randomSigned(rangeBound, rnd);
+            betaArr[i] = randomSigned(rangeBound, rnd);
+            rArr[i] = randomZnStar(N0, rnd);
+            sArr[i] = randomZnStar(N1, rnd);
         }
+        logger.debug("PiAffG random values generated in {} ms", 
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - loop1Start));
+
+        long batchStart = System.nanoTime();
+        BigInteger[] betaForN0 = new BigInteger[effectiveKappa];
+        for (int i = 0; i < effectiveKappa; i++) {
+            betaForN0[i] = negY ? betaArr[i].negate() : betaArr[i];
+        }
+        
+        BigInteger[] AjArr;
+        BigInteger[] BjArr;
+        
+        if (NativeBigInteger.isNativeAvailable() && effectiveKappa >= 16) {
+            AjArr = new BigInteger[effectiveKappa];
+            BjArr = new BigInteger[effectiveKappa];
+            for (int i = 0; i < effectiveKappa; i++) {
+                AjArr[i] = BigIntegerUtils.powSigned(C, alphaArr[i], N0sq)
+                        .multiply(BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), betaForN0[i], N0sq))
+                        .multiply(rArr[i].modPow(N0, N0sq))
+                        .mod(N0sq);
+                BjArr[i] = BigIntegerUtils.powSigned(BigInteger.ONE.add(N1), betaArr[i], N1sq)
+                        .multiply(sArr[i].modPow(N1, N1sq))
+                        .mod(N1sq);
+            }
+            logger.debug("PiAffG modPow computed in {} ms (native powSigned)", 
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
+        } else {
+            AjArr = new BigInteger[effectiveKappa];
+            BjArr = new BigInteger[effectiveKappa];
+            for (int i = 0; i < effectiveKappa; i++) {
+                AjArr[i] = BigIntegerUtils.powSigned(C, alphaArr[i], N0sq)
+                        .multiply(BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), betaForN0[i], N0sq))
+                        .multiply(rArr[i].modPow(N0, N0sq))
+                        .mod(N0sq);
+                BjArr[i] = BigIntegerUtils.powSigned(BigInteger.ONE.add(N1), betaArr[i], N1sq)
+                        .multiply(sArr[i].modPow(N1, N1sq))
+                        .mod(N1sq);
+            }
+            logger.debug("PiAffG modPow computed in {} ms (Java fallback)", 
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
+        }
+
+        List<BigInteger> A = new ArrayList<>(effectiveKappa);
+        List<BigInteger> B = new ArrayList<>(effectiveKappa);
+        for (int i = 0; i < effectiveKappa; i++) {
+            A.add(AjArr[i]);
+            B.add(BjArr[i]);
+            ECPoint Rj = ecMulSigned(g, alphaArr[i]).normalize();
+            R.add(Rj);
+        }
+        logger.debug("PiAffG tuples built in {} ms", 
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - loop1Start));
 
         long challengeStart = System.nanoTime();
         boolean[] e = challengeBits("PI_AFFG", context, effectiveKappa, A, B, R);
@@ -196,10 +227,10 @@ public final class PresignProofs {
         long loop2Start = System.nanoTime();
         for (int i = 0; i < effectiveKappa; i++) {
             BigInteger ei = e[i] ? BigInteger.ONE : BigInteger.ZERO;
-            BigInteger zi = alpha.get(i).add(ei.multiply(x));
-            BigInteger zpi = beta.get(i).add(ei.multiply(y));
-            BigInteger wi = r.get(i).multiply(rho.modPow(ei, N0)).mod(N0);
-            BigInteger li = s.get(i).multiply(mu.modPow(ei, N1)).mod(N1);
+            BigInteger zi = alphaArr[i].add(ei.multiply(x));
+            BigInteger zpi = betaArr[i].add(ei.multiply(y));
+            BigInteger wi = rArr[i].multiply(rho.modPow(ei, N0)).mod(N0);
+            BigInteger li = sArr[i].multiply(mu.modPow(ei, N1)).mod(N1);
             z.add(zi);
             zPrime.add(zpi);
             w.add(wi);
@@ -334,7 +365,7 @@ public final class PresignProofs {
 
     public static PiLogStarProof createLogStarProof(ECPoint base, ECPoint X, BigInteger secret, byte[] context) {
         BigInteger q = Secp256k1CurveUtils.n();
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger alpha;
         do {
             alpha = new BigInteger(q.bitLength(), rnd).mod(q);
@@ -363,7 +394,7 @@ public final class PresignProofs {
                                             BigInteger alpha,
                                             byte[] context) {
         BigInteger q = Secp256k1CurveUtils.n();
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger u = new BigInteger(q.bitLength(), rnd).mod(q);
         BigInteger v = new BigInteger(q.bitLength(), rnd).mod(q);
         ECPoint U1 = h.multiply(u).normalize();
@@ -415,7 +446,7 @@ public final class PresignProofs {
         BigInteger hatN = zkSetup.hatN();
         BigInteger s = zkSetup.h1();
         BigInteger t = zkSetup.h2();
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         int effectiveEps = epsBits > 0 ? epsBits : RANGE_EPS_BITS;
 
         BigInteger boundX = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps + 1);
@@ -539,7 +570,7 @@ public final class PresignProofs {
         int effectiveKappa = kappa > 0 ? kappa : DEFAULT_KAPPA;
         int effectiveEps = epsBits > 0 ? epsBits : RANGE_EPS_BITS;
         BigInteger N0sq = N0.multiply(N0);
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger q = Secp256k1CurveUtils.n();
         BigInteger rangeBound = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps);
 

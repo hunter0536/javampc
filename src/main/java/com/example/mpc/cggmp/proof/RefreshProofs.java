@@ -2,6 +2,7 @@ package com.example.mpc.cggmp.proof;
 
 import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
+import com.example.mpc.common.util.SecureRandomUtils;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
@@ -14,7 +15,7 @@ public final class RefreshProofs {
 
     public static PiSchProof createSchProof(ECPoint g, ECPoint X, BigInteger x, byte[] context) {
         BigInteger q = Secp256k1CurveUtils.n();
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger alpha = new BigInteger(q.bitLength(), rnd).mod(q);
         ECPoint A = g.multiply(alpha).normalize();
         BigInteger e = challenge("PI_SCH", q, context, g, X, A);
@@ -32,7 +33,7 @@ public final class RefreshProofs {
     }
 
     public static PiPrmProof createPrmProof(BigInteger hatN, BigInteger s, BigInteger t, BigInteger lambda, byte[] context) {
-        SecureRandom rnd = new SecureRandom();
+        SecureRandom rnd = SecureRandomUtils.getInstance();
         BigInteger alpha = new BigInteger(hatN.bitLength(), rnd).mod(hatN);
         BigInteger A = BigIntegerUtils.powSigned(s, alpha, hatN);
         BigInteger q = Secp256k1CurveUtils.n();

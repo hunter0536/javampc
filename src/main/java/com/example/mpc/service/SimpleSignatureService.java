@@ -3,6 +3,7 @@ package com.example.mpc.service;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.MapUtils;
+import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.KeyShareDao;
 import com.example.mpc.enums.MessageType;
@@ -62,15 +63,20 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
     private final Map<String, SimpleSignatureTask> tasks = new ConcurrentHashMap<>();
     private final SecureRandom secureRandom = new SecureRandom();
     private final AtomicBoolean initialized = new AtomicBoolean(false);
+    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
     private final ExecutorService signatureExecutor = Executors.newCachedThreadPool();
 
     @PreDestroy
     public void shutdown() {
         logger.info("Shutting down SimpleSignatureService executors");
+        scheduler.shutdown();
         cleanupExecutor.shutdown();
         signatureExecutor.shutdown();
         try {
+            if (!scheduler.awaitTermination(10, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
             if (!cleanupExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
                 cleanupExecutor.shutdownNow();
             }
@@ -78,6 +84,7 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
                 signatureExecutor.shutdownNow();
             }
         } catch (InterruptedException e) {
+            scheduler.shutdownNow();
             cleanupExecutor.shutdownNow();
             signatureExecutor.shutdownNow();
             Thread.currentThread().interrupt();
@@ -127,42 +134,6 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         tasks.put(taskId, task);
         logger.info("Created simple signature task {} with nodesCount={}, threshold={}, participants={}",
                 taskId, nodesCount, threshold, task.participants);
-
-        signatureExecutor.submit(() -> runSignature(task));
-
-        return taskId;
-    }
-
-    public String startSignature(String groupPublicKey, String message, Set<Integer> participants) {
-        if (groupPublicKey == null || groupPublicKey.isEmpty()) {
-            throw new IllegalArgumentException("groupPublicKey cannot be null or empty");
-        }
-        if (message == null || message.isEmpty()) {
-            throw new IllegalArgumentException("message cannot be null or empty");
-        }
-        if (message.length() > 65536) {
-            throw new IllegalArgumentException("message too long (max 65536 characters)");
-        }
-
-        String taskId = UUID.randomUUID().toString();
-
-        if (participants == null || participants.isEmpty()) {
-            participants = ConcurrentHashMap.newKeySet();
-            Map<Integer, NodeService.NodeInfo> nodes = nodeService.getNodesSnapshot();
-            for (Integer nodeId : nodes.keySet()) {
-                participants.add(nodeId);
-            }
-            if (participants.isEmpty()) {
-                for (int i = 1; i <= nodesCount; i++) {
-                    participants.add(i);
-                }
-            }
-        }
-
-        SimpleSignatureTask task = new SimpleSignatureTask(taskId, groupPublicKey, message, participants, nodeId);
-        tasks.put(taskId, task);
-
-        logger.info("Started simple signature task {} with participants {}", taskId, participants);
 
         signatureExecutor.submit(() -> runSignature(task));
 
@@ -224,7 +195,11 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         initData.put("participants", new ArrayList<>(task.participants));
 
         NodeService.Message msg = new NodeService.Message(nodeId, MessageType.SIMPLE_SIGN_INIT, initData);
-        nodeService.broadcastRbc(msg)
+        RetryUtils.retryAsync(scheduler, logger,
+                        () -> nodeService.broadcastRbc(msg),
+                        Constants.BROADCAST_RETRY_COUNT,
+                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                        "SIMPLE_SIGN_INIT")
                 .whenComplete((v, ex) -> {
                     if (ex != null) {
                         logger.warn("Failed to broadcast INIT for task {}: {}", task.taskId, ex.getMessage());
@@ -350,7 +325,11 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         data.put("Gamma", HexUtils.bytesToHex(task.Gamma.getEncoded(true)));
 
         NodeService.Message msg = new NodeService.Message(nodeId, MessageType.SIMPLE_SIGN_OFFLINE, data);
-        nodeService.broadcastRbc(msg)
+        RetryUtils.retryAsync(scheduler, logger,
+                        () -> nodeService.broadcastRbc(msg),
+                        Constants.BROADCAST_RETRY_COUNT,
+                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                        "SIMPLE_SIGN_OFFLINE")
                 .whenComplete((v, ex) -> {
                     if (ex != null) {
                         logger.error("Failed to broadcast offline data for task {}: {}", task.taskId, ex.getMessage());
@@ -390,7 +369,11 @@ public class SimpleSignatureService implements NodeService.MessageHandler {
         data.put("sigma", sigma.toString(16));
 
         NodeService.Message msg = new NodeService.Message(nodeId, MessageType.SIMPLE_SIGN_SIGMA, data);
-        nodeService.broadcastRbc(msg)
+        RetryUtils.retryAsync(scheduler, logger,
+                        () -> nodeService.broadcastRbc(msg),
+                        Constants.BROADCAST_RETRY_COUNT,
+                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                        "SIMPLE_SIGN_SIGMA")
                 .whenComplete((v, ex) -> {
                     if (ex != null) {
                         logger.error("Failed to broadcast sigma share for task {}: {}", task.taskId, ex.getMessage());

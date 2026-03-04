@@ -18,6 +18,7 @@ import com.example.mpc.cggmp.proof.PaillierRespondentProofContext;
 import com.example.mpc.cggmp.proof.PaillierRespondentProofGenerator;
 import com.example.mpc.cggmp.proof.PaillierRespondentProofValidator;
 import com.example.mpc.cggmp.zk.RangeProofGenerator;
+import com.example.mpc.common.util.SecureRandomUtils;
 import com.example.mpc.cggmp.zk.RangeProofValidator;
 import com.example.mpc.cggmp.zk.RespondentProofGenerator;
 import com.example.mpc.cggmp.zk.RespondentProofValidator;
@@ -111,7 +112,7 @@ public class MtAProtocol {
         }
 
         BigInteger nsq = initiatorPublicKey.nSquared();
-        BigInteger y = new BigInteger(q.bitLength(), new SecureRandom()).mod(q);
+        BigInteger y = new BigInteger(q.bitLength(), SecureRandomUtils.getInstance()).mod(q);
 
         PaillierEncryption.PublicKey initiatorPk = initiatorPublicKey;
         PaillierEncryption.Encryption encY = initiatorPk.encryptWithRandomness(y);

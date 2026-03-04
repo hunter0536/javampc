@@ -6,6 +6,7 @@ import com.example.mpc.cggmp.proof.PiDecProof;
 import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpSignatureTask;
 import com.example.mpc.service.CggmpSignatureService;
@@ -14,6 +15,7 @@ import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import com.example.mpc.service.cggmp.types.AffGProofMap;
 import com.example.mpc.service.cggmp.types.BigIntIndexMap;
+import com.example.mpc.common.util.RetryUtils;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -488,7 +490,7 @@ public final class CggmpSignatureEvidenceHandler {
         svc.failSignatureTask(task, "Excluded offender " + offenderId + ", restarting");
 
         String newTaskId = task.taskId + "-excl-" + offenderId + "-" + System.currentTimeMillis();
-        svc.createSignatureTaskWithIdAndGroupKey(newTaskId, task.groupPublicKey, task.message, task.initiatorId, newParticipants);
+        svc.createSignatureTaskWithIdAndGroupKey(newTaskId, task.groupPublicKey, task.message, task.initiatorId, newParticipants, task.auxTaskId);
         CggmpSignatureTask newTask = svc.signatureTasks.get(newTaskId);
         if (newTask == null) {
             return;
@@ -507,6 +509,10 @@ public final class CggmpSignatureEvidenceHandler {
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", svc.nodeId);
         data.put("offenderId", offenderId);
-        return svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_EXCLUDE, data));
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_EXCLUDE, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_SIGN_EXCLUDE");
     }
 }

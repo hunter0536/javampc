@@ -6,7 +6,6 @@ import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.enums.MessageType;
-import com.example.mpc.dto.AuxInfo;
 import com.example.mpc.dto.CggmpDkgTask;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.NodeService;
@@ -55,9 +54,6 @@ public final class CggmpDkgProtocolHandler {
             if (!svc.nodeService.isTlsEnabled()) {
                 throw new RuntimeException("DKG requires TLS-enabled private channels (nodes.ssl.enabled=true).");
             }
-            if (loadLatestAuxInfo(svc.nodeId) == null) {
-                throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before DKG.");
-            }
             if (!validateFullParticipation(task)) {
                 throw new RuntimeException("DKG requires full participation");
             }
@@ -89,7 +85,6 @@ public final class CggmpDkgProtocolHandler {
                     }
                     logger.info("Network ready with {} nodes", networkSize);
                 })
-                .thenCompose(v -> ensureLocalAuxReady())
                 .thenCompose(v -> {
                     if (!broadcastInit) {
                         return CompletableFuture.completedFuture(null);
@@ -98,8 +93,8 @@ public final class CggmpDkgProtocolHandler {
                     return delayMs(Constants.DKG_INIT_WAIT_MS)
                             .thenCompose(x -> RetryUtils.retryAsync(svc.dkgScheduler, logger,
                                     () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_INIT, initData)),
-                                    Constants.DKG_BROADCAST_RETRY_COUNT,
-                                    Constants.DKG_BROADCAST_RETRY_INTERVAL_MS,
+                                    Constants.BROADCAST_RETRY_COUNT,
+                                    Constants.BROADCAST_RETRY_INTERVAL_MS,
                                     "Broadcast CGGMP_DKG_INIT"))
                             .whenComplete((x, ex) -> {
                                 if (ex == null) {
@@ -209,12 +204,20 @@ public final class CggmpDkgProtocolHandler {
             r1Commit.put("senderId", svc.nodeId);
             r1Commit.put("V", vCommit);
             if (svc.dkgUseRbc) {
-                CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1,
-                                CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                                () -> svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1,
+                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                                Constants.BROADCAST_RETRY_COUNT,
+                                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                "CGGMP_DKG_ROUND1_RBC"),
                         logger, "CGGMP_DKG_ROUND1_RBC");
             } else {
-                CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1,
-                                CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1,
+                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                                Constants.BROADCAST_RETRY_COUNT,
+                                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                "CGGMP_DKG_ROUND1"),
                         logger, "CGGMP_DKG_ROUND1");
             }
 
@@ -250,12 +253,20 @@ public final class CggmpDkgProtocolHandler {
                 })
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
                     if (svc.dkgUseRbc) {
-                        CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
+                        CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                                        () -> svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
+                                                CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
+                                        Constants.BROADCAST_RETRY_COUNT,
+                                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                        "CGGMP_DKG_ROUND2_BROAD_RBC"),
                                 logger, "CGGMP_DKG_ROUND2_BROAD_RBC");
                     } else {
-                        CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
+                        CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                                        () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
+                                                CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
+                                        Constants.BROADCAST_RETRY_COUNT,
+                                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                        "CGGMP_DKG_ROUND2_BROAD"),
                                 logger, "CGGMP_DKG_ROUND2_BROAD");
                     }
 
@@ -306,8 +317,12 @@ public final class CggmpDkgProtocolHandler {
                     r3.put("executionId", task.executionId);
                     r3.put("senderId", svc.nodeId);
                     r3.put("psi", CggmpCodecUtils.encodePiSchProof(psi_i));
-                    CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND3,
-                                    CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND3, r3))),
+                    CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                                    () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND3,
+                                            CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND3, r3))),
+                                    Constants.BROADCAST_RETRY_COUNT,
+                                    Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                    "CGGMP_DKG_ROUND3"),
                             logger, "CGGMP_DKG_ROUND3");
                 }, dkgExecutorService).thenApply(v -> ctx))
                 .thenCompose(ctx -> waitForDkgLatch(task, task.round3ReceivedLatch, "DKG Round 3 messages")
@@ -378,12 +393,20 @@ public final class CggmpDkgProtocolHandler {
                     r1Commit.put("senderId", svc.nodeId);
                     r1Commit.put("V", vCommit);
                     if (svc.dkgUseRbc) {
-                        CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                        CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                                        () -> svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1,
+                                                CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                                        Constants.BROADCAST_RETRY_COUNT,
+                                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                        "CGGMP_DKG_ROUND1_RBC"),
                                 logger, "CGGMP_DKG_ROUND1_RBC");
                     } else {
-                        CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                        CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                                        () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND1,
+                                                CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND1, r1Commit))),
+                                        Constants.BROADCAST_RETRY_COUNT,
+                                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                        "CGGMP_DKG_ROUND1"),
                                 logger, "CGGMP_DKG_ROUND1");
                     }
 
@@ -402,12 +425,20 @@ public final class CggmpDkgProtocolHandler {
                 })
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
                     if (svc.dkgUseRbc) {
-                        CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
+                        CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                                        () -> svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
+                                                CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
+                                        Constants.BROADCAST_RETRY_COUNT,
+                                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                        "CGGMP_DKG_ROUND2_BROAD_RBC"),
                                 logger, "CGGMP_DKG_ROUND2_BROAD_RBC");
                     } else {
-                        CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
-                                        CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
+                        CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                                        () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_ROUND2_BROAD,
+                                                CggmpDkgUtils.maybeCompressDkgPayload(MessageType.CGGMP_DKG_ROUND2_BROAD, ctx.r1Open()))),
+                                        Constants.BROADCAST_RETRY_COUNT,
+                                        Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                        "CGGMP_DKG_ROUND2_BROAD"),
                                 logger, "CGGMP_DKG_ROUND2_BROAD");
                     }
                 }, dkgExecutorService).thenApply(v -> ctx))
@@ -469,21 +500,6 @@ public final class CggmpDkgProtocolHandler {
                     task.timeout();
                     throw new CompletionException(ex);
                 });
-    }
-
-    /**
-     * 确保本地辅助密钥已就绪
-     */
-    private CompletableFuture<Void> ensureLocalAuxReady() {
-        boolean hasAux = loadLatestAuxInfo(svc.nodeId) != null;
-        if (!hasAux) {
-            return CompletableFuture.failedFuture(new RuntimeException("Missing auxiliary info on local node."));
-        }
-        return CompletableFuture.completedFuture(null);
-    }
-
-    private AuxInfo loadLatestAuxInfo(int nodeId) {
-        return svc.auxInfoDao.loadLatestSync(nodeId);
     }
 
     private CompletableFuture<Void> delayMs(long delayMs) {
