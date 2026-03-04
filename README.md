@@ -138,51 +138,6 @@ mpc/
 ├── gradlew.bat
 └── settings.gradle
 ```
-
-## 性能优化
-
-### 已完成的优化
-
-1. **线程池优化**
-   - 核心线程数：CPU 核心数 * 2
-   - 最大线程数：CPU 核心数 * 4
-   - 任务队列：LinkedBlockingQueue
-
-2. **P2P 网络 TCP 优化**
-   - 启用 TCP_NODELAY（禁用 Nagle 算法）
-   - 接收/发送缓冲区：1MB
-   - 使用 PooledByteBufAllocator
-   - 写缓冲区水位：256KB - 1MB
-   - WorkerGroup 线程数：CPU * 2
-
-3. **重试机制优化**
-   - 广播重试间隔：500ms → 4000ms（指数退避）
-   - 减少不必要的重试日志
-
-4. **超时参数优化**
-   - 签名承诺超时：60 秒
-   - 签名分享超时：30 秒
-   - DKG 承诺超时：60 秒
-
-5. **移除冗余验证**
-   - 移除重复的 codec roundtrip 验证
-   - 减少不必要的计算开销
-
-6. **本地库优化**
-   - 使用本地 GMP 库加速大整数运算
-   - 优化 BigInteger 操作性能
-
-### 性能测试结果
-
-| 阶段 | 耗时 |
-|------|------|
-| Presign R1 (Commitment) | ~1秒 |
-| Presign R2 (MtA Response + Proof) | ~2.7秒 |
-| Presign R3 (Accumulate) | ~4秒 |
-| **签名总耗时** | **约 4 秒** |
-
-相比优化前（~24秒），性能提升约 **6 倍**。
-
 ## 安装和运行
 
 ### 前提条件
