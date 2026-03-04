@@ -132,9 +132,6 @@ mpc/
 │   ├── config/                             # 配置文件
 │   ├── build_native.sh                     # 构建本地库脚本
 │   └── generate_dev_tls.sh                 # 生成开发 TLS 证书脚本
-├── .trae/                                  # Trae IDE 配置
-│   └── documents/
-│       └── mpc_wallet_3of5_plan.md
 ├── build.gradle
 ├── gradle.properties
 ├── gradlew
