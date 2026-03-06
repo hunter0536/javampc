@@ -179,35 +179,19 @@ public final class PresignProofs {
         BigInteger[] AjArr;
         BigInteger[] BjArr;
         
-        if (NativeBigInteger.isNativeAvailable() && effectiveKappa >= 16) {
-            AjArr = new BigInteger[effectiveKappa];
-            BjArr = new BigInteger[effectiveKappa];
-            for (int i = 0; i < effectiveKappa; i++) {
-                AjArr[i] = BigIntegerUtils.powSigned(C, alphaArr[i], N0sq)
-                        .multiply(BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), betaForN0[i], N0sq))
-                        .multiply(rArr[i].modPow(N0, N0sq))
-                        .mod(N0sq);
-                BjArr[i] = BigIntegerUtils.powSigned(BigInteger.ONE.add(N1), betaArr[i], N1sq)
-                        .multiply(sArr[i].modPow(N1, N1sq))
-                        .mod(N1sq);
-            }
-            logger.debug("PiAffG modPow computed in {} ms (native powSigned)", 
-                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
-        } else {
-            AjArr = new BigInteger[effectiveKappa];
-            BjArr = new BigInteger[effectiveKappa];
-            for (int i = 0; i < effectiveKappa; i++) {
-                AjArr[i] = BigIntegerUtils.powSigned(C, alphaArr[i], N0sq)
-                        .multiply(BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), betaForN0[i], N0sq))
-                        .multiply(rArr[i].modPow(N0, N0sq))
-                        .mod(N0sq);
-                BjArr[i] = BigIntegerUtils.powSigned(BigInteger.ONE.add(N1), betaArr[i], N1sq)
-                        .multiply(sArr[i].modPow(N1, N1sq))
-                        .mod(N1sq);
-            }
-            logger.debug("PiAffG modPow computed in {} ms (Java fallback)", 
-                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
-        }
+        // 使用GPU批量计算AffG证明（修复bug：使用正确的onePlusN0和onePlusN1）
+        BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+        BigInteger onePlusN1 = BigInteger.ONE.add(N1);
+        
+        com.example.mpc.cggmp.util.NativeBigInteger.AffGProofResult affGResult = 
+            com.example.mpc.cggmp.util.GpuBigInteger.computeAffGProofTuples(
+                C, onePlusN0, N0sq, onePlusN1, N1sq, alphaArr, betaForN0, betaArr, rArr, sArr
+            );
+        AjArr = affGResult.Aj();
+        BjArr = affGResult.Bj();
+        
+        logger.debug("PiAffG modPow computed in {} ms (GPU batch acceleration)", 
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
         List<BigInteger> A = new ArrayList<>(effectiveKappa);
         List<BigInteger> B = new ArrayList<>(effectiveKappa);
@@ -585,6 +569,7 @@ public final class PresignProofs {
         List<BigInteger> beta = new ArrayList<>(effectiveKappa);
         List<BigInteger> r = new ArrayList<>(effectiveKappa);
 
+        // 生成所有随机数
         for (int i = 0; i < effectiveKappa; i++) {
             BigInteger ai = randomSigned(rangeBound, rnd);
             BigInteger bi = randomSigned(rangeBound, rnd);
@@ -592,15 +577,27 @@ public final class PresignProofs {
             alpha.add(ai);
             beta.add(bi);
             r.add(ri);
-
-            BigInteger Aj = BigIntegerUtils.powSigned(K, ai.negate(), N0sq)
-                    .multiply(BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), bi, N0sq))
-                    .multiply(ri.modPow(N0, N0sq))
-                    .mod(N0sq);
-            A.add(Aj);
-            B.add(ecMulSigned(g, bi).normalize());
-            C.add(ecMulSigned(g, ai).normalize());
         }
+
+        // 使用GPU批量计算A值
+        long batchStart = System.nanoTime();
+        BigInteger[] alphaArr = alpha.toArray(new BigInteger[0]);
+        BigInteger[] betaArr = beta.toArray(new BigInteger[0]);
+        BigInteger[] rArr = r.toArray(new BigInteger[0]);
+        
+        com.example.mpc.cggmp.util.GpuBigInteger.DecProofResult decResult = 
+            com.example.mpc.cggmp.util.GpuBigInteger.computeDecProofTuples(
+                K, N0, N0sq, alphaArr, betaArr, rArr
+            );
+        
+        for (int i = 0; i < effectiveKappa; i++) {
+            A.add(decResult.A()[i]);
+            B.add(ecMulSigned(g, betaArr[i]).normalize());
+            C.add(ecMulSigned(g, alphaArr[i]).normalize());
+        }
+        
+        logger.debug("PiDec A values computed in {} ms (GPU batch acceleration)", 
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
         boolean[] e = challengeBits("PI_DEC", context, effectiveKappa, A, B, C);
         for (int i = 0; i < effectiveKappa; i++) {

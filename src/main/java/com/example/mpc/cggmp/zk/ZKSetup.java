@@ -88,12 +88,23 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
     }
 
     private static BigInteger generateSafePrime(int bits, SecureRandom rnd) {
-        BigInteger p;
+        final int batchSize = Runtime.getRuntime().availableProcessors() * 2;
+        
         while (true) {
-            BigInteger q = BigInteger.probablePrime(bits - 1, rnd);
-            p = q.shiftLeft(1).add(BigInteger.ONE);
-            if (p.isProbablePrime(128)) {
-                return p;
+            java.util.List<BigInteger> candidates = java.util.stream.IntStream.range(0, batchSize)
+                .parallel()
+                .mapToObj(i -> {
+                    BigInteger q = BigInteger.probablePrime(bits - 1, rnd);
+                    return q.shiftLeft(1).add(BigInteger.ONE);
+                })
+                .collect(java.util.stream.Collectors.toList());
+            
+            java.util.Optional<BigInteger> found = candidates.parallelStream()
+                .filter(p -> p.isProbablePrime(128))
+                .findAny();
+            
+            if (found.isPresent()) {
+                return found.get();
             }
         }
     }

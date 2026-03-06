@@ -130,10 +130,33 @@ public final class BiPrimeProofGenerator {
             byte[] ctx
     ) {
         List<Round> rounds = new ArrayList<>(blumRounds);
+        
+        // GPU optimization: collect all y values for batch processing
+        BigInteger[] yValues = new BigInteger[blumRounds];
+        BigInteger[] basesP = new BigInteger[blumRounds];
+        BigInteger[] basesQ = new BigInteger[blumRounds];
+        
+        // Step 1: Generate all y values and prepare bases
         for (int i = 0; i < blumRounds; i++) {
-            var y = genY(N, w, ctx, i);
-            var zp = y.mod(p).modPow(eP, p);
-            var zq = y.mod(q).modPow(eQ, q);
+            yValues[i] = genY(N, w, ctx, i);
+            basesP[i] = yValues[i].mod(p);
+            basesQ[i] = yValues[i].mod(q);
+        }
+        
+        // Step 2: Use GPU-accelerated batch modPow
+        BigInteger[] zps = com.example.mpc.cggmp.util.GpuBigInteger.batchModPow(basesP, eP, p);
+        BigInteger[] zqs = com.example.mpc.cggmp.util.GpuBigInteger.batchModPow(basesQ, eQ, q);
+        
+        BigInteger[] zValues = new BigInteger[blumRounds];
+        BigInteger[] rhsValues = new BigInteger[blumRounds];
+        boolean[] aBits = new boolean[blumRounds];
+        boolean[] bBits = new boolean[blumRounds];
+        
+        // Step 3: Process results and compute remaining operations
+        for (int i = 0; i < blumRounds; i++) {
+            var y = yValues[i];
+            var zp = zps[i];
+            var zq = zqs[i];
             var z = crt(zp, p, zq, q, N);
 
             int yP = BigIntegerUtils.jacobi(y, p);
@@ -159,13 +182,30 @@ public final class BiPrimeProofGenerator {
             var rhs = y;
             if (bBit) rhs = rhs.multiply(w).mod(N);
             if (aBit) rhs = N.subtract(rhs).mod(N);
-
-            var xp = rhs.mod(p).modPow(inv4p, p);
-            var xq = rhs.mod(q).modPow(inv4q, q);
-            var x = crt(xp, p, xq, q, N);
-
-            rounds.add(new Round(x, z, aBit, bBit));
+            
+            zValues[i] = z;
+            rhsValues[i] = rhs;
+            aBits[i] = aBit;
+            bBits[i] = bBit;
         }
+        
+        // Step 4: Batch compute xp and xq
+        BigInteger[] rhsP = new BigInteger[blumRounds];
+        BigInteger[] rhsQ = new BigInteger[blumRounds];
+        for (int i = 0; i < blumRounds; i++) {
+            rhsP[i] = rhsValues[i].mod(p);
+            rhsQ[i] = rhsValues[i].mod(q);
+        }
+        
+        BigInteger[] xps = com.example.mpc.cggmp.util.GpuBigInteger.batchModPow(rhsP, inv4p, p);
+        BigInteger[] xqs = com.example.mpc.cggmp.util.GpuBigInteger.batchModPow(rhsQ, inv4q, q);
+        
+        // Step 5: Create rounds
+        for (int i = 0; i < blumRounds; i++) {
+            var x = crt(xps[i], p, xqs[i], q, N);
+            rounds.add(new Round(x, zValues[i], aBits[i], bBits[i]));
+        }
+        
         return rounds;
     }
 

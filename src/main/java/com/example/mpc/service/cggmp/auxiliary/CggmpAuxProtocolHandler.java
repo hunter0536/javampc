@@ -47,15 +47,27 @@ public final class CggmpAuxProtocolHandler {
         logger.debug("AUX protocol starting: taskId={}, executionId={}", task.taskId, task.executionId);
         return CompletableFuture.supplyAsync(() -> {
                     logger.debug("AUX protocol running: taskId={}, executionId={}", task.taskId, task.executionId);
+                    
+                    // 并行执行Paillier密钥生成和Pedersen/ZK setup
                     long paillierStart = System.nanoTime();
-                    PaillierEncryption paillier = new PaillierEncryption(svc.auxPaillierBits);
-                    logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, svc.auxPaillierBits);
-                    task.paillier = paillier;
+                    CompletableFuture<PaillierEncryption> paillierFuture = CompletableFuture.supplyAsync(() -> {
+                        PaillierEncryption p = new PaillierEncryption(svc.auxPaillierBits);
+                        logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, svc.auxPaillierBits);
+                        return p;
+                    }, auxExecutorService);
+                    
                     long pedStart = System.nanoTime();
-                    logger.debug("AUX Pedersen/ZK setup start: taskId={}, executionId={}, bits={}",
-                            task.taskId, task.executionId, paillier.getPublicKeyInfo().bitLength());
-                    ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength());
-                    logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength());
+                    CompletableFuture<ZKSetup.ZKSetupWithLambda> pedFuture = CompletableFuture.supplyAsync(() -> {
+                        ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(svc.auxPaillierBits);
+                        logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, svc.auxPaillierBits);
+                        return ped;
+                    }, auxExecutorService);
+                    
+                    // 等待两个任务完成
+                    PaillierEncryption paillier = paillierFuture.join();
+                    ZKSetup.ZKSetupWithLambda ped = pedFuture.join();
+                    
+                    task.paillier = paillier;
                     task.hatN = ped.zk().hatN();
                     task.s = ped.zk().h1();
                     task.t = ped.zk().h2();

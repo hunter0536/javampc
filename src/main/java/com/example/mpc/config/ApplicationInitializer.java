@@ -1,6 +1,8 @@
 package com.example.mpc.config;
 
 import com.example.mpc.constant.Constants;
+import com.example.mpc.cggmp.util.NativeBigInteger;
+import com.example.mpc.cggmp.util.GpuBigInteger;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
@@ -8,13 +10,12 @@ import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.DatabaseService;
 import com.example.mpc.service.GennaroDkgService;
 import com.example.mpc.service.NodeService;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 @Component
 public class ApplicationInitializer implements CommandLineRunner {
@@ -25,7 +26,6 @@ public class ApplicationInitializer implements CommandLineRunner {
 
     @Autowired
     private GennaroDkgService gennaroDkgService;
-
 
     @Autowired
     private CggmpSignatureService cggmpSignatureService;
@@ -39,8 +39,6 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Autowired
     private CggmpRefreshService cggmpRefreshService;
 
-
-
     @Autowired
     private NodeService nodeService;
 
@@ -52,6 +50,25 @@ public class ApplicationInitializer implements CommandLineRunner {
 
     @Value("${app.init.legacy.enabled:true}")
     private boolean enableLegacy;
+
+    static {
+        logger.info("============================================================");
+        logger.info("ApplicationInitializer static initialization started");
+        try {
+            Class.forName("com.example.mpc.cggmp.util.NativeBigInteger");
+            logger.info("NativeBigInteger class loaded successfully");
+        } catch (ClassNotFoundException e) {
+            logger.error("Failed to load NativeBigInteger class: {}", e.getMessage());
+        }
+        try {
+            Class.forName("com.example.mpc.cggmp.util.GpuBigInteger");
+            logger.info("GpuBigInteger class loaded successfully");
+        } catch (ClassNotFoundException e) {
+            logger.error("Failed to load GpuBigInteger class: {}", e.getMessage());
+        }
+        logger.info("ApplicationInitializer static initialization completed");
+        logger.info("============================================================");
+    }
 
     @Override
     public void run(String... args) throws Exception {

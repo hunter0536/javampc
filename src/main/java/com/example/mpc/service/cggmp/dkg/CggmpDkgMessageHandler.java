@@ -142,6 +142,15 @@ public final class CggmpDkgMessageHandler {
         CggmpDkgTask task = svc.dkgTasks.get(taskId);
         if (task == null) {
             cachePendingRound1(taskId, senderNodeId, dataMap);
+            // 再次检查任务是否已经创建（解决竞态条件问题）
+            // 使用同步块确保原子性
+            synchronized (pendingRound1ByTask) {
+                task = svc.dkgTasks.get(taskId);
+                if (task != null) {
+                    // 任务已创建，处理所有缓存的消息
+                    drainPendingRound1(task);
+                }
+            }
             return;
         }
         if (!executionId.equals(task.executionId)) {
@@ -557,7 +566,10 @@ public final class CggmpDkgMessageHandler {
      * 处理待处理的Round 1消息
      */
     public void drainPendingRound1(CggmpDkgTask task) {
-        ConcurrentHashMap<Integer, Map<String, Object>> pending = pendingRound1ByTask.remove(task.taskId);
+        ConcurrentHashMap<Integer, Map<String, Object>> pending;
+        synchronized (pendingRound1ByTask) {
+            pending = pendingRound1ByTask.remove(task.taskId);
+        }
         if (pending == null || pending.isEmpty()) {
             return;
         }
@@ -802,15 +814,17 @@ public final class CggmpDkgMessageHandler {
         if (taskId == null) {
             return;
         }
-        ConcurrentHashMap<Integer, Map<String, Object>> pending =
-                pendingRound1ByTask.computeIfAbsent(taskId, ignored -> new ConcurrentHashMap<>());
-        Map<String, Object> normalized = new HashMap<>();
-        for (Map.Entry<?, ?> entry : dataMap.entrySet()) {
-            if (entry.getKey() instanceof String key) {
-                normalized.put(key, entry.getValue());
+        synchronized (pendingRound1ByTask) {
+            ConcurrentHashMap<Integer, Map<String, Object>> pending =
+                    pendingRound1ByTask.computeIfAbsent(taskId, ignored -> new ConcurrentHashMap<>());
+            Map<String, Object> normalized = new HashMap<>();
+            for (Map.Entry<?, ?> entry : dataMap.entrySet()) {
+                if (entry.getKey() instanceof String key) {
+                    normalized.put(key, entry.getValue());
+                }
             }
+            pending.put(senderId, normalized);
         }
-        pending.put(senderId, normalized);
         logger.debug("Cached DKG Round1 from node {} for task {} (waiting for task creation)", senderId, taskId);
     }
 }

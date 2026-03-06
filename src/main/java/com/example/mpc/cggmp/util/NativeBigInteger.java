@@ -6,17 +6,23 @@ import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-public final class NativeBigInteger {
+public class NativeBigInteger {
+    private static final Logger logger = LoggerFactory.getLogger(NativeBigInteger.class);
     private static final boolean NATIVE_AVAILABLE;
     
     static {
+        logger.info("NativeBigInteger static initialization started");
         boolean available = false;
         try {
             String libName = System.mapLibraryName("mpc_gmp");
+            logger.info("Attempting to load native library: {}", libName);
             
-            InputStream libStream = NativeBigInteger.class.getResourceAsStream("/native/" + libName);
+            InputStream libStream = NativeBigInteger.class.getResourceAsStream("/native/cpu/" + libName);
             if (libStream != null) {
+                logger.info("Native library found in classpath: /native/cpu/{}", libName);
                 Path tempDir = Files.createTempDirectory("mpc_native");
                 Path tempLib = tempDir.resolve(libName);
                 Files.copy(libStream, tempLib, StandardCopyOption.REPLACE_EXISTING);
@@ -24,18 +30,22 @@ public final class NativeBigInteger {
                 
                 System.load(tempLib.toAbsolutePath().toString());
                 available = true;
-                System.out.println("Native GMP library loaded from classpath: " + libName);
+                logger.info("Native GMP library loaded from classpath: {}", libName);
             } else {
+                logger.info("Native library not found in classpath, trying system library");
                 System.loadLibrary("mpc_gmp");
                 available = true;
-                System.out.println("Native GMP library loaded from system path");
+                logger.info("Native GMP library loaded from system path");
             }
         } catch (UnsatisfiedLinkError e) {
-            System.err.println("Native GMP library not available, falling back to Java BigInteger: " + e.getMessage());
+            logger.error("Native GMP library not available, falling back to Java BigInteger: {}", e.getMessage());
+            logger.error("UnsatisfiedLinkError stack trace:", e);
         } catch (IOException e) {
-            System.err.println("Failed to extract native library: " + e.getMessage());
+            logger.error("Failed to extract native library: {}", e.getMessage());
+            logger.error("IOException stack trace:", e);
         }
         NATIVE_AVAILABLE = available;
+        logger.info("NativeBigInteger static initialization completed, NATIVE_AVAILABLE={}", NATIVE_AVAILABLE);
     }
     
     public static boolean isNativeAvailable() {
@@ -65,9 +75,9 @@ public final class NativeBigInteger {
         return new BigInteger(data);
     }
     
-    private static native BigInteger nativeModPow(BigInteger base, BigInteger exp, BigInteger mod);
-    private static native BigInteger nativeModInverse(BigInteger val, BigInteger mod);
-    private static native BigInteger nativeMultiply(BigInteger a, BigInteger b);
+    public static native BigInteger nativeModPow(BigInteger base, BigInteger exp, BigInteger mod);
+    public static native BigInteger nativeModInverse(BigInteger val, BigInteger mod);
+    public static native BigInteger nativeMultiply(BigInteger a, BigInteger b);
     
     public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
         // 使用 GpuBigInteger 作为默认实现
@@ -83,19 +93,22 @@ public final class NativeBigInteger {
     }
     
     public static AffGProofResult computeAffGProofTuples(
-            BigInteger C, BigInteger N0sq, BigInteger N1sq,
-            BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs, BigInteger[] ss) {
+            BigInteger C, BigInteger onePlusN0, BigInteger N0sq, BigInteger onePlusN1, BigInteger N1sq,
+            BigInteger[] alphas, BigInteger[] betasForN0, BigInteger[] betasForN1, BigInteger[] rs, BigInteger[] ss) {
         // 使用 GpuBigInteger 作为默认实现
-        return GpuBigInteger.computeAffGProofTuples(C, N0sq, N1sq, alphas, betas, rs, ss);
+        return GpuBigInteger.computeAffGProofTuples(C, onePlusN0, N0sq, onePlusN1, N1sq, alphas, betasForN0, betasForN1, rs, ss);
     }
     
     public record AffGProofResult(BigInteger[] Aj, BigInteger[] Bj) {}
     
-    private static native BigInteger[] nativeBatchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod);
-    private static native BigInteger[] nativeBatchModPowDifferentExp(BigInteger[] bases, BigInteger[] exps, BigInteger mod);
-    private static native BigInteger[] nativeAffGProofTuple(
-            BigInteger C, BigInteger N0sq, BigInteger N1sq,
-            BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs, BigInteger[] ss);
+    public static native BigInteger[] nativeBatchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod);
+    public static native BigInteger[] nativeBatchModPowDifferentExp(BigInteger[] bases, BigInteger[] exps, BigInteger mod);
+    public static native BigInteger[] nativeAffGProofTuple(
+            BigInteger C, BigInteger onePlusN0, BigInteger N0sq, BigInteger onePlusN1, BigInteger N1sq,
+            BigInteger[] alphas, BigInteger[] betasForN0, BigInteger[] betasForN1, BigInteger[] rs, BigInteger[] ss);
+    public static native BigInteger[] nativeDecProofTuple(
+            BigInteger K, BigInteger N0, BigInteger N0sq,
+            BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs);
     
     public static class NativeModPowContext implements AutoCloseable {
         private long nativePtr;

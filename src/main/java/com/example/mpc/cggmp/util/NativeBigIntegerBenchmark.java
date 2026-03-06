@@ -171,8 +171,10 @@ public final class NativeBigIntegerBenchmark {
         
         BigInteger N0 = new BigInteger(keyBits, random).setBit(keyBits - 1);
         BigInteger N0sq = N0.multiply(N0);
+        BigInteger onePlusN0 = BigInteger.ONE.add(N0);
         BigInteger N1 = new BigInteger(keyBits, random).setBit(keyBits - 1);
         BigInteger N1sq = N1.multiply(N1);
+        BigInteger onePlusN1 = BigInteger.ONE.add(N1);
         BigInteger C = new BigInteger(keyBits, random).mod(N0sq);
         
         BigInteger[] alphas = new BigInteger[kappa];
@@ -211,12 +213,12 @@ public final class NativeBigIntegerBenchmark {
             nativeTime = (System.nanoTime() - nativeStart) / 1_000_000;
             
             for (int i = 0; i < 5; i++) {
-                NativeBigInteger.computeAffGProofTuples(C, N0sq, N1sq, alphas, betas, rs, ss);
+                NativeBigInteger.computeAffGProofTuples(C, onePlusN0, N0sq, onePlusN1, N1sq, alphas, betas, betas, rs, ss);
             }
             
             long nativeBatchStart = System.nanoTime();
             for (int iter = 0; iter < 3; iter++) {
-                NativeBigInteger.computeAffGProofTuples(C, N0sq, N1sq, alphas, betas, rs, ss);
+                NativeBigInteger.computeAffGProofTuples(C, onePlusN0, N0sq, onePlusN1, N1sq, alphas, betas, betas, rs, ss);
             }
             nativeBatchTime = (System.nanoTime() - nativeBatchStart) / 1_000_000;
         }

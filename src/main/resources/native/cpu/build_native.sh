@@ -12,9 +12,9 @@
 #   ./build_native.sh --dynamic
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
 NATIVE_SRC="$PROJECT_ROOT/src/main/native"
-NATIVE_LIB="$PROJECT_ROOT/src/main/resources/native"
+NATIVE_LIB="$PROJECT_ROOT/src/main/resources/native/cpu"
 GMP_BUILD="$PROJECT_ROOT/build/gmp"
 
 STATIC_BUILD=false

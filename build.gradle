@@ -38,22 +38,17 @@ dependencies {
     implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
     
     // GPU 加速库依赖配置
-    // 1. JCuda (NVIDIA GPU):
+    // JCuda (NVIDIA GPU):
+    // 核心库（注意：natives包不支持M芯片Mac，已手动下载到src/main/resources/native/）
+    implementation('org.jcuda:jcuda:11.8.0') {
+        exclude group: 'org.jcuda', module: 'jcuda-natives'
+    }
+    // JOCL (OpenCL，支持包括M芯片在内的多种GPU):
     // 核心库
-    // implementation 'org.jcuda:jcuda:11.8.0'
-    // 平台特定的native库
-    // implementation "org.jcuda:jcuda-natives:11.8.0:${osdetector.classifier}"
-    // 2. JOCL (OpenCL，支持包括M芯片在内的多种GPU):
-    // 核心库
-     implementation 'org.jocl:jocl:2.0.2'
-    // 平台特定的native库
-     implementation "org.jocl:jocl-natives:2.0.2:${osdetector.classifier}"
-    
-    // 注意：启用GPU支持时，请取消注释相应的依赖
-    // 对于M芯片Mac，推荐使用JOCL而不是JCuda
-    
-    // 注意：启用GPU支持时，请取消注释相应的依赖
-    // 对于M芯片Mac，推荐使用JOCL而不是JCuda
+    implementation('org.jocl:jocl:2.0.6') {
+        exclude group: 'org.jocl', module: 'jocl-natives'
+    }
+    // 注意：native库已手动下载到src/main/resources/native/
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
@@ -91,7 +86,7 @@ task buildNative(type: Exec) {
     description = 'Build GMP JNI native library (static linked, no runtime dependency)'
     
     workingDir projectDir
-    commandLine 'bash', 'scripts/build_native.sh', '--static'
+    commandLine 'bash', 'src/main/resources/native/cpu/build_native.sh', '--static'
     
     onlyIf {
         file('src/main/native/mpc_gmp.c').exists()
@@ -104,7 +99,7 @@ task buildNativeDynamic(type: Exec) {
     description = 'Build GMP JNI native library (dynamic linked, requires GMP at runtime)'
     
     workingDir projectDir
-    commandLine 'bash', 'scripts/build_native.sh', '--dynamic'
+    commandLine 'bash', 'src/main/resources/native/cpu/build_native.sh', '--dynamic'
     
     onlyIf {
         file('src/main/native/mpc_gmp.c').exists()
@@ -129,7 +124,7 @@ tasks.named('compileJava') {
             try {
                 exec {
                     workingDir projectDir
-                    commandLine 'bash', 'scripts/build_native.sh'
+                    commandLine 'bash', 'src/main/resources/native/cpu/build_native.sh'
                     ignoreExitValue = true
                 }
             } catch (Exception e) {
