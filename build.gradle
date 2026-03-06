@@ -93,6 +93,19 @@ task buildNative(type: Exec) {
     }
 }
 
+// 编译 Metal shader 为 metallib（macOS）
+task buildMetalShaders(type: Exec) {
+    group = 'build'
+    description = 'Build Metal shader library (metallib)'
+
+    workingDir projectDir
+    commandLine 'bash', '-c', 'xcrun -sdk macosx metal -c src/main/resources/native/darwin/big_integer_shaders_complete.metal -o build/tmp/big_integer_shaders_complete.air && xcrun -sdk macosx metallib build/tmp/big_integer_shaders_complete.air -o src/main/resources/native/darwin/big_integer_shaders_complete.metallib'
+
+    onlyIf {
+        file('src/main/resources/native/darwin/big_integer_shaders_complete.metal').exists()
+    }
+}
+
 // 动态链接版本（需要目标机器安装 GMP）
 task buildNativeDynamic(type: Exec) {
     group = 'build'
@@ -129,6 +142,17 @@ tasks.named('compileJava') {
                 }
             } catch (Exception e) {
                 logger.warn("Native library build skipped: ${e.message}")
+            }
+        }
+        if (file('src/main/resources/native/darwin/big_integer_shaders_complete.metal').exists()) {
+            try {
+                exec {
+                    workingDir projectDir
+                    commandLine 'bash', '-c', 'xcrun -sdk macosx metal -c src/main/resources/native/darwin/big_integer_shaders_complete.metal -o build/tmp/big_integer_shaders_complete.air && xcrun -sdk macosx metallib build/tmp/big_integer_shaders_complete.air -o src/main/resources/native/darwin/big_integer_shaders_complete.metallib'
+                    ignoreExitValue = true
+                }
+            } catch (Exception e) {
+                logger.warn("Metal shader build skipped: ${e.message}")
             }
         }
     }

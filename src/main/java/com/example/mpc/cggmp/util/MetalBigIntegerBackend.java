@@ -42,8 +42,14 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     public MetalBigIntegerBackend() {
         try {
             logger.debug("MetalBigIntegerBackend: Calling nativeInit()");
-            nativeHandle = nativeInit();
-            logger.debug("MetalBigIntegerBackend: nativeInit() returned handle: {}", nativeHandle);
+            String shaderPath = extractShaderToTemp();
+            if (shaderPath != null) {
+                nativeHandle = nativeInitWithShaderPath(shaderPath);
+                logger.debug("MetalBigIntegerBackend: nativeInitWithShaderPath() returned handle: {}", nativeHandle);
+            } else {
+                nativeHandle = nativeInit();
+                logger.debug("MetalBigIntegerBackend: nativeInit() returned handle: {}", nativeHandle);
+            }
             
             if (nativeHandle != 0) {
                 boolean available = nativeIsAvailable(nativeHandle);
@@ -62,6 +68,24 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         } catch (Exception e) {
             logger.error("MetalBigIntegerBackend: Initialization error: {}", e.getMessage(), e);
             initialized = false;
+        }
+    }
+
+    private String extractShaderToTemp() {
+        String resourcePath = "/native/darwin/big_integer_shaders_complete.metallib";
+        try (InputStream in = MetalBigIntegerBackend.class.getResourceAsStream(resourcePath)) {
+            if (in == null) {
+                logger.debug("MetalBigIntegerBackend: Shader resource not found in classpath: {}", resourcePath);
+                return null;
+            }
+            java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("metal_shader");
+            java.nio.file.Path tempFile = tempDir.resolve("big_integer_shaders_complete.metallib");
+            java.nio.file.Files.copy(in, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            logger.debug("MetalBigIntegerBackend: Shader extracted to {}", tempFile);
+            return tempFile.toAbsolutePath().toString();
+        } catch (Exception e) {
+            logger.warn("MetalBigIntegerBackend: Failed to extract shader: {}", e.getMessage());
+            return null;
         }
     }
     
@@ -133,22 +157,57 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     
     @Override
     public BigInteger[] computeDecProofTuple(
-            BigInteger K, BigInteger N0sq,
+            BigInteger K, BigInteger N0, BigInteger N0sq,
             BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs) {
+        
+        if (!initialized) {
+            int kappa = alphas.length;
+            BigInteger[] results = new BigInteger[kappa];
+            BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+            
+            java.util.stream.IntStream.range(0, kappa)
+                .parallel()
+                .forEach(i -> {
+                    results[i] = BigIntegerUtils.powSigned(K, alphas[i].negate(), N0sq)
+                            .multiply(BigIntegerUtils.powSigned(onePlusN0, betas[i], N0sq))
+                            .multiply(rs[i].modPow(N0, N0sq))
+                            .mod(N0sq);
+                });
+            return results;
+        }
         
         int kappa = alphas.length;
         BigInteger[] results = new BigInteger[kappa];
-        BigInteger onePlusN0 = BigInteger.ONE.add(N0sq.sqrt());
+        int numLength = getNumLength(N0sq);
         
-        // 使用并行流进行CPU加速
-        java.util.stream.IntStream.range(0, kappa)
-            .parallel()
-            .forEach(i -> {
-                results[i] = BigIntegerUtils.powSigned(K, alphas[i].negate(), N0sq)
-                        .multiply(BigIntegerUtils.powSigned(onePlusN0, betas[i], N0sq))
-                        .multiply(rs[i].modPow(N0sq.sqrt(), N0sq))
-                        .mod(N0sq);
-            });
+        int[] kArray = bigIntegerToIntArray(K, numLength);
+        int[] n0Array = bigIntegerToIntArray(N0, numLength);
+        int[] n0sqArray = bigIntegerToIntArray(N0sq, numLength);
+        
+        int[] negAlphasArray = new int[kappa * numLength];
+        int[] betasArray = new int[kappa * numLength];
+        int[] rsArray = new int[kappa * numLength];
+        
+        for (int i = 0; i < kappa; i++) {
+            BigInteger negAlpha = alphas[i].negate();
+            int[] negAlphaArr = bigIntegerToIntArray(negAlpha, numLength);
+            int[] betaArr = bigIntegerToIntArray(betas[i], numLength);
+            int[] rArr = bigIntegerToIntArray(rs[i], numLength);
+            System.arraycopy(negAlphaArr, 0, negAlphasArray, i * numLength, numLength);
+            System.arraycopy(betaArr, 0, betasArray, i * numLength, numLength);
+            System.arraycopy(rArr, 0, rsArray, i * numLength, numLength);
+        }
+        
+        int[] resultsArray = new int[kappa * numLength];
+        nativeComputeDecProofTuple(nativeHandle, kArray, n0Array, n0sqArray,
+                negAlphasArray, betasArray, rsArray,
+                resultsArray, numLength, kappa);
+        
+        for (int i = 0; i < kappa; i++) {
+            int[] slice = new int[numLength];
+            System.arraycopy(resultsArray, i * numLength, slice, 0, numLength);
+            results[i] = intArrayToBigInteger(slice);
+        }
         
         return results;
     }
@@ -173,31 +232,77 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     
     @Override
     public BigInteger[] computeAffGProofTuple(
-            BigInteger C, BigInteger N0sq, BigInteger N1sq,
+            BigInteger C, BigInteger N0, BigInteger N0sq, BigInteger N1, BigInteger N1sq,
             BigInteger[] alphas, BigInteger[] betasForN0, BigInteger[] betasForN1, BigInteger[] rs, BigInteger[] ss) {
+        
+        if (!initialized) {
+            int kappa = alphas.length;
+            BigInteger[] results = new BigInteger[kappa * 2];
+            BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+            BigInteger onePlusN1 = BigInteger.ONE.add(N1);
+            
+            java.util.stream.IntStream.range(0, kappa)
+                .parallel()
+                .forEach(i -> {
+                    BigInteger Aj = C.modPow(alphas[i], N0sq)
+                            .multiply(onePlusN0.modPow(betasForN0[i], N0sq))
+                            .multiply(rs[i].modPow(N0, N0sq))
+                            .mod(N0sq);
+                    
+                    BigInteger Bj = onePlusN1.modPow(betasForN1[i], N1sq)
+                            .multiply(ss[i].modPow(N1, N1sq))
+                            .mod(N1sq);
+                    
+                    results[i * 2] = Aj;
+                    results[i * 2 + 1] = Bj;
+                });
+            
+            return results;
+        }
         
         int kappa = alphas.length;
         BigInteger[] results = new BigInteger[kappa * 2];
-        BigInteger onePlusN0 = BigInteger.ONE.add(N0sq.sqrt());
-        BigInteger onePlusN1 = BigInteger.ONE.add(N1sq.sqrt());
-        BigInteger N0 = N0sq.sqrt();
-        BigInteger N1 = N1sq.sqrt();
+        int numLength = getNumLength(N0sq);
         
-        java.util.stream.IntStream.range(0, kappa)
-            .parallel()
-            .forEach(i -> {
-                BigInteger Aj = C.modPow(alphas[i], N0sq)
-                        .multiply(onePlusN0.modPow(betasForN0[i], N0sq))
-                        .multiply(rs[i].modPow(N0, N0sq))
-                        .mod(N0sq);
-                
-                BigInteger Bj = onePlusN1.modPow(betasForN1[i], N1sq)
-                        .multiply(ss[i].modPow(N1, N1sq))
-                        .mod(N1sq);
-                
-                results[i * 2] = Aj;
-                results[i * 2 + 1] = Bj;
-            });
+        int[] cArray = bigIntegerToIntArray(C, numLength);
+        int[] n0Array = bigIntegerToIntArray(N0, numLength);
+        int[] n0sqArray = bigIntegerToIntArray(N0sq, numLength);
+        int[] n1Array = bigIntegerToIntArray(N1, numLength);
+        int[] n1sqArray = bigIntegerToIntArray(N1sq, numLength);
+        
+        int[] alphasArray = new int[kappa * numLength];
+        int[] betasForN0Array = new int[kappa * numLength];
+        int[] betasForN1Array = new int[kappa * numLength];
+        int[] rsArray = new int[kappa * numLength];
+        int[] ssArray = new int[kappa * numLength];
+        
+        for (int i = 0; i < kappa; i++) {
+            int[] alphaArr = bigIntegerToIntArray(alphas[i], numLength);
+            int[] betaN0Arr = bigIntegerToIntArray(betasForN0[i], numLength);
+            int[] betaN1Arr = bigIntegerToIntArray(betasForN1[i], numLength);
+            int[] rArr = bigIntegerToIntArray(rs[i], numLength);
+            int[] sArr = bigIntegerToIntArray(ss[i], numLength);
+            System.arraycopy(alphaArr, 0, alphasArray, i * numLength, numLength);
+            System.arraycopy(betaN0Arr, 0, betasForN0Array, i * numLength, numLength);
+            System.arraycopy(betaN1Arr, 0, betasForN1Array, i * numLength, numLength);
+            System.arraycopy(rArr, 0, rsArray, i * numLength, numLength);
+            System.arraycopy(sArr, 0, ssArray, i * numLength, numLength);
+        }
+        
+        int[] ajArray = new int[kappa * numLength];
+        int[] bjArray = new int[kappa * numLength];
+        nativeComputeAffGProofTuple(nativeHandle, cArray, n0Array, n0sqArray, n1Array, n1sqArray,
+                alphasArray, betasForN0Array, betasForN1Array, rsArray, ssArray,
+                ajArray, bjArray, numLength, kappa);
+        
+        for (int i = 0; i < kappa; i++) {
+            int[] ajSlice = new int[numLength];
+            int[] bjSlice = new int[numLength];
+            System.arraycopy(ajArray, i * numLength, ajSlice, 0, numLength);
+            System.arraycopy(bjArray, i * numLength, bjSlice, 0, numLength);
+            results[i * 2] = intArrayToBigInteger(ajSlice);
+            results[i * 2 + 1] = intArrayToBigInteger(bjSlice);
+        }
         
         return results;
     }
@@ -249,23 +354,23 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     }
     
     private BigInteger[] fallbackComputeAffGProofTuple(
-            BigInteger C, BigInteger N0sq, BigInteger N1sq,
+            BigInteger C, BigInteger N0, BigInteger N0sq, BigInteger N1, BigInteger N1sq,
             BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs, BigInteger[] ss) {
         
         int kappa = alphas.length;
         BigInteger[] results = new BigInteger[kappa * 2];
         
-        BigInteger onePlusN0sq = BigInteger.ONE.add(N0sq);
-        BigInteger onePlusN1sq = BigInteger.ONE.add(N1sq);
+        BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+        BigInteger onePlusN1 = BigInteger.ONE.add(N1);
         
         for (int i = 0; i < kappa; i++) {
             BigInteger Aj = C.modPow(alphas[i], N0sq)
-                    .multiply(onePlusN0sq.modPow(betas[i], N0sq))
-                    .multiply(rs[i].modPow(N0sq, N0sq))
+                    .multiply(onePlusN0.modPow(betas[i], N0sq))
+                    .multiply(rs[i].modPow(N0, N0sq))
                     .mod(N0sq);
             
-            BigInteger Bj = onePlusN1sq.modPow(betas[i], N1sq)
-                    .multiply(ss[i].modPow(N1sq, N1sq))
+            BigInteger Bj = onePlusN1.modPow(betas[i], N1sq)
+                    .multiply(ss[i].modPow(N1, N1sq))
                     .mod(N1sq);
             
             results[i * 2] = Aj;
@@ -277,10 +382,14 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     
     // Native methods
     private native long nativeInit();
+    private native long nativeInitWithShaderPath(String shaderPath);
     private native void nativeDestroy(long handle);
     private native boolean nativeIsAvailable(long handle);
     private native void nativeModPow(long handle, int[] bases, int[] exps, int[] mods, int[] results, int numLength, int count);
-    private native void nativeComputeAffGProofTuple(long handle, int[] C, int[] N0sq, int[] N1sq,
-            int[] alphas, int[] betas, int[] rs, int[] ss,
+    private native void nativeComputeAffGProofTuple(long handle, int[] C, int[] N0, int[] N0sq, int[] N1, int[] N1sq,
+            int[] alphas, int[] betasForN0, int[] betasForN1, int[] rs, int[] ss,
             int[] Aj, int[] Bj, int numLength, int kappa);
+    private native void nativeComputeDecProofTuple(long handle, int[] K, int[] N0, int[] N0sq,
+            int[] negAlphas, int[] betas, int[] rs,
+            int[] A, int numLength, int kappa);
 }

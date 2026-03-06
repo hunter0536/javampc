@@ -252,61 +252,69 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
 
 JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeAffGProofTuple
   (JNIEnv *env, jclass cls, 
-   jobject CObj, jobject N0sqObj, jobject N1sqObj,
-   jobjectArray alphaObjs, jobjectArray betaObjs,
-   jobjectArray rObjs, jobjectArray sObjs) {
+   jobject CObj, jobject onePlusN0Obj, jobject N0sqObj, 
+   jobject onePlusN1Obj, jobject N1sqObj,
+   jobjectArray alphaObjs, jobjectArray betaForN0Objs, 
+   jobjectArray betaForN1Objs, jobjectArray rObjs, jobjectArray sObjs) {
     jsize kappa = (*env)->GetArrayLength(env, alphaObjs);
     if (kappa == 0) return NULL;
     
-    mpz_t C, N0sq, N1sq;
-    mpz_inits(C, N0sq, N1sq, NULL);
+    mpz_t C, onePlusN0, N0sq, onePlusN1, N1sq;
+    mpz_inits(C, onePlusN0, N0sq, onePlusN1, N1sq, NULL);
     
     jbyteArray CBytes = get_biginteger_bytes(env, CObj);
+    jbyteArray onePlusN0Bytes = get_biginteger_bytes(env, onePlusN0Obj);
     jbyteArray N0sqBytes = get_biginteger_bytes(env, N0sqObj);
+    jbyteArray onePlusN1Bytes = get_biginteger_bytes(env, onePlusN1Obj);
     jbyteArray N1sqBytes = get_biginteger_bytes(env, N1sqObj);
     
     bytes_to_mpz(env, CBytes, C);
+    bytes_to_mpz(env, onePlusN0Bytes, onePlusN0);
     bytes_to_mpz(env, N0sqBytes, N0sq);
+    bytes_to_mpz(env, onePlusN1Bytes, onePlusN1);
     bytes_to_mpz(env, N1sqBytes, N1sq);
     
-    mpz_t ONE_PLUS_N0SQ, ONE_PLUS_N1SQ;
-    mpz_inits(ONE_PLUS_N0SQ, ONE_PLUS_N1SQ, NULL);
-    mpz_add_ui(ONE_PLUS_N0SQ, N0sq, 1);
-    mpz_add_ui(ONE_PLUS_N1SQ, N1sq, 1);
+    mpz_t N0, N1;
+    mpz_inits(N0, N1, NULL);
+    mpz_sqrt(N0, N0sq);
+    mpz_sqrt(N1, N1sq);
     
     jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
     jobjectArray resultArray = (*env)->NewObjectArray(env, kappa * 2, bigIntegerClass, NULL);
     
-    mpz_t alpha, beta, r, s, Aj, Bj, tmp1, tmp2;
-    mpz_inits(alpha, beta, r, s, Aj, Bj, tmp1, tmp2, NULL);
+    mpz_t alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2;
+    mpz_inits(alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
     
     for (jsize i = 0; i < kappa; i++) {
         jobject alphaObj = (*env)->GetObjectArrayElement(env, alphaObjs, i);
-        jobject betaObj = (*env)->GetObjectArrayElement(env, betaObjs, i);
+        jobject betaForN0Obj = (*env)->GetObjectArrayElement(env, betaForN0Objs, i);
+        jobject betaForN1Obj = (*env)->GetObjectArrayElement(env, betaForN1Objs, i);
         jobject rObj = (*env)->GetObjectArrayElement(env, rObjs, i);
         jobject sObj = (*env)->GetObjectArrayElement(env, sObjs, i);
         
         jbyteArray alphaBytes = get_biginteger_bytes(env, alphaObj);
-        jbyteArray betaBytes = get_biginteger_bytes(env, betaObj);
+        jbyteArray betaForN0Bytes = get_biginteger_bytes(env, betaForN0Obj);
+        jbyteArray betaForN1Bytes = get_biginteger_bytes(env, betaForN1Obj);
         jbyteArray rBytes = get_biginteger_bytes(env, rObj);
         jbyteArray sBytes = get_biginteger_bytes(env, sObj);
         
         bytes_to_mpz(env, alphaBytes, alpha);
-        bytes_to_mpz(env, betaBytes, beta);
+        bytes_to_mpz(env, betaForN0Bytes, betaForN0);
+        bytes_to_mpz(env, betaForN1Bytes, betaForN1);
         bytes_to_mpz(env, rBytes, r);
         bytes_to_mpz(env, sBytes, s);
         
-        // Aj = C^alpha * (1+N0sq)^beta * r^N0 mod N0sq
+        // Aj = C^alpha * (1+N0)^betaForN0 * r^N0 mod N0sq
         mpz_powm(tmp1, C, alpha, N0sq);
-        mpz_powm(tmp2, ONE_PLUS_N0SQ, beta, N0sq);
+        mpz_powm(tmp2, onePlusN0, betaForN0, N0sq);
         mpz_mul(tmp1, tmp1, tmp2);
-        mpz_powm(tmp2, r, N0sq, N0sq);
+        mpz_powm(tmp2, r, N0, N0sq);
         mpz_mul(Aj, tmp1, tmp2);
         mpz_mod(Aj, Aj, N0sq);
         
-        // Bj = (1+N1sq)^beta * s^N1 mod N1sq
-        mpz_powm(tmp1, ONE_PLUS_N1SQ, beta, N1sq);
-        mpz_powm(tmp2, s, N1sq, N1sq);
+        // Bj = (1+N1)^betaForN1 * s^N1 mod N1sq
+        mpz_powm(tmp1, onePlusN1, betaForN1, N1sq);
+        mpz_powm(tmp2, s, N1, N1sq);
         mpz_mul(Bj, tmp1, tmp2);
         mpz_mod(Bj, Bj, N1sq);
         
@@ -317,8 +325,8 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
         (*env)->SetObjectArrayElement(env, resultArray, i * 2 + 1, create_biginteger(env, BjBytes));
     }
     
-    mpz_clears(C, N0sq, N1sq, ONE_PLUS_N0SQ, ONE_PLUS_N1SQ, 
-               alpha, beta, r, s, Aj, Bj, tmp1, tmp2, NULL);
+    mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, N0, N1,
+               alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
     return resultArray;
 }
 

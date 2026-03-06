@@ -23,10 +23,10 @@ public final class GpuBigInteger {
         BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod);
         BigInteger[] batchModPowDifferentExp(BigInteger[] bases, BigInteger[] exps, BigInteger mod);
         BigInteger[] computeAffGProofTuple(
-                BigInteger C, BigInteger N0sq, BigInteger N1sq,
+                BigInteger C, BigInteger N0, BigInteger N0sq, BigInteger N1, BigInteger N1sq,
                 BigInteger[] alphas, BigInteger[] betasForN0, BigInteger[] betasForN1, BigInteger[] rs, BigInteger[] ss);
         BigInteger[] computeDecProofTuple(
-                BigInteger K, BigInteger N0sq,
+                BigInteger K, BigInteger N0, BigInteger N0sq,
                 BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs);
         boolean isAvailable();
     }
@@ -251,10 +251,12 @@ public final class GpuBigInteger {
             BigInteger C, BigInteger onePlusN0, BigInteger N0sq, BigInteger onePlusN1, BigInteger N1sq,
             BigInteger[] alphas, BigInteger[] betasForN0, BigInteger[] betasForN1, BigInteger[] rs, BigInteger[] ss) {
         int kappa = alphas.length;
+        BigInteger N0 = N0sq.sqrt();
+        BigInteger N1 = N1sq.sqrt();
         
         // 第一层：GPU加速
         if (GPU_AVAILABLE.get() && backend != null && kappa >= 16) {
-            BigInteger[] results = backend.computeAffGProofTuple(C, N0sq, N1sq, alphas, betasForN0, betasForN1, rs, ss);
+            BigInteger[] results = backend.computeAffGProofTuple(C, N0, N0sq, N1, N1sq, alphas, betasForN0, betasForN1, rs, ss);
             BigInteger[] Aj = new BigInteger[kappa];
             BigInteger[] Bj = new BigInteger[kappa];
             for (int i = 0; i < kappa; i++) {
@@ -283,8 +285,6 @@ public final class GpuBigInteger {
         // 第三层：Java并行流（修复bug：使用正确的onePlusN0和onePlusN1）
         BigInteger[] Aj = new BigInteger[kappa];
         BigInteger[] Bj = new BigInteger[kappa];
-        BigInteger N0 = N0sq.sqrt();
-        BigInteger N1 = N1sq.sqrt();
         
         java.util.stream.IntStream.range(0, kappa)
             .parallel()
@@ -309,7 +309,7 @@ public final class GpuBigInteger {
         
         // 第一层：GPU加速
         if (GPU_AVAILABLE.get() && backend != null && kappa >= 16) {
-            BigInteger[] results = backend.computeDecProofTuple(K, N0sq, alphas, betas, rs);
+            BigInteger[] results = backend.computeDecProofTuple(K, N0, N0sq, alphas, betas, rs);
             BigInteger[] A = new BigInteger[kappa];
             for (int i = 0; i < kappa; i++) {
                 A[i] = results[i];
@@ -439,23 +439,21 @@ public final class GpuBigInteger {
         
         @Override
         public BigInteger[] computeAffGProofTuple(
-                BigInteger C, BigInteger N0sq, BigInteger N1sq,
+                BigInteger C, BigInteger N0, BigInteger N0sq, BigInteger N1, BigInteger N1sq,
                 BigInteger[] alphas, BigInteger[] betasForN0, BigInteger[] betasForN1, BigInteger[] rs, BigInteger[] ss) {
             if (!initialized) {
                 int kappa = alphas.length;
                 BigInteger[] results = new BigInteger[kappa * 2];
-                BigInteger onePlusN0sq = BigInteger.ONE.add(N0sq);
-                BigInteger onePlusN1sq = BigInteger.ONE.add(N1sq);
-                BigInteger N0 = N0sq.sqrt();
-                BigInteger N1 = N1sq.sqrt();
+                BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+                BigInteger onePlusN1 = BigInteger.ONE.add(N1);
                 
                 for (int i = 0; i < kappa; i++) {
                     BigInteger Aj = C.modPow(alphas[i], N0sq)
-                            .multiply(onePlusN0sq.modPow(betasForN0[i], N0sq))
+                            .multiply(onePlusN0.modPow(betasForN0[i], N0sq))
                             .multiply(rs[i].modPow(N0, N0sq))
                             .mod(N0sq);
                     
-                    BigInteger Bj = onePlusN1sq.modPow(betasForN1[i], N1sq)
+                    BigInteger Bj = onePlusN1.modPow(betasForN1[i], N1sq)
                             .multiply(ss[i].modPow(N1, N1sq))
                             .mod(N1sq);
                     
@@ -467,18 +465,16 @@ public final class GpuBigInteger {
             // 这里实现 JCuda 版本的 AffG 证明计算
             int kappa = alphas.length;
             BigInteger[] results = new BigInteger[kappa * 2];
-            BigInteger onePlusN0sq = BigInteger.ONE.add(N0sq);
-            BigInteger onePlusN1sq = BigInteger.ONE.add(N1sq);
-            BigInteger N0 = N0sq.sqrt();
-            BigInteger N1 = N1sq.sqrt();
+            BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+            BigInteger onePlusN1 = BigInteger.ONE.add(N1);
             
             for (int i = 0; i < kappa; i++) {
                 BigInteger Aj = C.modPow(alphas[i], N0sq)
-                        .multiply(onePlusN0sq.modPow(betasForN0[i], N0sq))
+                        .multiply(onePlusN0.modPow(betasForN0[i], N0sq))
                         .multiply(rs[i].modPow(N0, N0sq))
                         .mod(N0sq);
                 
-                BigInteger Bj = onePlusN1sq.modPow(betasForN1[i], N1sq)
+                BigInteger Bj = onePlusN1.modPow(betasForN1[i], N1sq)
                         .multiply(ss[i].modPow(N1, N1sq))
                         .mod(N1sq);
                 
@@ -490,17 +486,17 @@ public final class GpuBigInteger {
         
         @Override
         public BigInteger[] computeDecProofTuple(
-                BigInteger K, BigInteger N0sq,
+                BigInteger K, BigInteger N0, BigInteger N0sq,
                 BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs) {
             if (!initialized) {
                 int kappa = alphas.length;
                 BigInteger[] results = new BigInteger[kappa];
-                BigInteger onePlusN0 = BigInteger.ONE.add(N0sq.sqrt());
+                BigInteger onePlusN0 = BigInteger.ONE.add(N0);
                 
                 for (int i = 0; i < kappa; i++) {
                     results[i] = BigIntegerUtils.powSigned(K, alphas[i].negate(), N0sq)
                             .multiply(BigIntegerUtils.powSigned(onePlusN0, betas[i], N0sq))
-                            .multiply(rs[i].modPow(N0sq.sqrt(), N0sq))
+                            .multiply(rs[i].modPow(N0, N0sq))
                             .mod(N0sq);
                 }
                 return results;
@@ -508,12 +504,12 @@ public final class GpuBigInteger {
             // 这里实现 JCuda 版本的 Dec 证明计算
             int kappa = alphas.length;
             BigInteger[] results = new BigInteger[kappa];
-            BigInteger onePlusN0 = BigInteger.ONE.add(N0sq.sqrt());
+            BigInteger onePlusN0 = BigInteger.ONE.add(N0);
             
             for (int i = 0; i < kappa; i++) {
                 results[i] = BigIntegerUtils.powSigned(K, alphas[i].negate(), N0sq)
                         .multiply(BigIntegerUtils.powSigned(onePlusN0, betas[i], N0sq))
-                        .multiply(rs[i].modPow(N0sq.sqrt(), N0sq))
+                        .multiply(rs[i].modPow(N0, N0sq))
                         .mod(N0sq);
             }
             return results;
