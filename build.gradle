@@ -4,6 +4,7 @@ plugins {
     id 'org.springframework.boot' version '3.0.0'
     id 'io.spring.dependency-management' version '1.1.4'
     id 'pmd'
+    id 'com.google.osdetector' version '1.7.3'
 }
 
 group = 'com.example'
@@ -35,6 +36,25 @@ dependencies {
     implementation 'com.google.guava:guava:32.0.0-jre'
     implementation 'io.netty:netty-all:4.1.97.Final'
     implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
+    
+    // GPU 加速库依赖配置
+    // 1. JCuda (NVIDIA GPU):
+    // 核心库
+    // implementation 'org.jcuda:jcuda:11.8.0'
+    // 平台特定的native库
+    // implementation "org.jcuda:jcuda-natives:11.8.0:${osdetector.classifier}"
+    // 2. JOCL (OpenCL，支持包括M芯片在内的多种GPU):
+    // 核心库
+     implementation 'org.jocl:jocl:2.0.2'
+    // 平台特定的native库
+     implementation "org.jocl:jocl-natives:2.0.2:${osdetector.classifier}"
+    
+    // 注意：启用GPU支持时，请取消注释相应的依赖
+    // 对于M芯片Mac，推荐使用JOCL而不是JCuda
+    
+    // 注意：启用GPU支持时，请取消注释相应的依赖
+    // 对于M芯片Mac，推荐使用JOCL而不是JCuda
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
 

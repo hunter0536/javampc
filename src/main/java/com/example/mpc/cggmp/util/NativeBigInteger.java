@@ -43,24 +43,18 @@ public final class NativeBigInteger {
     }
     
     public static BigInteger modPow(BigInteger base, BigInteger exp, BigInteger mod) {
-        if (NATIVE_AVAILABLE) {
-            return nativeModPow(base, exp, mod);
-        }
-        return base.modPow(exp, mod);
+        // 使用 GpuBigInteger 作为默认实现
+        return GpuBigInteger.modPow(base, exp, mod);
     }
     
     public static BigInteger modInverse(BigInteger val, BigInteger mod) {
-        if (NATIVE_AVAILABLE) {
-            return nativeModInverse(val, mod);
-        }
-        return val.modInverse(mod);
+        // 使用 GpuBigInteger 作为默认实现
+        return GpuBigInteger.modInverse(val, mod);
     }
     
     public static BigInteger multiply(BigInteger a, BigInteger b) {
-        if (NATIVE_AVAILABLE) {
-            return nativeMultiply(a, b);
-        }
-        return a.multiply(b);
+        // 使用 GpuBigInteger 作为默认实现
+        return GpuBigInteger.multiply(a, b);
     }
     
     public static byte[] toByteArray(BigInteger val) {
@@ -76,61 +70,23 @@ public final class NativeBigInteger {
     private static native BigInteger nativeMultiply(BigInteger a, BigInteger b);
     
     public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
-        if (NATIVE_AVAILABLE) {
-            return nativeBatchModPow(bases, exp, mod);
-        }
-        BigInteger[] results = new BigInteger[bases.length];
-        for (int i = 0; i < bases.length; i++) {
-            results[i] = bases[i].modPow(exp, mod);
-        }
-        return results;
+        // 使用 GpuBigInteger 作为默认实现
+        return GpuBigInteger.batchModPow(bases, exp, mod);
     }
     
     public static BigInteger[] batchModPowDifferentExp(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
         if (bases.length != exps.length) {
             throw new IllegalArgumentException("bases and exps must have same length");
         }
-        if (NATIVE_AVAILABLE) {
-            return nativeBatchModPowDifferentExp(bases, exps, mod);
-        }
-        BigInteger[] results = new BigInteger[bases.length];
-        for (int i = 0; i < bases.length; i++) {
-            results[i] = bases[i].modPow(exps[i], mod);
-        }
-        return results;
+        // 使用 GpuBigInteger 作为默认实现
+        return GpuBigInteger.batchModPowDifferentExp(bases, exps, mod);
     }
     
     public static AffGProofResult computeAffGProofTuples(
             BigInteger C, BigInteger N0sq, BigInteger N1sq,
             BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs, BigInteger[] ss) {
-        int kappa = alphas.length;
-        if (NATIVE_AVAILABLE && kappa >= 16) {
-            BigInteger[] results = nativeAffGProofTuple(C, N0sq, N1sq, alphas, betas, rs, ss);
-            BigInteger[] Aj = new BigInteger[kappa];
-            BigInteger[] Bj = new BigInteger[kappa];
-            for (int i = 0; i < kappa; i++) {
-                Aj[i] = results[i * 2];
-                Bj[i] = results[i * 2 + 1];
-            }
-            return new AffGProofResult(Aj, Bj);
-        }
-        
-        BigInteger[] Aj = new BigInteger[kappa];
-        BigInteger[] Bj = new BigInteger[kappa];
-        BigInteger onePlusN0sq = BigInteger.ONE.add(N0sq);
-        BigInteger onePlusN1sq = BigInteger.ONE.add(N1sq);
-        
-        for (int i = 0; i < kappa; i++) {
-            Aj[i] = C.modPow(alphas[i], N0sq)
-                    .multiply(onePlusN0sq.modPow(betas[i], N0sq))
-                    .multiply(rs[i].modPow(N0sq, N0sq))
-                    .mod(N0sq);
-            
-            Bj[i] = onePlusN1sq.modPow(betas[i], N1sq)
-                    .multiply(ss[i].modPow(N1sq, N1sq))
-                    .mod(N1sq);
-        }
-        return new AffGProofResult(Aj, Bj);
+        // 使用 GpuBigInteger 作为默认实现
+        return GpuBigInteger.computeAffGProofTuples(C, N0sq, N1sq, alphas, betas, rs, ss);
     }
     
     public record AffGProofResult(BigInteger[] Aj, BigInteger[] Bj) {}
