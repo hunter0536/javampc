@@ -595,8 +595,10 @@ kernel void computeDecProofTupleKernel(
     thread BigInteger k_pow_alpha;
     thread BigInteger onePlusN0_pow_beta;
     thread BigInteger r_pow_n0;
-    // negAlphas should be precomputed on host as -alpha (non-negative magnitude)
-    mod_exp_montgomery_signed(k_pow_alpha, K_val, K_inv, negAlpha, N0sq_val, rN0, r2N0, n0_prime);
+    // Use unsigned exponentiation with K_inv as base since negAlpha is negative
+    thread BigInteger exp_abs;
+    bigint_abs_twos_complement(exp_abs, negAlpha);
+    mod_exp_montgomery_unsigned(k_pow_alpha, K_inv, exp_abs, N0sq_val, rN0, r2N0, n0_prime);
     mod_exp_montgomery_signed(onePlusN0_pow_beta, onePlusN0, onePlusN0_inv, beta, N0sq_val, rN0, r2N0, n0_prime);
     mod_exp_montgomery_unsigned(r_pow_n0, r_val, N0_val, N0sq_val, rN0, r2N0, n0_prime);
 

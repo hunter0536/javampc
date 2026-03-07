@@ -7,94 +7,7 @@
 #import <Metal/Metal.h>
 #include <limits.h>
 #include <unistd.h>
-#include <pthread.h>
 #include "com_example_mpc_cggmp_util_MetalBigIntegerBackend.h"
-
-typedef struct {
-    jint *buf;
-    jsize len;
-} JIntBuffer;
-
-typedef struct {
-    JIntBuffer buffers[20];
-    int cursor;
-} JIntBufferPool;
-
-static pthread_key_t g_jni_buffer_key;
-static pthread_once_t g_jni_buffer_once = PTHREAD_ONCE_INIT;
-
-static void free_jni_buffers(void *ptr) {
-    if (!ptr) {
-        return;
-    }
-    JIntBufferPool *pool = (JIntBufferPool *)ptr;
-    for (int i = 0; i < 20; i++) {
-        free(pool->buffers[i].buf);
-    }
-    free(pool);
-}
-
-static void init_jni_buffer_key(void) {
-    pthread_key_create(&g_jni_buffer_key, free_jni_buffers);
-}
-
-static JIntBufferPool *get_jni_buffers(void) {
-    pthread_once(&g_jni_buffer_once, init_jni_buffer_key);
-    JIntBufferPool *pool = (JIntBufferPool *)pthread_getspecific(g_jni_buffer_key);
-    if (!pool) {
-        pool = (JIntBufferPool *)calloc(1, sizeof(JIntBufferPool));
-        pthread_setspecific(g_jni_buffer_key, pool);
-    }
-    return pool;
-}
-
-static void reset_jni_buffer_cursor(void) {
-    JIntBufferPool *pool = get_jni_buffers();
-    pool->cursor = 0;
-}
-
-static jint *acquire_jni_buffer(jsize len) {
-    if (len <= 0) {
-        return NULL;
-    }
-    JIntBufferPool *pool = get_jni_buffers();
-    int slot = pool->cursor++;
-    if (slot >= 20) {
-        return NULL;
-    }
-    if (pool->buffers[slot].buf == NULL || pool->buffers[slot].len < len) {
-        free(pool->buffers[slot].buf);
-        pool->buffers[slot].buf = (jint *)malloc(sizeof(jint) * (size_t)len);
-        pool->buffers[slot].len = len;
-    }
-    return pool->buffers[slot].buf;
-}
-
-static jint *copy_int_array(JNIEnv *env, jintArray array, jsize len) {
-    if (!array || len <= 0) {
-        return NULL;
-    }
-    jint *buffer = acquire_jni_buffer(len);
-    if (!buffer) {
-        return NULL;
-    }
-    (*env)->GetIntArrayRegion(env, array, 0, len, buffer);
-    return buffer;
-}
-
-static jint *alloc_int_array(jsize len) {
-    if (len <= 0) {
-        return NULL;
-    }
-    return acquire_jni_buffer(len);
-}
-
-static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsize len) {
-    if (!array || !buffer || len <= 0) {
-        return;
-    }
-    (*env)->SetIntArrayRegion(env, array, 0, len, buffer);
-}
 
 @interface MetalBigIntegerBackend : NSObject
 
@@ -102,54 +15,22 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
 @property (nonatomic, strong) id<MTLCommandQueue> commandQueue;
 @property (nonatomic, strong) id<MTLLibrary> library;
 @property (nonatomic, strong) id<MTLComputePipelineState> modPowPipeline;
-@property (nonatomic, strong) id<MTLComputePipelineState> modPowSignedPipeline;
 @property (nonatomic, strong) id<MTLComputePipelineState> computeAffGProofTuplePipeline;
 @property (nonatomic, strong) id<MTLComputePipelineState> computeDecProofTuplePipeline;
 @property (nonatomic, strong) id<MTLComputePipelineState> batchModPowPipeline;
 @property (nonatomic, strong) id<MTLComputePipelineState> modInversePipeline;
 @property (nonatomic, strong) id<MTLComputePipelineState> multiplyPipeline;
 @property (nonatomic, strong) id<MTLComputePipelineState> batchModPowDifferentExpPipeline;
-@property (nonatomic, strong) id<MTLComputePipelineState> batchModPowDifferentExpSignedPipeline;
-@property (nonatomic, strong) id<MTLBuffer> cachedModBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedRBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedR2Buffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedExpBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedBasesBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedExpsBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedModsBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedResultsBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedAjBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedBjBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedRsBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedSsBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedCBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedCInvBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedN0Buffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedN0sqBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedOnePlusN0InvBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedN1Buffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedN1sqBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedOnePlusN1InvBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedKBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedKInvBuffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedRN0Buffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedR2N0Buffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedRN1Buffer;
-@property (nonatomic, strong) id<MTLBuffer> cachedR2N1Buffer;
-@property (nonatomic, assign) NSUInteger cachedSingleBufferSize;
 
 - (instancetype)init;
 - (instancetype)initWithShaderPath:(NSString *)shaderPath;
 - (BOOL)isAvailable;
-- (void)modPow:(const uint32_t*)bases exps:(const uint32_t*)exps mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
-- (void)modPowSigned:(const uint32_t*)bases baseInvs:(const uint32_t*)baseInvs exps:(const uint32_t*)exps mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
-- (void)batchModPow:(const uint32_t*)bases exp:(const uint32_t*)exp mod:(const uint32_t*)mod r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
-- (void)computeAffGProofTuple:(const uint32_t*)C N0:(const uint32_t*)N0 N0sq:(const uint32_t*)N0sq N1:(const uint32_t*)N1 N1sq:(const uint32_t*)N1sq C_inv:(const uint32_t*)C_inv onePlusN0_inv:(const uint32_t*)onePlusN0_inv onePlusN1_inv:(const uint32_t*)onePlusN1_inv rN0:(const uint32_t*)rN0 r2N0:(const uint32_t*)r2N0 rN1:(const uint32_t*)rN1 r2N1:(const uint32_t*)r2N1 alphas:(const uint32_t*)alphas betasForN0:(const uint32_t*)betasForN0 betasForN1:(const uint32_t*)betasForN1 rs:(const uint32_t*)rs ss:(const uint32_t*)ss Aj_results:(uint32_t*)Aj_results Bj_results:(uint32_t*)Bj_results numLength:(uint32_t)numLength kappa:(uint32_t)kappa;
-- (void)computeDecProofTuple:(const uint32_t*)K N0:(const uint32_t*)N0 N0sq:(const uint32_t*)N0sq K_inv:(const uint32_t*)K_inv onePlusN0_inv:(const uint32_t*)onePlusN0_inv rN0:(const uint32_t*)rN0 r2N0:(const uint32_t*)r2N0 negAlphas:(const uint32_t*)negAlphas betas:(const uint32_t*)betas rs:(const uint32_t*)rs A_results:(uint32_t*)A_results numLength:(uint32_t)numLength kappa:(uint32_t)kappa;
-- (void)modInverse:(const uint32_t*)values mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
+- (void)modPow:(const uint32_t*)bases exps:(const uint32_t*)exps mods:(const uint32_t*)mods results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
+- (void)computeAffGProofTuple:(const uint32_t*)C N0:(const uint32_t*)N0 N0sq:(const uint32_t*)N0sq N1:(const uint32_t*)N1 N1sq:(const uint32_t*)N1sq alphas:(const uint32_t*)alphas betasForN0:(const uint32_t*)betasForN0 betasForN1:(const uint32_t*)betasForN1 rs:(const uint32_t*)rs ss:(const uint32_t*)ss Aj_results:(uint32_t*)Aj_results Bj_results:(uint32_t*)Bj_results numLength:(uint32_t)numLength kappa:(uint32_t)kappa;
+- (void)computeDecProofTuple:(const uint32_t*)K N0:(const uint32_t*)N0 N0sq:(const uint32_t*)N0sq negAlphas:(const uint32_t*)negAlphas betas:(const uint32_t*)betas rs:(const uint32_t*)rs A_results:(uint32_t*)A_results numLength:(uint32_t)numLength kappa:(uint32_t)kappa;
+- (void)modInverse:(const uint32_t*)values mods:(const uint32_t*)mods results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
 - (void)multiply:(const uint32_t*)a b:(const uint32_t*)b results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
-- (void)batchModPowDifferentExp:(const uint32_t*)bases exps:(const uint32_t*)exps mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
-- (void)batchModPowDifferentExpSigned:(const uint32_t*)bases baseInvs:(const uint32_t*)baseInvs exps:(const uint32_t*)exps mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
+- (void)batchModPowDifferentExp:(const uint32_t*)bases exps:(const uint32_t*)exps mods:(const uint32_t*)mods results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count;
 
 @end
 
@@ -305,17 +186,6 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
             } else {
                 NSLog(@"MetalBigIntegerBackend: ERROR - modPowKernel function not found");
             }
-
-            id<MTLFunction> modPowSignedFunction = [self.library newFunctionWithName:@"modPowSignedKernel"];
-            if (modPowSignedFunction) {
-                NSError *error = nil;
-                self.modPowSignedPipeline = [self.device newComputePipelineStateWithFunction:modPowSignedFunction error:&error];
-                if (error) {
-                    NSLog(@"MetalBigIntegerBackend: ERROR - modPowSignedPipeline creation failed: %@", error.localizedDescription);
-                }
-            } else {
-                NSLog(@"MetalBigIntegerBackend: ERROR - modPowSignedKernel function not found");
-            }
             
             id<MTLFunction> computeAffGFunction = [self.library newFunctionWithName:@"computeAffGProofTupleKernel"];
             if (computeAffGFunction) {
@@ -382,30 +252,17 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
             } else {
                 NSLog(@"MetalBigIntegerBackend: ERROR - batchModPowDifferentExpKernel function not found");
             }
-
-            id<MTLFunction> batchModPowDifferentExpSignedFunction = [self.library newFunctionWithName:@"batchModPowDifferentExpSignedKernel"];
-            if (batchModPowDifferentExpSignedFunction) {
-                NSError *error = nil;
-                self.batchModPowDifferentExpSignedPipeline = [self.device newComputePipelineStateWithFunction:batchModPowDifferentExpSignedFunction error:&error];
-                if (error) {
-                    NSLog(@"MetalBigIntegerBackend: ERROR - batchModPowDifferentExpSignedPipeline creation failed: %@", error.localizedDescription);
-                }
-            } else {
-                NSLog(@"MetalBigIntegerBackend: ERROR - batchModPowDifferentExpSignedKernel function not found");
-            }
         
-        if (!self.modPowPipeline || !self.modPowSignedPipeline || !self.computeAffGProofTuplePipeline || !self.computeDecProofTuplePipeline || !self.batchModPowPipeline || !self.modInversePipeline || !self.multiplyPipeline || !self.batchModPowDifferentExpPipeline || !self.batchModPowDifferentExpSignedPipeline) {
+        if (!self.modPowPipeline || !self.computeAffGProofTuplePipeline || !self.computeDecProofTuplePipeline || !self.batchModPowPipeline || !self.modInversePipeline || !self.multiplyPipeline || !self.batchModPowDifferentExpPipeline) {
             NSLog(@"MetalBigIntegerBackend: ERROR - Failed to create compute pipelines");
-            NSLog(@"MetalBigIntegerBackend: modPowPipeline: %@, modPowSignedPipeline: %@, computeAffGProofTuplePipeline: %@, computeDecProofTuplePipeline: %@, batchModPowPipeline: %@, modInversePipeline: %@, multiplyPipeline: %@, batchModPowDifferentExpPipeline: %@, batchModPowDifferentExpSignedPipeline: %@",
+            NSLog(@"MetalBigIntegerBackend: modPowPipeline: %@, computeAffGProofTuplePipeline: %@, computeDecProofTuplePipeline: %@, batchModPowPipeline: %@, modInversePipeline: %@, multiplyPipeline: %@, batchModPowDifferentExpPipeline: %@",
                   self.modPowPipeline ? @"OK" : @"NULL",
-                  self.modPowSignedPipeline ? @"OK" : @"NULL",
                   self.computeAffGProofTuplePipeline ? @"OK" : @"NULL",
                   self.computeDecProofTuplePipeline ? @"OK" : @"NULL",
                   self.batchModPowPipeline ? @"OK" : @"NULL",
                   self.modInversePipeline ? @"OK" : @"NULL",
                   self.multiplyPipeline ? @"OK" : @"NULL",
-                  self.batchModPowDifferentExpPipeline ? @"OK" : @"NULL",
-                  self.batchModPowDifferentExpSignedPipeline ? @"OK" : @"NULL");
+                  self.batchModPowDifferentExpPipeline ? @"OK" : @"NULL");
             return nil;
         }
             
@@ -424,49 +281,7 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
     return self.device != nil && self.commandQueue != nil;
 }
 
-- (id<MTLBuffer>)ensureCachedBuffer:(id<MTLBuffer>)buffer length:(NSUInteger)length {
-    if (!buffer || buffer.length < length) {
-        buffer = [self.device newBufferWithLength:length options:MTLResourceStorageModeShared];
-    }
-    return buffer;
-}
-
-- (id<MTLBuffer>)updateCachedBuffer:(id<MTLBuffer>)buffer bytes:(const void *)bytes length:(NSUInteger)length {
-    buffer = [self ensureCachedBuffer:buffer length:length];
-    memcpy(buffer.contents, bytes, length);
-    return buffer;
-}
-
-- (void)ensureCachedResultBufferLength:(NSUInteger)length {
-    self.cachedResultsBuffer = [self ensureCachedBuffer:self.cachedResultsBuffer length:length];
-}
-
-- (void)ensureCachedAjBjBuffersLength:(NSUInteger)length {
-    self.cachedAjBuffer = [self ensureCachedBuffer:self.cachedAjBuffer length:length];
-    self.cachedBjBuffer = [self ensureCachedBuffer:self.cachedBjBuffer length:length];
-}
-
-- (NSUInteger)threadgroupSizeForPipeline:(id<MTLComputePipelineState>)pipeline count:(NSUInteger)count {
-    if (!pipeline) {
-        return 1;
-    }
-    NSUInteger maxThreads = pipeline.maxTotalThreadsPerThreadgroup;
-    if (maxThreads == 0) {
-        return 1;
-    }
-    NSUInteger width = pipeline.threadExecutionWidth;
-    if (width == 0) {
-        width = 1;
-    }
-    NSUInteger desired = count < maxThreads ? count : maxThreads;
-    NSUInteger rounded = (desired / width) * width;
-    if (rounded == 0) {
-        rounded = (width <= maxThreads) ? width : 1;
-    }
-    return rounded;
-}
-
-- (void)modPow:(const uint32_t*)bases exps:(const uint32_t*)exps mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count {
+- (void)modPow:(const uint32_t*)bases exps:(const uint32_t*)exps mods:(const uint32_t*)mods results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count {
     @autoreleasepool {
         if (!self.modPowPipeline) {
             NSLog(@"MetalBigIntegerBackend: modPowPipeline not available");
@@ -475,30 +290,24 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         
         NSUInteger bufferSize = numLength * sizeof(uint32_t) * count;
         
-        self.cachedBasesBuffer = [self updateCachedBuffer:self.cachedBasesBuffer bytes:bases length:bufferSize];
-        self.cachedExpsBuffer = [self updateCachedBuffer:self.cachedExpsBuffer bytes:exps length:bufferSize];
-        NSUInteger singleBufferSize = numLength * sizeof(uint32_t);
-        self.cachedModBuffer = [self updateCachedBuffer:self.cachedModBuffer bytes:mods length:singleBufferSize];
-        self.cachedRBuffer = [self updateCachedBuffer:self.cachedRBuffer bytes:r length:singleBufferSize];
-        self.cachedR2Buffer = [self updateCachedBuffer:self.cachedR2Buffer bytes:r2 length:singleBufferSize];
-        self.cachedSingleBufferSize = singleBufferSize;
-        [self ensureCachedResultBufferLength:bufferSize];
+        id<MTLBuffer> basesBuffer = [self.device newBufferWithBytes:bases length:bufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> expsBuffer = [self.device newBufferWithBytes:exps length:bufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> modsBuffer = [self.device newBufferWithBytes:mods length:bufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> resultsBuffer = [self.device newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
         
         id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         
         [encoder setComputePipelineState:self.modPowPipeline];
-        [encoder setBuffer:self.cachedBasesBuffer offset:0 atIndex:0];
-        [encoder setBuffer:self.cachedExpsBuffer offset:0 atIndex:1];
-        [encoder setBuffer:self.cachedModBuffer offset:0 atIndex:2];
-        [encoder setBuffer:self.cachedRBuffer offset:0 atIndex:3];
-        [encoder setBuffer:self.cachedR2Buffer offset:0 atIndex:4];
-        [encoder setBuffer:self.cachedResultsBuffer offset:0 atIndex:5];
-        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:6];
-        [encoder setBytes:&count length:sizeof(uint32_t) atIndex:7];
+        [encoder setBuffer:basesBuffer offset:0 atIndex:0];
+        [encoder setBuffer:expsBuffer offset:0 atIndex:1];
+        [encoder setBuffer:modsBuffer offset:0 atIndex:2];
+        [encoder setBuffer:resultsBuffer offset:0 atIndex:3];
+        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:4];
+        [encoder setBytes:&count length:sizeof(uint32_t) atIndex:5];
         
         MTLSize gridSize = MTLSizeMake(count, 1, 1);
-        NSUInteger threadGroupSize = [self threadgroupSizeForPipeline:self.modPowPipeline count:count];
+        NSUInteger threadGroupSize = 256;
         MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
         
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
@@ -507,103 +316,11 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
         
-        memcpy(results, self.cachedResultsBuffer.contents, bufferSize);
+        memcpy(results, resultsBuffer.contents, bufferSize);
     }
 }
 
-- (void)modPowSigned:(const uint32_t*)bases baseInvs:(const uint32_t*)baseInvs exps:(const uint32_t*)exps mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count {
-    @autoreleasepool {
-        if (!self.modPowSignedPipeline) {
-            NSLog(@"MetalBigIntegerBackend: modPowSignedPipeline not available");
-            return;
-        }
-
-        NSUInteger bufferSize = numLength * sizeof(uint32_t) * count;
-        NSUInteger singleBufferSize = numLength * sizeof(uint32_t);
-
-        self.cachedBasesBuffer = [self updateCachedBuffer:self.cachedBasesBuffer bytes:bases length:bufferSize];
-        self.cachedModsBuffer = [self updateCachedBuffer:self.cachedModsBuffer bytes:baseInvs length:bufferSize];
-        self.cachedExpsBuffer = [self updateCachedBuffer:self.cachedExpsBuffer bytes:exps length:bufferSize];
-        self.cachedModBuffer = [self updateCachedBuffer:self.cachedModBuffer bytes:mods length:singleBufferSize];
-        self.cachedRBuffer = [self updateCachedBuffer:self.cachedRBuffer bytes:r length:singleBufferSize];
-        self.cachedR2Buffer = [self updateCachedBuffer:self.cachedR2Buffer bytes:r2 length:singleBufferSize];
-        self.cachedSingleBufferSize = singleBufferSize;
-        [self ensureCachedResultBufferLength:bufferSize];
-
-        id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
-        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
-
-        [encoder setComputePipelineState:self.modPowSignedPipeline];
-        [encoder setBuffer:self.cachedBasesBuffer offset:0 atIndex:0];
-        [encoder setBuffer:self.cachedModsBuffer offset:0 atIndex:1];
-        [encoder setBuffer:self.cachedExpsBuffer offset:0 atIndex:2];
-        [encoder setBuffer:self.cachedModBuffer offset:0 atIndex:3];
-        [encoder setBuffer:self.cachedRBuffer offset:0 atIndex:4];
-        [encoder setBuffer:self.cachedR2Buffer offset:0 atIndex:5];
-        [encoder setBuffer:self.cachedResultsBuffer offset:0 atIndex:6];
-        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:7];
-        [encoder setBytes:&count length:sizeof(uint32_t) atIndex:8];
-
-        MTLSize gridSize = MTLSizeMake(count, 1, 1);
-        NSUInteger threadGroupSize = [self threadgroupSizeForPipeline:self.modPowSignedPipeline count:count];
-        MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
-
-        [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
-        [encoder endEncoding];
-
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
-
-        memcpy(results, self.cachedResultsBuffer.contents, bufferSize);
-    }
-}
-
-- (void)batchModPow:(const uint32_t*)bases exp:(const uint32_t*)exp mod:(const uint32_t*)mod r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count {
-    @autoreleasepool {
-        if (!self.batchModPowPipeline) {
-            NSLog(@"MetalBigIntegerBackend: batchModPowPipeline not available");
-            return;
-        }
-        
-        NSUInteger bufferSize = numLength * sizeof(uint32_t) * count;
-        NSUInteger singleBufferSize = numLength * sizeof(uint32_t);
-        
-        self.cachedBasesBuffer = [self updateCachedBuffer:self.cachedBasesBuffer bytes:bases length:bufferSize];
-        self.cachedExpBuffer = [self updateCachedBuffer:self.cachedExpBuffer bytes:exp length:singleBufferSize];
-        self.cachedModBuffer = [self updateCachedBuffer:self.cachedModBuffer bytes:mod length:singleBufferSize];
-        self.cachedRBuffer = [self updateCachedBuffer:self.cachedRBuffer bytes:r length:singleBufferSize];
-        self.cachedR2Buffer = [self updateCachedBuffer:self.cachedR2Buffer bytes:r2 length:singleBufferSize];
-        self.cachedSingleBufferSize = singleBufferSize;
-        [self ensureCachedResultBufferLength:bufferSize];
-        
-        id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
-        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
-        
-        [encoder setComputePipelineState:self.batchModPowPipeline];
-        [encoder setBuffer:self.cachedBasesBuffer offset:0 atIndex:0];
-        [encoder setBuffer:self.cachedExpBuffer offset:0 atIndex:1];
-        [encoder setBuffer:self.cachedModBuffer offset:0 atIndex:2];
-        [encoder setBuffer:self.cachedRBuffer offset:0 atIndex:3];
-        [encoder setBuffer:self.cachedR2Buffer offset:0 atIndex:4];
-        [encoder setBuffer:self.cachedResultsBuffer offset:0 atIndex:5];
-        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:6];
-        [encoder setBytes:&count length:sizeof(uint32_t) atIndex:7];
-        
-        MTLSize gridSize = MTLSizeMake(count, 1, 1);
-        NSUInteger threadGroupSize = [self threadgroupSizeForPipeline:self.batchModPowPipeline count:count];
-        MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
-        
-        [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
-        [encoder endEncoding];
-        
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
-        
-        memcpy(results, self.cachedResultsBuffer.contents, bufferSize);
-    }
-}
-
-- (void)computeAffGProofTuple:(const uint32_t*)C N0:(const uint32_t*)N0 N0sq:(const uint32_t*)N0sq N1:(const uint32_t*)N1 N1sq:(const uint32_t*)N1sq C_inv:(const uint32_t*)C_inv onePlusN0_inv:(const uint32_t*)onePlusN0_inv onePlusN1_inv:(const uint32_t*)onePlusN1_inv rN0:(const uint32_t*)rN0 r2N0:(const uint32_t*)r2N0 rN1:(const uint32_t*)rN1 r2N1:(const uint32_t*)r2N1 alphas:(const uint32_t*)alphas betasForN0:(const uint32_t*)betasForN0 betasForN1:(const uint32_t*)betasForN1 rs:(const uint32_t*)rs ss:(const uint32_t*)ss Aj_results:(uint32_t*)Aj_results Bj_results:(uint32_t*)Bj_results numLength:(uint32_t)numLength kappa:(uint32_t)kappa {
+- (void)computeAffGProofTuple:(const uint32_t*)C N0:(const uint32_t*)N0 N0sq:(const uint32_t*)N0sq N1:(const uint32_t*)N1 N1sq:(const uint32_t*)N1sq alphas:(const uint32_t*)alphas betasForN0:(const uint32_t*)betasForN0 betasForN1:(const uint32_t*)betasForN1 rs:(const uint32_t*)rs ss:(const uint32_t*)ss Aj_results:(uint32_t*)Aj_results Bj_results:(uint32_t*)Bj_results numLength:(uint32_t)numLength kappa:(uint32_t)kappa {
     @autoreleasepool {
         if (!self.computeAffGProofTuplePipeline) {
             NSLog(@"MetalBigIntegerBackend: computeAffGProofTuplePipeline not available");
@@ -613,53 +330,40 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         NSUInteger singleBufferSize = numLength * sizeof(uint32_t);
         NSUInteger arrayBufferSize = numLength * sizeof(uint32_t) * kappa;
         
-        self.cachedCBuffer = [self updateCachedBuffer:self.cachedCBuffer bytes:C length:singleBufferSize];
-        self.cachedN0Buffer = [self updateCachedBuffer:self.cachedN0Buffer bytes:N0 length:singleBufferSize];
-        self.cachedN0sqBuffer = [self updateCachedBuffer:self.cachedN0sqBuffer bytes:N0sq length:singleBufferSize];
-        self.cachedN1Buffer = [self updateCachedBuffer:self.cachedN1Buffer bytes:N1 length:singleBufferSize];
-        self.cachedN1sqBuffer = [self updateCachedBuffer:self.cachedN1sqBuffer bytes:N1sq length:singleBufferSize];
-        self.cachedCInvBuffer = [self updateCachedBuffer:self.cachedCInvBuffer bytes:C_inv length:singleBufferSize];
-        self.cachedOnePlusN0InvBuffer = [self updateCachedBuffer:self.cachedOnePlusN0InvBuffer bytes:onePlusN0_inv length:singleBufferSize];
-        self.cachedOnePlusN1InvBuffer = [self updateCachedBuffer:self.cachedOnePlusN1InvBuffer bytes:onePlusN1_inv length:singleBufferSize];
-        self.cachedRN0Buffer = [self updateCachedBuffer:self.cachedRN0Buffer bytes:rN0 length:singleBufferSize];
-        self.cachedR2N0Buffer = [self updateCachedBuffer:self.cachedR2N0Buffer bytes:r2N0 length:singleBufferSize];
-        self.cachedRN1Buffer = [self updateCachedBuffer:self.cachedRN1Buffer bytes:rN1 length:singleBufferSize];
-        self.cachedR2N1Buffer = [self updateCachedBuffer:self.cachedR2N1Buffer bytes:r2N1 length:singleBufferSize];
-        self.cachedBasesBuffer = [self updateCachedBuffer:self.cachedBasesBuffer bytes:alphas length:arrayBufferSize];
-        self.cachedModsBuffer = [self updateCachedBuffer:self.cachedModsBuffer bytes:betasForN0 length:arrayBufferSize];
-        self.cachedExpsBuffer = [self updateCachedBuffer:self.cachedExpsBuffer bytes:betasForN1 length:arrayBufferSize];
-        self.cachedRsBuffer = [self updateCachedBuffer:self.cachedRsBuffer bytes:rs length:arrayBufferSize];
-        self.cachedSsBuffer = [self updateCachedBuffer:self.cachedSsBuffer bytes:ss length:arrayBufferSize];
-        [self ensureCachedAjBjBuffersLength:arrayBufferSize];
+        id<MTLBuffer> CBuffer = [self.device newBufferWithBytes:C length:singleBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> N0Buffer = [self.device newBufferWithBytes:N0 length:singleBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> N0sqBuffer = [self.device newBufferWithBytes:N0sq length:singleBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> N1Buffer = [self.device newBufferWithBytes:N1 length:singleBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> N1sqBuffer = [self.device newBufferWithBytes:N1sq length:singleBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> alphasBuffer = [self.device newBufferWithBytes:alphas length:arrayBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> betasForN0Buffer = [self.device newBufferWithBytes:betasForN0 length:arrayBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> betasForN1Buffer = [self.device newBufferWithBytes:betasForN1 length:arrayBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> rsBuffer = [self.device newBufferWithBytes:rs length:arrayBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> ssBuffer = [self.device newBufferWithBytes:ss length:arrayBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> AjBuffer = [self.device newBufferWithLength:arrayBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> BjBuffer = [self.device newBufferWithLength:arrayBufferSize options:MTLResourceStorageModeShared];
         
         id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         
         [encoder setComputePipelineState:self.computeAffGProofTuplePipeline];
-        [encoder setBuffer:self.cachedCBuffer offset:0 atIndex:0];
-        [encoder setBuffer:self.cachedN0Buffer offset:0 atIndex:1];
-        [encoder setBuffer:self.cachedN0sqBuffer offset:0 atIndex:2];
-        [encoder setBuffer:self.cachedN1Buffer offset:0 atIndex:3];
-        [encoder setBuffer:self.cachedN1sqBuffer offset:0 atIndex:4];
-        [encoder setBuffer:self.cachedRN0Buffer offset:0 atIndex:5];
-        [encoder setBuffer:self.cachedR2N0Buffer offset:0 atIndex:6];
-        [encoder setBuffer:self.cachedRN1Buffer offset:0 atIndex:7];
-        [encoder setBuffer:self.cachedR2N1Buffer offset:0 atIndex:8];
-        [encoder setBuffer:self.cachedCInvBuffer offset:0 atIndex:9];
-        [encoder setBuffer:self.cachedOnePlusN0InvBuffer offset:0 atIndex:10];
-        [encoder setBuffer:self.cachedOnePlusN1InvBuffer offset:0 atIndex:11];
-        [encoder setBuffer:self.cachedBasesBuffer offset:0 atIndex:12];
-        [encoder setBuffer:self.cachedModsBuffer offset:0 atIndex:13];
-        [encoder setBuffer:self.cachedExpsBuffer offset:0 atIndex:14];
-        [encoder setBuffer:self.cachedRsBuffer offset:0 atIndex:15];
-        [encoder setBuffer:self.cachedSsBuffer offset:0 atIndex:16];
-        [encoder setBuffer:self.cachedAjBuffer offset:0 atIndex:17];
-        [encoder setBuffer:self.cachedBjBuffer offset:0 atIndex:18];
-        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:19];
-        [encoder setBytes:&kappa length:sizeof(uint32_t) atIndex:20];
+        [encoder setBuffer:CBuffer offset:0 atIndex:0];
+        [encoder setBuffer:N0Buffer offset:0 atIndex:1];
+        [encoder setBuffer:N0sqBuffer offset:0 atIndex:2];
+        [encoder setBuffer:N1Buffer offset:0 atIndex:3];
+        [encoder setBuffer:N1sqBuffer offset:0 atIndex:4];
+        [encoder setBuffer:alphasBuffer offset:0 atIndex:5];
+        [encoder setBuffer:betasForN0Buffer offset:0 atIndex:6];
+        [encoder setBuffer:betasForN1Buffer offset:0 atIndex:7];
+        [encoder setBuffer:rsBuffer offset:0 atIndex:8];
+        [encoder setBuffer:ssBuffer offset:0 atIndex:9];
+        [encoder setBuffer:AjBuffer offset:0 atIndex:10];
+        [encoder setBuffer:BjBuffer offset:0 atIndex:11];
+        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:12];
+        [encoder setBytes:&kappa length:sizeof(uint32_t) atIndex:13];
         
         MTLSize gridSize = MTLSizeMake(kappa, 1, 1);
-        NSUInteger threadGroupSize = [self threadgroupSizeForPipeline:self.computeAffGProofTuplePipeline count:kappa];
+        NSUInteger threadGroupSize = 256;
         MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
         
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
@@ -668,12 +372,12 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
         
-        memcpy(Aj_results, self.cachedAjBuffer.contents, arrayBufferSize);
-        memcpy(Bj_results, self.cachedBjBuffer.contents, arrayBufferSize);
+        memcpy(Aj_results, AjBuffer.contents, arrayBufferSize);
+        memcpy(Bj_results, BjBuffer.contents, arrayBufferSize);
     }
 }
 
-- (void)computeDecProofTuple:(const uint32_t*)K N0:(const uint32_t*)N0 N0sq:(const uint32_t*)N0sq K_inv:(const uint32_t*)K_inv onePlusN0_inv:(const uint32_t*)onePlusN0_inv rN0:(const uint32_t*)rN0 r2N0:(const uint32_t*)r2N0 negAlphas:(const uint32_t*)negAlphas betas:(const uint32_t*)betas rs:(const uint32_t*)rs A_results:(uint32_t*)A_results numLength:(uint32_t)numLength kappa:(uint32_t)kappa {
+- (void)computeDecProofTuple:(const uint32_t*)K N0:(const uint32_t*)N0 N0sq:(const uint32_t*)N0sq negAlphas:(const uint32_t*)negAlphas betas:(const uint32_t*)betas rs:(const uint32_t*)rs A_results:(uint32_t*)A_results numLength:(uint32_t)numLength kappa:(uint32_t)kappa {
     @autoreleasepool {
         if (!self.computeDecProofTuplePipeline) {
             NSLog(@"MetalBigIntegerBackend: computeDecProofTuplePipeline not available");
@@ -683,38 +387,30 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         NSUInteger singleBufferSize = numLength * sizeof(uint32_t);
         NSUInteger arrayBufferSize = numLength * sizeof(uint32_t) * kappa;
         
-        self.cachedKBuffer = [self updateCachedBuffer:self.cachedKBuffer bytes:K length:singleBufferSize];
-        self.cachedN0Buffer = [self updateCachedBuffer:self.cachedN0Buffer bytes:N0 length:singleBufferSize];
-        self.cachedN0sqBuffer = [self updateCachedBuffer:self.cachedN0sqBuffer bytes:N0sq length:singleBufferSize];
-        self.cachedKInvBuffer = [self updateCachedBuffer:self.cachedKInvBuffer bytes:K_inv length:singleBufferSize];
-        self.cachedOnePlusN0InvBuffer = [self updateCachedBuffer:self.cachedOnePlusN0InvBuffer bytes:onePlusN0_inv length:singleBufferSize];
-        self.cachedRN0Buffer = [self updateCachedBuffer:self.cachedRN0Buffer bytes:rN0 length:singleBufferSize];
-        self.cachedR2N0Buffer = [self updateCachedBuffer:self.cachedR2N0Buffer bytes:r2N0 length:singleBufferSize];
-        self.cachedBasesBuffer = [self updateCachedBuffer:self.cachedBasesBuffer bytes:negAlphas length:arrayBufferSize];
-        self.cachedExpsBuffer = [self updateCachedBuffer:self.cachedExpsBuffer bytes:betas length:arrayBufferSize];
-        self.cachedModsBuffer = [self updateCachedBuffer:self.cachedModsBuffer bytes:rs length:arrayBufferSize];
-        [self ensureCachedResultBufferLength:arrayBufferSize];
+        id<MTLBuffer> KBuffer = [self.device newBufferWithBytes:K length:singleBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> N0Buffer = [self.device newBufferWithBytes:N0 length:singleBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> N0sqBuffer = [self.device newBufferWithBytes:N0sq length:singleBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> negAlphasBuffer = [self.device newBufferWithBytes:negAlphas length:arrayBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> betasBuffer = [self.device newBufferWithBytes:betas length:arrayBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> rsBuffer = [self.device newBufferWithBytes:rs length:arrayBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> ABuffer = [self.device newBufferWithLength:arrayBufferSize options:MTLResourceStorageModeShared];
         
         id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
         
         [encoder setComputePipelineState:self.computeDecProofTuplePipeline];
-        [encoder setBuffer:self.cachedKBuffer offset:0 atIndex:0];
-        [encoder setBuffer:self.cachedN0Buffer offset:0 atIndex:1];
-        [encoder setBuffer:self.cachedN0sqBuffer offset:0 atIndex:2];
-        [encoder setBuffer:self.cachedRN0Buffer offset:0 atIndex:3];
-        [encoder setBuffer:self.cachedR2N0Buffer offset:0 atIndex:4];
-        [encoder setBuffer:self.cachedKInvBuffer offset:0 atIndex:5];
-        [encoder setBuffer:self.cachedOnePlusN0InvBuffer offset:0 atIndex:6];
-        [encoder setBuffer:self.cachedBasesBuffer offset:0 atIndex:7];
-        [encoder setBuffer:self.cachedExpsBuffer offset:0 atIndex:8];
-        [encoder setBuffer:self.cachedModsBuffer offset:0 atIndex:9];
-        [encoder setBuffer:self.cachedResultsBuffer offset:0 atIndex:10];
-        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:11];
-        [encoder setBytes:&kappa length:sizeof(uint32_t) atIndex:12];
+        [encoder setBuffer:KBuffer offset:0 atIndex:0];
+        [encoder setBuffer:N0Buffer offset:0 atIndex:1];
+        [encoder setBuffer:N0sqBuffer offset:0 atIndex:2];
+        [encoder setBuffer:negAlphasBuffer offset:0 atIndex:3];
+        [encoder setBuffer:betasBuffer offset:0 atIndex:4];
+        [encoder setBuffer:rsBuffer offset:0 atIndex:5];
+        [encoder setBuffer:ABuffer offset:0 atIndex:6];
+        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:7];
+        [encoder setBytes:&kappa length:sizeof(uint32_t) atIndex:8];
         
         MTLSize gridSize = MTLSizeMake(kappa, 1, 1);
-        NSUInteger threadGroupSize = [self threadgroupSizeForPipeline:self.computeDecProofTuplePipeline count:kappa];
+        NSUInteger threadGroupSize = 256;
         MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
         
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
@@ -723,11 +419,11 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
         
-        memcpy(A_results, self.cachedResultsBuffer.contents, arrayBufferSize);
+        memcpy(A_results, ABuffer.contents, arrayBufferSize);
     }
 }
 
-- (void)modInverse:(const uint32_t*)values mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count {
+- (void)modInverse:(const uint32_t*)values mods:(const uint32_t*)mods results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count {
     @autoreleasepool {
         if (!self.modInversePipeline) {
             NSLog(@"MetalBigIntegerBackend: modInversePipeline not available");
@@ -737,11 +433,7 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         NSUInteger bufferSize = numLength * sizeof(uint32_t) * count;
         
         id<MTLBuffer> valuesBuffer = [self.device newBufferWithBytes:values length:bufferSize options:MTLResourceStorageModeShared];
-        NSUInteger singleBufferSize = numLength * sizeof(uint32_t);
-        self.cachedModBuffer = [self updateCachedBuffer:self.cachedModBuffer bytes:mods length:singleBufferSize];
-        self.cachedRBuffer = [self updateCachedBuffer:self.cachedRBuffer bytes:r length:singleBufferSize];
-        self.cachedR2Buffer = [self updateCachedBuffer:self.cachedR2Buffer bytes:r2 length:singleBufferSize];
-        self.cachedSingleBufferSize = singleBufferSize;
+        id<MTLBuffer> modsBuffer = [self.device newBufferWithBytes:mods length:bufferSize options:MTLResourceStorageModeShared];
         id<MTLBuffer> resultsBuffer = [self.device newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
         
         id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
@@ -749,15 +441,13 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         
         [encoder setComputePipelineState:self.modInversePipeline];
         [encoder setBuffer:valuesBuffer offset:0 atIndex:0];
-        [encoder setBuffer:self.cachedModBuffer offset:0 atIndex:1];
-        [encoder setBuffer:self.cachedRBuffer offset:0 atIndex:2];
-        [encoder setBuffer:self.cachedR2Buffer offset:0 atIndex:3];
-        [encoder setBuffer:resultsBuffer offset:0 atIndex:4];
-        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:5];
-        [encoder setBytes:&count length:sizeof(uint32_t) atIndex:6];
+        [encoder setBuffer:modsBuffer offset:0 atIndex:1];
+        [encoder setBuffer:resultsBuffer offset:0 atIndex:2];
+        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:3];
+        [encoder setBytes:&count length:sizeof(uint32_t) atIndex:4];
         
         MTLSize gridSize = MTLSizeMake(count, 1, 1);
-        NSUInteger threadGroupSize = [self threadgroupSizeForPipeline:self.modInversePipeline count:count];
+        NSUInteger threadGroupSize = 256;
         MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
         
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
@@ -781,9 +471,7 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         
         id<MTLBuffer> aBuffer = [self.device newBufferWithBytes:a length:bufferSize options:MTLResourceStorageModeShared];
         id<MTLBuffer> bBuffer = [self.device newBufferWithBytes:b length:bufferSize options:MTLResourceStorageModeShared];
-        // Multiply returns 2 * numLength words per result
-        NSUInteger resultsBufferSize = bufferSize * 2;
-        id<MTLBuffer> resultsBuffer = [self.device newBufferWithLength:resultsBufferSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> resultsBuffer = [self.device newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
         
         id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
@@ -796,52 +484,7 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
         [encoder setBytes:&count length:sizeof(uint32_t) atIndex:4];
         
         MTLSize gridSize = MTLSizeMake(count, 1, 1);
-        NSUInteger threadGroupSize = [self threadgroupSizeForPipeline:self.multiplyPipeline count:count];
-        MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
-        
-        [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
-        [encoder endEncoding];
-        
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
-        
-        memcpy(results, resultsBuffer.contents, resultsBufferSize);
-    }
-}
-
-- (void)batchModPowDifferentExp:(const uint32_t*)bases exps:(const uint32_t*)exps mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count {
-    @autoreleasepool {
-        if (!self.batchModPowDifferentExpPipeline) {
-            NSLog(@"MetalBigIntegerBackend: batchModPowDifferentExpPipeline not available");
-            return;
-        }
-        
-        NSUInteger bufferSize = numLength * sizeof(uint32_t) * count;
-        NSUInteger singleBufferSize = numLength * sizeof(uint32_t);
-        
-        id<MTLBuffer> basesBuffer = [self.device newBufferWithBytes:bases length:bufferSize options:MTLResourceStorageModeShared];
-        id<MTLBuffer> expsBuffer = [self.device newBufferWithBytes:exps length:bufferSize options:MTLResourceStorageModeShared];
-        id<MTLBuffer> modsBuffer = [self.device newBufferWithBytes:mods length:bufferSize options:MTLResourceStorageModeShared];
-        self.cachedRBuffer = [self updateCachedBuffer:self.cachedRBuffer bytes:r length:singleBufferSize];
-        self.cachedR2Buffer = [self updateCachedBuffer:self.cachedR2Buffer bytes:r2 length:singleBufferSize];
-        self.cachedSingleBufferSize = singleBufferSize;
-        id<MTLBuffer> resultsBuffer = [self.device newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
-        
-        id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
-        id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
-        
-        [encoder setComputePipelineState:self.batchModPowDifferentExpPipeline];
-        [encoder setBuffer:basesBuffer offset:0 atIndex:0];
-        [encoder setBuffer:expsBuffer offset:0 atIndex:1];
-        [encoder setBuffer:modsBuffer offset:0 atIndex:2];
-        [encoder setBuffer:self.cachedRBuffer offset:0 atIndex:3];
-        [encoder setBuffer:self.cachedR2Buffer offset:0 atIndex:4];
-        [encoder setBuffer:resultsBuffer offset:0 atIndex:5];
-        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:6];
-        [encoder setBytes:&count length:sizeof(uint32_t) atIndex:7];
-        
-        MTLSize gridSize = MTLSizeMake(count, 1, 1);
-        NSUInteger threadGroupSize = [self threadgroupSizeForPipeline:self.batchModPowDifferentExpPipeline count:count];
+        NSUInteger threadGroupSize = 256;
         MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
         
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
@@ -854,49 +497,41 @@ static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsi
     }
 }
 
-- (void)batchModPowDifferentExpSigned:(const uint32_t*)bases baseInvs:(const uint32_t*)baseInvs exps:(const uint32_t*)exps mods:(const uint32_t*)mods r:(const uint32_t*)r r2:(const uint32_t*)r2 results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count {
+- (void)batchModPowDifferentExp:(const uint32_t*)bases exps:(const uint32_t*)exps mods:(const uint32_t*)mods results:(uint32_t*)results numLength:(uint32_t)numLength count:(uint32_t)count {
     @autoreleasepool {
-        if (!self.batchModPowDifferentExpSignedPipeline) {
-            NSLog(@"MetalBigIntegerBackend: batchModPowDifferentExpSignedPipeline not available");
+        if (!self.batchModPowDifferentExpPipeline) {
+            NSLog(@"MetalBigIntegerBackend: batchModPowDifferentExpPipeline not available");
             return;
         }
-
+        
         NSUInteger bufferSize = numLength * sizeof(uint32_t) * count;
-        NSUInteger singleBufferSize = numLength * sizeof(uint32_t);
-
+        
         id<MTLBuffer> basesBuffer = [self.device newBufferWithBytes:bases length:bufferSize options:MTLResourceStorageModeShared];
-        id<MTLBuffer> baseInvsBuffer = [self.device newBufferWithBytes:baseInvs length:bufferSize options:MTLResourceStorageModeShared];
         id<MTLBuffer> expsBuffer = [self.device newBufferWithBytes:exps length:bufferSize options:MTLResourceStorageModeShared];
         id<MTLBuffer> modsBuffer = [self.device newBufferWithBytes:mods length:bufferSize options:MTLResourceStorageModeShared];
-        self.cachedRBuffer = [self updateCachedBuffer:self.cachedRBuffer bytes:r length:singleBufferSize];
-        self.cachedR2Buffer = [self updateCachedBuffer:self.cachedR2Buffer bytes:r2 length:singleBufferSize];
-        self.cachedSingleBufferSize = singleBufferSize;
         id<MTLBuffer> resultsBuffer = [self.device newBufferWithLength:bufferSize options:MTLResourceStorageModeShared];
-
+        
         id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
-
-        [encoder setComputePipelineState:self.batchModPowDifferentExpSignedPipeline];
+        
+        [encoder setComputePipelineState:self.batchModPowDifferentExpPipeline];
         [encoder setBuffer:basesBuffer offset:0 atIndex:0];
-        [encoder setBuffer:baseInvsBuffer offset:0 atIndex:1];
-        [encoder setBuffer:expsBuffer offset:0 atIndex:2];
-        [encoder setBuffer:modsBuffer offset:0 atIndex:3];
-        [encoder setBuffer:self.cachedRBuffer offset:0 atIndex:4];
-        [encoder setBuffer:self.cachedR2Buffer offset:0 atIndex:5];
-        [encoder setBuffer:resultsBuffer offset:0 atIndex:6];
-        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:7];
-        [encoder setBytes:&count length:sizeof(uint32_t) atIndex:8];
-
+        [encoder setBuffer:expsBuffer offset:0 atIndex:1];
+        [encoder setBuffer:modsBuffer offset:0 atIndex:2];
+        [encoder setBuffer:resultsBuffer offset:0 atIndex:3];
+        [encoder setBytes:&numLength length:sizeof(uint32_t) atIndex:4];
+        [encoder setBytes:&count length:sizeof(uint32_t) atIndex:5];
+        
         MTLSize gridSize = MTLSizeMake(count, 1, 1);
-        NSUInteger threadGroupSize = [self threadgroupSizeForPipeline:self.batchModPowDifferentExpSignedPipeline count:count];
+        NSUInteger threadGroupSize = 256;
         MTLSize threadgroupSize = MTLSizeMake(threadGroupSize, 1, 1);
-
+        
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
         [encoder endEncoding];
-
+        
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
-
+        
         memcpy(results, resultsBuffer.contents, bufferSize);
     }
 }
@@ -955,397 +590,71 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
     }
 }
 
-JNIEXPORT jstring JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeGetDeviceName
-  (JNIEnv *env, jobject obj, jlong handle) {
-    @autoreleasepool {
-        if (handle == 0) return NULL;
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-        NSString *name = backend.device ? backend.device.name : nil;
-        if (!name) {
-            return NULL;
-        }
-        return (*env)->NewStringUTF(env, [name UTF8String]);
-    }
-}
-
 JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeModPow
-  (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray exps, jintArray mods, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
+  (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray exps, jintArray mods, jintArray results, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return;
-        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
         jsize basesLen = (*env)->GetArrayLength(env, bases);
         jsize expsLen = (*env)->GetArrayLength(env, exps);
         jsize modsLen = (*env)->GetArrayLength(env, mods);
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
         jsize resultsLen = (*env)->GetArrayLength(env, results);
         
-        if (basesLen != expsLen || basesLen != modsLen || rLen != numLength || r2Len != numLength || basesLen != resultsLen) {
+        if (basesLen != expsLen || basesLen != modsLen || basesLen != resultsLen) {
             return;
         }
         
-        jint *basesPtr = copy_int_array(env, bases, basesLen);
-        jint *expsPtr = copy_int_array(env, exps, expsLen);
-        jint *modsPtr = copy_int_array(env, mods, modsLen);
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        jint *resultsPtr = alloc_int_array(resultsLen);
+        jint *basesPtr = (*env)->GetIntArrayElements(env, bases, NULL);
+        jint *expsPtr = (*env)->GetIntArrayElements(env, exps, NULL);
+        jint *modsPtr = (*env)->GetIntArrayElements(env, mods, NULL);
+        jint *resultsPtr = (*env)->GetIntArrayElements(env, results, NULL);
         
-        if (basesPtr && expsPtr && modsPtr && rPtr && r2Ptr && resultsPtr) {
+        if (basesPtr && expsPtr && modsPtr && resultsPtr) {
             [backend modPow:(const uint32_t*)basesPtr 
                        exps:(const uint32_t*)expsPtr 
                        mods:(const uint32_t*)modsPtr 
-                          r:(const uint32_t*)rPtr
-                         r2:(const uint32_t*)r2Ptr
                     results:(uint32_t*)resultsPtr 
                   numLength:(uint32_t)numLength 
                       count:(uint32_t)count];
         }
         
-        if (resultsPtr) {
-            write_back_int_array(env, results, resultsPtr, resultsLen);
-        }
-        (void)basesPtr;
-        (void)expsPtr;
-        (void)modsPtr;
-        (void)rPtr;
-        (void)r2Ptr;
-        (void)resultsPtr;
-    }
-}
-
-JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeModPowDirect
-  (JNIEnv *env, jobject obj, jlong handle, jobject basesBuffer, jobject expsBuffer, jobject modsBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return JNI_FALSE;
-        reset_jni_buffer_cursor();
-        
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-        
-        void *basesPtr = (*env)->GetDirectBufferAddress(env, basesBuffer);
-        void *expsPtr = (*env)->GetDirectBufferAddress(env, expsBuffer);
-        void *modsPtr = (*env)->GetDirectBufferAddress(env, modsBuffer);
-        void *resultsPtr = (*env)->GetDirectBufferAddress(env, resultsBuffer);
-        if (!basesPtr || !expsPtr || !modsPtr || !resultsPtr) {
-            return JNI_FALSE;
-        }
-        
-        jlong basesCap = (*env)->GetDirectBufferCapacity(env, basesBuffer);
-        jlong expsCap = (*env)->GetDirectBufferCapacity(env, expsBuffer);
-        jlong modsCap = (*env)->GetDirectBufferCapacity(env, modsBuffer);
-        jlong resultsCap = (*env)->GetDirectBufferCapacity(env, resultsBuffer);
-        
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        if (rLen != numLength || r2Len != numLength) {
-            return JNI_FALSE;
-        }
-        
-        size_t bufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)count;
-        if (basesCap < (jlong)bufferSize || expsCap < (jlong)bufferSize || modsCap < (jlong)bufferSize || resultsCap < (jlong)bufferSize) {
-            return JNI_FALSE;
-        }
-        
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        
-        if (rPtr && r2Ptr) {
-            [backend modPow:(const uint32_t*)basesPtr
-                       exps:(const uint32_t*)expsPtr
-                       mods:(const uint32_t*)modsPtr
-                          r:(const uint32_t*)rPtr
-                         r2:(const uint32_t*)r2Ptr
-                    results:(uint32_t*)resultsPtr
-                  numLength:(uint32_t)numLength
-                      count:(uint32_t)count];
-        }
-        
-        (void)rPtr;
-        (void)r2Ptr;
-        return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
-    }
-}
-
-JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeModPowSigned
-  (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray baseInvs, jintArray exps, jintArray mods, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return;
-        reset_jni_buffer_cursor();
-
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-
-        jsize basesLen = (*env)->GetArrayLength(env, bases);
-        jsize baseInvsLen = (*env)->GetArrayLength(env, baseInvs);
-        jsize expsLen = (*env)->GetArrayLength(env, exps);
-        jsize modsLen = (*env)->GetArrayLength(env, mods);
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        jsize resultsLen = (*env)->GetArrayLength(env, results);
-
-        if (basesLen != expsLen || basesLen != modsLen || basesLen != baseInvsLen ||
-            rLen != numLength || r2Len != numLength || basesLen != resultsLen) {
-            return;
-        }
-
-        jint *basesPtr = copy_int_array(env, bases, basesLen);
-        jint *baseInvsPtr = copy_int_array(env, baseInvs, baseInvsLen);
-        jint *expsPtr = copy_int_array(env, exps, expsLen);
-        jint *modsPtr = copy_int_array(env, mods, modsLen);
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        jint *resultsPtr = alloc_int_array(resultsLen);
-
-        if (basesPtr && baseInvsPtr && expsPtr && modsPtr && rPtr && r2Ptr && resultsPtr) {
-            [backend modPowSigned:(const uint32_t*)basesPtr
-                         baseInvs:(const uint32_t*)baseInvsPtr
-                             exps:(const uint32_t*)expsPtr
-                             mods:(const uint32_t*)modsPtr
-                                r:(const uint32_t*)rPtr
-                               r2:(const uint32_t*)r2Ptr
-                          results:(uint32_t*)resultsPtr
-                        numLength:(uint32_t)numLength
-                            count:(uint32_t)count];
-        }
-
-        if (resultsPtr) {
-            write_back_int_array(env, results, resultsPtr, resultsLen);
-        }
-        (void)basesPtr;
-        (void)baseInvsPtr;
-        (void)expsPtr;
-        (void)modsPtr;
-        (void)rPtr;
-        (void)r2Ptr;
-        (void)resultsPtr;
-    }
-}
-
-JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeModPowSignedDirect
-  (JNIEnv *env, jobject obj, jlong handle, jobject basesBuffer, jobject baseInvsBuffer, jobject expsBuffer, jobject modsBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return JNI_FALSE;
-        reset_jni_buffer_cursor();
-
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-
-        void *basesPtr = (*env)->GetDirectBufferAddress(env, basesBuffer);
-        void *baseInvsPtr = (*env)->GetDirectBufferAddress(env, baseInvsBuffer);
-        void *expsPtr = (*env)->GetDirectBufferAddress(env, expsBuffer);
-        void *modsPtr = (*env)->GetDirectBufferAddress(env, modsBuffer);
-        void *resultsPtr = (*env)->GetDirectBufferAddress(env, resultsBuffer);
-        if (!basesPtr || !baseInvsPtr || !expsPtr || !modsPtr || !resultsPtr) {
-            return JNI_FALSE;
-        }
-
-        jlong basesCap = (*env)->GetDirectBufferCapacity(env, basesBuffer);
-        jlong baseInvsCap = (*env)->GetDirectBufferCapacity(env, baseInvsBuffer);
-        jlong expsCap = (*env)->GetDirectBufferCapacity(env, expsBuffer);
-        jlong modsCap = (*env)->GetDirectBufferCapacity(env, modsBuffer);
-        jlong resultsCap = (*env)->GetDirectBufferCapacity(env, resultsBuffer);
-
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        if (rLen != numLength || r2Len != numLength) {
-            return JNI_FALSE;
-        }
-
-        size_t bufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)count;
-        if (basesCap < (jlong)bufferSize || baseInvsCap < (jlong)bufferSize ||
-            expsCap < (jlong)bufferSize || modsCap < (jlong)bufferSize || resultsCap < (jlong)bufferSize) {
-            return JNI_FALSE;
-        }
-
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-
-        if (rPtr && r2Ptr) {
-            [backend modPowSigned:(const uint32_t*)basesPtr
-                         baseInvs:(const uint32_t*)baseInvsPtr
-                             exps:(const uint32_t*)expsPtr
-                             mods:(const uint32_t*)modsPtr
-                                r:(const uint32_t*)rPtr
-                               r2:(const uint32_t*)r2Ptr
-                          results:(uint32_t*)resultsPtr
-                        numLength:(uint32_t)numLength
-                            count:(uint32_t)count];
-        }
-
-        (void)rPtr;
-        (void)r2Ptr;
-        return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
-    }
-}
-
-JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPow
-  (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray exp, jintArray mod, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return;
-        reset_jni_buffer_cursor();
-        
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-        
-        jsize basesLen = (*env)->GetArrayLength(env, bases);
-        jsize expLen = (*env)->GetArrayLength(env, exp);
-        jsize modLen = (*env)->GetArrayLength(env, mod);
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        jsize resultsLen = (*env)->GetArrayLength(env, results);
-        
-        if (basesLen != resultsLen || expLen != numLength || modLen != numLength || rLen != numLength || r2Len != numLength) {
-            return;
-        }
-        
-        jint *basesPtr = copy_int_array(env, bases, basesLen);
-        jint *expPtr = copy_int_array(env, exp, expLen);
-        jint *modPtr = copy_int_array(env, mod, modLen);
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        jint *resultsPtr = alloc_int_array(resultsLen);
-        
-        if (basesPtr && expPtr && modPtr && rPtr && r2Ptr && resultsPtr) {
-            [backend batchModPow:(const uint32_t*)basesPtr
-                             exp:(const uint32_t*)expPtr
-                             mod:(const uint32_t*)modPtr
-                               r:(const uint32_t*)rPtr
-                              r2:(const uint32_t*)r2Ptr
-                         results:(uint32_t*)resultsPtr
-                       numLength:(uint32_t)numLength
-                           count:(uint32_t)count];
-        }
-        
-        if (resultsPtr) {
-            write_back_int_array(env, results, resultsPtr, resultsLen);
-        }
-        (void)basesPtr;
-        (void)expPtr;
-        (void)modPtr;
-        (void)rPtr;
-        (void)r2Ptr;
-        (void)resultsPtr;
-    }
-}
-
-JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDirect
-  (JNIEnv *env, jobject obj, jlong handle, jobject basesBuffer, jobject expBuffer, jobject modBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return JNI_FALSE;
-        reset_jni_buffer_cursor();
-        
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-        
-        void *basesPtr = (*env)->GetDirectBufferAddress(env, basesBuffer);
-        void *expPtr = (*env)->GetDirectBufferAddress(env, expBuffer);
-        void *modPtr = (*env)->GetDirectBufferAddress(env, modBuffer);
-        void *resultsPtr = (*env)->GetDirectBufferAddress(env, resultsBuffer);
-        if (!basesPtr || !expPtr || !modPtr || !resultsPtr) {
-            return JNI_FALSE;
-        }
-        
-        jlong basesCap = (*env)->GetDirectBufferCapacity(env, basesBuffer);
-        jlong expCap = (*env)->GetDirectBufferCapacity(env, expBuffer);
-        jlong modCap = (*env)->GetDirectBufferCapacity(env, modBuffer);
-        jlong resultsCap = (*env)->GetDirectBufferCapacity(env, resultsBuffer);
-        
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        if (rLen != numLength || r2Len != numLength) {
-            return JNI_FALSE;
-        }
-        
-        size_t bufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)count;
-        size_t singleSize = (size_t)numLength * sizeof(uint32_t);
-        if (basesCap < (jlong)bufferSize || resultsCap < (jlong)bufferSize || expCap < (jlong)singleSize || modCap < (jlong)singleSize) {
-            return JNI_FALSE;
-        }
-        
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        
-        if (rPtr && r2Ptr) {
-            [backend batchModPow:(const uint32_t*)basesPtr
-                             exp:(const uint32_t*)expPtr
-                             mod:(const uint32_t*)modPtr
-                               r:(const uint32_t*)rPtr
-                              r2:(const uint32_t*)r2Ptr
-                         results:(uint32_t*)resultsPtr
-                       numLength:(uint32_t)numLength
-                           count:(uint32_t)count];
-        }
-        
-        (void)rPtr;
-        (void)r2Ptr;
-        return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
+        if (basesPtr) (*env)->ReleaseIntArrayElements(env, bases, basesPtr, JNI_ABORT);
+        if (expsPtr) (*env)->ReleaseIntArrayElements(env, exps, expsPtr, JNI_ABORT);
+        if (modsPtr) (*env)->ReleaseIntArrayElements(env, mods, modsPtr, JNI_ABORT);
+        if (resultsPtr) (*env)->ReleaseIntArrayElements(env, results, resultsPtr, 0);
     }
 }
 
 JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeComputeAffGProofTuple
   (JNIEnv *env, jobject obj, jlong handle, jintArray C, jintArray N0, jintArray N0sq, jintArray N1, jintArray N1sq,
-            jintArray C_inv, jintArray onePlusN0_inv, jintArray onePlusN1_inv,
-            jintArray rN0, jintArray r2N0, jintArray rN1, jintArray r2N1,
             jintArray alphas, jintArray betasForN0, jintArray betasForN1, jintArray rs, jintArray ss,
             jintArray Aj, jintArray Bj, jint numLength, jint kappa) {
     @autoreleasepool {
         if (handle == 0) return;
-        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jsize cLen = (*env)->GetArrayLength(env, C);
-        jsize n0Len = (*env)->GetArrayLength(env, N0);
-        jsize n0sqLen = (*env)->GetArrayLength(env, N0sq);
-        jsize n1Len = (*env)->GetArrayLength(env, N1);
-        jsize n1sqLen = (*env)->GetArrayLength(env, N1sq);
-        jsize cInvLen = (*env)->GetArrayLength(env, C_inv);
-        jsize onePlusN0InvLen = (*env)->GetArrayLength(env, onePlusN0_inv);
-        jsize onePlusN1InvLen = (*env)->GetArrayLength(env, onePlusN1_inv);
-        jsize rN0Len = (*env)->GetArrayLength(env, rN0);
-        jsize r2N0Len = (*env)->GetArrayLength(env, r2N0);
-        jsize rN1Len = (*env)->GetArrayLength(env, rN1);
-        jsize r2N1Len = (*env)->GetArrayLength(env, r2N1);
-        jsize alphasLen = (*env)->GetArrayLength(env, alphas);
-        jsize betasForN0Len = (*env)->GetArrayLength(env, betasForN0);
-        jsize betasForN1Len = (*env)->GetArrayLength(env, betasForN1);
-        jsize rsLen = (*env)->GetArrayLength(env, rs);
-        jsize ssLen = (*env)->GetArrayLength(env, ss);
-        jsize ajLen = (*env)->GetArrayLength(env, Aj);
-        jsize bjLen = (*env)->GetArrayLength(env, Bj);
+        jint *CPtr = (*env)->GetIntArrayElements(env, C, NULL);
+        jint *N0Ptr = (*env)->GetIntArrayElements(env, N0, NULL);
+        jint *N0sqPtr = (*env)->GetIntArrayElements(env, N0sq, NULL);
+        jint *N1Ptr = (*env)->GetIntArrayElements(env, N1, NULL);
+        jint *N1sqPtr = (*env)->GetIntArrayElements(env, N1sq, NULL);
+        jint *alphasPtr = (*env)->GetIntArrayElements(env, alphas, NULL);
+        jint *betasForN0Ptr = (*env)->GetIntArrayElements(env, betasForN0, NULL);
+        jint *betasForN1Ptr = (*env)->GetIntArrayElements(env, betasForN1, NULL);
+        jint *rsPtr = (*env)->GetIntArrayElements(env, rs, NULL);
+        jint *ssPtr = (*env)->GetIntArrayElements(env, ss, NULL);
+        jint *AjPtr = (*env)->GetIntArrayElements(env, Aj, NULL);
+        jint *BjPtr = (*env)->GetIntArrayElements(env, Bj, NULL);
         
-        jint *CPtr = copy_int_array(env, C, cLen);
-        jint *N0Ptr = copy_int_array(env, N0, n0Len);
-        jint *N0sqPtr = copy_int_array(env, N0sq, n0sqLen);
-        jint *N1Ptr = copy_int_array(env, N1, n1Len);
-        jint *N1sqPtr = copy_int_array(env, N1sq, n1sqLen);
-        jint *CInvPtr = copy_int_array(env, C_inv, cInvLen);
-        jint *onePlusN0InvPtr = copy_int_array(env, onePlusN0_inv, onePlusN0InvLen);
-        jint *onePlusN1InvPtr = copy_int_array(env, onePlusN1_inv, onePlusN1InvLen);
-        jint *rN0Ptr = copy_int_array(env, rN0, rN0Len);
-        jint *r2N0Ptr = copy_int_array(env, r2N0, r2N0Len);
-        jint *rN1Ptr = copy_int_array(env, rN1, rN1Len);
-        jint *r2N1Ptr = copy_int_array(env, r2N1, r2N1Len);
-        jint *alphasPtr = copy_int_array(env, alphas, alphasLen);
-        jint *betasForN0Ptr = copy_int_array(env, betasForN0, betasForN0Len);
-        jint *betasForN1Ptr = copy_int_array(env, betasForN1, betasForN1Len);
-        jint *rsPtr = copy_int_array(env, rs, rsLen);
-        jint *ssPtr = copy_int_array(env, ss, ssLen);
-        jint *AjPtr = alloc_int_array(ajLen);
-        jint *BjPtr = alloc_int_array(bjLen);
-        
-        if (CPtr && N0Ptr && N0sqPtr && N1Ptr && N1sqPtr && CInvPtr && onePlusN0InvPtr && onePlusN1InvPtr && rN0Ptr && r2N0Ptr && rN1Ptr && r2N1Ptr && alphasPtr && betasForN0Ptr && betasForN1Ptr && rsPtr && ssPtr && AjPtr && BjPtr) {
+        if (CPtr && N0Ptr && N0sqPtr && N1Ptr && N1sqPtr && alphasPtr && betasForN0Ptr && betasForN1Ptr && rsPtr && ssPtr && AjPtr && BjPtr) {
             [backend computeAffGProofTuple:(const uint32_t*)CPtr
                                        N0:(const uint32_t*)N0Ptr
                                      N0sq:(const uint32_t*)N0sqPtr
                                        N1:(const uint32_t*)N1Ptr
                                      N1sq:(const uint32_t*)N1sqPtr
-                                    C_inv:(const uint32_t*)CInvPtr
-                             onePlusN0_inv:(const uint32_t*)onePlusN0InvPtr
-                             onePlusN1_inv:(const uint32_t*)onePlusN1InvPtr
-                                       rN0:(const uint32_t*)rN0Ptr
-                                     r2N0:(const uint32_t*)r2N0Ptr
-                                       rN1:(const uint32_t*)rN1Ptr
-                                     r2N1:(const uint32_t*)r2N1Ptr
                                    alphas:(const uint32_t*)alphasPtr
                               betasForN0:(const uint32_t*)betasForN0Ptr
                               betasForN1:(const uint32_t*)betasForN1Ptr
@@ -1357,186 +666,42 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                                     kappa:(uint32_t)kappa];
         }
         
-        if (AjPtr) {
-            write_back_int_array(env, Aj, AjPtr, ajLen);
-        }
-        if (BjPtr) {
-            write_back_int_array(env, Bj, BjPtr, bjLen);
-        }
-        (void)CPtr;
-        (void)N0Ptr;
-        (void)N0sqPtr;
-        (void)N1Ptr;
-        (void)N1sqPtr;
-        (void)CInvPtr;
-        (void)onePlusN0InvPtr;
-        (void)onePlusN1InvPtr;
-        (void)rN0Ptr;
-        (void)r2N0Ptr;
-        (void)rN1Ptr;
-        (void)r2N1Ptr;
-        (void)alphasPtr;
-        (void)betasForN0Ptr;
-        (void)betasForN1Ptr;
-        (void)rsPtr;
-        (void)ssPtr;
-        (void)AjPtr;
-        (void)BjPtr;
-    }
-}
-
-JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeComputeAffGProofTupleDirect
-  (JNIEnv *env, jobject obj, jlong handle, jintArray C, jintArray N0, jintArray N0sq, jintArray N1, jintArray N1sq,
-            jintArray C_inv, jintArray onePlusN0_inv, jintArray onePlusN1_inv,
-            jintArray rN0, jintArray r2N0, jintArray rN1, jintArray r2N1,
-            jobject alphasBuffer, jobject betasForN0Buffer, jobject betasForN1Buffer, jobject rsBuffer, jobject ssBuffer,
-            jobject AjBuffer, jobject BjBuffer, jint numLength, jint kappa) {
-    @autoreleasepool {
-        if (handle == 0) return JNI_FALSE;
-        reset_jni_buffer_cursor();
-        
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-        
-        void *alphasPtr = (*env)->GetDirectBufferAddress(env, alphasBuffer);
-        void *betasForN0Ptr = (*env)->GetDirectBufferAddress(env, betasForN0Buffer);
-        void *betasForN1Ptr = (*env)->GetDirectBufferAddress(env, betasForN1Buffer);
-        void *rsPtr = (*env)->GetDirectBufferAddress(env, rsBuffer);
-        void *ssPtr = (*env)->GetDirectBufferAddress(env, ssBuffer);
-        void *AjPtr = (*env)->GetDirectBufferAddress(env, AjBuffer);
-        void *BjPtr = (*env)->GetDirectBufferAddress(env, BjBuffer);
-        if (!alphasPtr || !betasForN0Ptr || !betasForN1Ptr || !rsPtr || !ssPtr || !AjPtr || !BjPtr) {
-            return JNI_FALSE;
-        }
-        
-        jlong alphasCap = (*env)->GetDirectBufferCapacity(env, alphasBuffer);
-        jlong betasForN0Cap = (*env)->GetDirectBufferCapacity(env, betasForN0Buffer);
-        jlong betasForN1Cap = (*env)->GetDirectBufferCapacity(env, betasForN1Buffer);
-        jlong rsCap = (*env)->GetDirectBufferCapacity(env, rsBuffer);
-        jlong ssCap = (*env)->GetDirectBufferCapacity(env, ssBuffer);
-        jlong ajCap = (*env)->GetDirectBufferCapacity(env, AjBuffer);
-        jlong bjCap = (*env)->GetDirectBufferCapacity(env, BjBuffer);
-        
-        size_t arrayBufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)kappa;
-        if (alphasCap < (jlong)arrayBufferSize || betasForN0Cap < (jlong)arrayBufferSize || betasForN1Cap < (jlong)arrayBufferSize ||
-            rsCap < (jlong)arrayBufferSize || ssCap < (jlong)arrayBufferSize || ajCap < (jlong)arrayBufferSize || bjCap < (jlong)arrayBufferSize) {
-            return JNI_FALSE;
-        }
-        
-        jsize cLen = (*env)->GetArrayLength(env, C);
-        jsize n0Len = (*env)->GetArrayLength(env, N0);
-        jsize n0sqLen = (*env)->GetArrayLength(env, N0sq);
-        jsize n1Len = (*env)->GetArrayLength(env, N1);
-        jsize n1sqLen = (*env)->GetArrayLength(env, N1sq);
-        jsize cInvLen = (*env)->GetArrayLength(env, C_inv);
-        jsize onePlusN0InvLen = (*env)->GetArrayLength(env, onePlusN0_inv);
-        jsize onePlusN1InvLen = (*env)->GetArrayLength(env, onePlusN1_inv);
-        jsize rN0Len = (*env)->GetArrayLength(env, rN0);
-        jsize r2N0Len = (*env)->GetArrayLength(env, r2N0);
-        jsize rN1Len = (*env)->GetArrayLength(env, rN1);
-        jsize r2N1Len = (*env)->GetArrayLength(env, r2N1);
-        if (cLen != numLength || n0Len != numLength || n0sqLen != numLength || n1Len != numLength || n1sqLen != numLength ||
-            cInvLen != numLength || onePlusN0InvLen != numLength || onePlusN1InvLen != numLength ||
-            rN0Len != numLength || r2N0Len != numLength || rN1Len != numLength || r2N1Len != numLength) {
-            return JNI_FALSE;
-        }
-        
-        jint *CPtr = copy_int_array(env, C, cLen);
-        jint *N0Ptr = copy_int_array(env, N0, n0Len);
-        jint *N0sqPtr = copy_int_array(env, N0sq, n0sqLen);
-        jint *N1Ptr = copy_int_array(env, N1, n1Len);
-        jint *N1sqPtr = copy_int_array(env, N1sq, n1sqLen);
-        jint *CInvPtr = copy_int_array(env, C_inv, cInvLen);
-        jint *onePlusN0InvPtr = copy_int_array(env, onePlusN0_inv, onePlusN0InvLen);
-        jint *onePlusN1InvPtr = copy_int_array(env, onePlusN1_inv, onePlusN1InvLen);
-        jint *rN0Ptr = copy_int_array(env, rN0, rN0Len);
-        jint *r2N0Ptr = copy_int_array(env, r2N0, r2N0Len);
-        jint *rN1Ptr = copy_int_array(env, rN1, rN1Len);
-        jint *r2N1Ptr = copy_int_array(env, r2N1, r2N1Len);
-        
-        if (CPtr && N0Ptr && N0sqPtr && N1Ptr && N1sqPtr && CInvPtr && onePlusN0InvPtr && onePlusN1InvPtr && rN0Ptr && r2N0Ptr && rN1Ptr && r2N1Ptr) {
-            [backend computeAffGProofTuple:(const uint32_t*)CPtr
-                                       N0:(const uint32_t*)N0Ptr
-                                     N0sq:(const uint32_t*)N0sqPtr
-                                       N1:(const uint32_t*)N1Ptr
-                                     N1sq:(const uint32_t*)N1sqPtr
-                                    C_inv:(const uint32_t*)CInvPtr
-                             onePlusN0_inv:(const uint32_t*)onePlusN0InvPtr
-                             onePlusN1_inv:(const uint32_t*)onePlusN1InvPtr
-                                       rN0:(const uint32_t*)rN0Ptr
-                                     r2N0:(const uint32_t*)r2N0Ptr
-                                       rN1:(const uint32_t*)rN1Ptr
-                                     r2N1:(const uint32_t*)r2N1Ptr
-                                   alphas:(const uint32_t*)alphasPtr
-                              betasForN0:(const uint32_t*)betasForN0Ptr
-                              betasForN1:(const uint32_t*)betasForN1Ptr
-                                       rs:(const uint32_t*)rsPtr
-                                       ss:(const uint32_t*)ssPtr
-                               Aj_results:(uint32_t*)AjPtr
-                               Bj_results:(uint32_t*)BjPtr
-                                numLength:(uint32_t)numLength
-                                    kappa:(uint32_t)kappa];
-        }
-        
-        (void)CPtr;
-        (void)N0Ptr;
-        (void)N0sqPtr;
-        (void)N1Ptr;
-        (void)N1sqPtr;
-        (void)CInvPtr;
-        (void)onePlusN0InvPtr;
-        (void)onePlusN1InvPtr;
-        (void)rN0Ptr;
-        (void)r2N0Ptr;
-        (void)rN1Ptr;
-        (void)r2N1Ptr;
-        
-        return (CPtr && N0Ptr && N0sqPtr && N1Ptr && N1sqPtr && CInvPtr && onePlusN0InvPtr && onePlusN1InvPtr && rN0Ptr && r2N0Ptr && rN1Ptr && r2N1Ptr) ? JNI_TRUE : JNI_FALSE;
+        if (CPtr) (*env)->ReleaseIntArrayElements(env, C, CPtr, JNI_ABORT);
+        if (N0Ptr) (*env)->ReleaseIntArrayElements(env, N0, N0Ptr, JNI_ABORT);
+        if (N0sqPtr) (*env)->ReleaseIntArrayElements(env, N0sq, N0sqPtr, JNI_ABORT);
+        if (N1Ptr) (*env)->ReleaseIntArrayElements(env, N1, N1Ptr, JNI_ABORT);
+        if (N1sqPtr) (*env)->ReleaseIntArrayElements(env, N1sq, N1sqPtr, JNI_ABORT);
+        if (alphasPtr) (*env)->ReleaseIntArrayElements(env, alphas, alphasPtr, JNI_ABORT);
+        if (betasForN0Ptr) (*env)->ReleaseIntArrayElements(env, betasForN0, betasForN0Ptr, JNI_ABORT);
+        if (betasForN1Ptr) (*env)->ReleaseIntArrayElements(env, betasForN1, betasForN1Ptr, JNI_ABORT);
+        if (rsPtr) (*env)->ReleaseIntArrayElements(env, rs, rsPtr, JNI_ABORT);
+        if (ssPtr) (*env)->ReleaseIntArrayElements(env, ss, ssPtr, JNI_ABORT);
+        if (AjPtr) (*env)->ReleaseIntArrayElements(env, Aj, AjPtr, 0);
+        if (BjPtr) (*env)->ReleaseIntArrayElements(env, Bj, BjPtr, 0);
     }
 }
 
 JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeComputeDecProofTuple
   (JNIEnv *env, jobject obj, jlong handle, jintArray K, jintArray N0, jintArray N0sq,
-            jintArray K_inv, jintArray onePlusN0_inv, jintArray rN0, jintArray r2N0,
             jintArray negAlphas, jintArray betas, jintArray rs,
             jintArray A, jint numLength, jint kappa) {
     @autoreleasepool {
         if (handle == 0) return;
-        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jsize kLen = (*env)->GetArrayLength(env, K);
-        jsize n0Len = (*env)->GetArrayLength(env, N0);
-        jsize n0sqLen = (*env)->GetArrayLength(env, N0sq);
-        jsize kInvLen = (*env)->GetArrayLength(env, K_inv);
-        jsize onePlusN0InvLen = (*env)->GetArrayLength(env, onePlusN0_inv);
-        jsize rN0Len = (*env)->GetArrayLength(env, rN0);
-        jsize r2N0Len = (*env)->GetArrayLength(env, r2N0);
-        jsize negAlphasLen = (*env)->GetArrayLength(env, negAlphas);
-        jsize betasLen = (*env)->GetArrayLength(env, betas);
-        jsize rsLen = (*env)->GetArrayLength(env, rs);
-        jsize aLen = (*env)->GetArrayLength(env, A);
+        jint *KPtr = (*env)->GetIntArrayElements(env, K, NULL);
+        jint *N0Ptr = (*env)->GetIntArrayElements(env, N0, NULL);
+        jint *N0sqPtr = (*env)->GetIntArrayElements(env, N0sq, NULL);
+        jint *negAlphasPtr = (*env)->GetIntArrayElements(env, negAlphas, NULL);
+        jint *betasPtr = (*env)->GetIntArrayElements(env, betas, NULL);
+        jint *rsPtr = (*env)->GetIntArrayElements(env, rs, NULL);
+        jint *APtr = (*env)->GetIntArrayElements(env, A, NULL);
         
-        jint *KPtr = copy_int_array(env, K, kLen);
-        jint *N0Ptr = copy_int_array(env, N0, n0Len);
-        jint *N0sqPtr = copy_int_array(env, N0sq, n0sqLen);
-        jint *KInvPtr = copy_int_array(env, K_inv, kInvLen);
-        jint *onePlusN0InvPtr = copy_int_array(env, onePlusN0_inv, onePlusN0InvLen);
-        jint *rN0Ptr = copy_int_array(env, rN0, rN0Len);
-        jint *r2N0Ptr = copy_int_array(env, r2N0, r2N0Len);
-        jint *negAlphasPtr = copy_int_array(env, negAlphas, negAlphasLen);
-        jint *betasPtr = copy_int_array(env, betas, betasLen);
-        jint *rsPtr = copy_int_array(env, rs, rsLen);
-        jint *APtr = alloc_int_array(aLen);
-        
-        if (KPtr && N0Ptr && N0sqPtr && KInvPtr && onePlusN0InvPtr && rN0Ptr && r2N0Ptr && negAlphasPtr && betasPtr && rsPtr && APtr) {
+        if (KPtr && N0Ptr && N0sqPtr && negAlphasPtr && betasPtr && rsPtr && APtr) {
             [backend computeDecProofTuple:(const uint32_t*)KPtr
                                         N0:(const uint32_t*)N0Ptr
                                       N0sq:(const uint32_t*)N0sqPtr
-                                     K_inv:(const uint32_t*)KInvPtr
-                              onePlusN0_inv:(const uint32_t*)onePlusN0InvPtr
-                                      rN0:(const uint32_t*)rN0Ptr
-                                    r2N0:(const uint32_t*)r2N0Ptr
                                  negAlphas:(const uint32_t*)negAlphasPtr
                                      betas:(const uint32_t*)betasPtr
                                         rs:(const uint32_t*)rsPtr
@@ -1545,189 +710,38 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                                      kappa:(uint32_t)kappa];
         }
         
-        if (APtr) {
-            write_back_int_array(env, A, APtr, aLen);
-        }
-        (void)KPtr;
-        (void)N0Ptr;
-        (void)N0sqPtr;
-        (void)KInvPtr;
-        (void)onePlusN0InvPtr;
-        (void)rN0Ptr;
-        (void)r2N0Ptr;
-        (void)negAlphasPtr;
-        (void)betasPtr;
-        (void)rsPtr;
-        (void)APtr;
-    }
-}
-
-JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeComputeDecProofTupleDirect
-  (JNIEnv *env, jobject obj, jlong handle, jintArray K, jintArray N0, jintArray N0sq,
-            jintArray K_inv, jintArray onePlusN0_inv, jintArray rN0, jintArray r2N0,
-            jobject negAlphasBuffer, jobject betasBuffer, jobject rsBuffer,
-            jobject ABuffer, jint numLength, jint kappa) {
-    @autoreleasepool {
-        if (handle == 0) return JNI_FALSE;
-        reset_jni_buffer_cursor();
-        
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-        
-        void *negAlphasPtr = (*env)->GetDirectBufferAddress(env, negAlphasBuffer);
-        void *betasPtr = (*env)->GetDirectBufferAddress(env, betasBuffer);
-        void *rsPtr = (*env)->GetDirectBufferAddress(env, rsBuffer);
-        void *aPtr = (*env)->GetDirectBufferAddress(env, ABuffer);
-        if (!negAlphasPtr || !betasPtr || !rsPtr || !aPtr) {
-            return JNI_FALSE;
-        }
-        
-        jlong negAlphasCap = (*env)->GetDirectBufferCapacity(env, negAlphasBuffer);
-        jlong betasCap = (*env)->GetDirectBufferCapacity(env, betasBuffer);
-        jlong rsCap = (*env)->GetDirectBufferCapacity(env, rsBuffer);
-        jlong aCap = (*env)->GetDirectBufferCapacity(env, ABuffer);
-        
-        size_t arrayBufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)kappa;
-        if (negAlphasCap < (jlong)arrayBufferSize || betasCap < (jlong)arrayBufferSize ||
-            rsCap < (jlong)arrayBufferSize || aCap < (jlong)arrayBufferSize) {
-            return JNI_FALSE;
-        }
-        
-        jsize kLen = (*env)->GetArrayLength(env, K);
-        jsize n0Len = (*env)->GetArrayLength(env, N0);
-        jsize n0sqLen = (*env)->GetArrayLength(env, N0sq);
-        jsize kInvLen = (*env)->GetArrayLength(env, K_inv);
-        jsize onePlusN0InvLen = (*env)->GetArrayLength(env, onePlusN0_inv);
-        jsize rN0Len = (*env)->GetArrayLength(env, rN0);
-        jsize r2N0Len = (*env)->GetArrayLength(env, r2N0);
-        if (kLen != numLength || n0Len != numLength || n0sqLen != numLength ||
-            kInvLen != numLength || onePlusN0InvLen != numLength ||
-            rN0Len != numLength || r2N0Len != numLength) {
-            return JNI_FALSE;
-        }
-        
-        jint *KPtr = copy_int_array(env, K, kLen);
-        jint *N0Ptr = copy_int_array(env, N0, n0Len);
-        jint *N0sqPtr = copy_int_array(env, N0sq, n0sqLen);
-        jint *KInvPtr = copy_int_array(env, K_inv, kInvLen);
-        jint *onePlusN0InvPtr = copy_int_array(env, onePlusN0_inv, onePlusN0InvLen);
-        jint *rN0Ptr = copy_int_array(env, rN0, rN0Len);
-        jint *r2N0Ptr = copy_int_array(env, r2N0, r2N0Len);
-        
-        if (KPtr && N0Ptr && N0sqPtr && KInvPtr && onePlusN0InvPtr && rN0Ptr && r2N0Ptr) {
-            [backend computeDecProofTuple:(const uint32_t*)KPtr
-                                        N0:(const uint32_t*)N0Ptr
-                                      N0sq:(const uint32_t*)N0sqPtr
-                                     K_inv:(const uint32_t*)KInvPtr
-                              onePlusN0_inv:(const uint32_t*)onePlusN0InvPtr
-                                      rN0:(const uint32_t*)rN0Ptr
-                                    r2N0:(const uint32_t*)r2N0Ptr
-                                 negAlphas:(const uint32_t*)negAlphasPtr
-                                     betas:(const uint32_t*)betasPtr
-                                        rs:(const uint32_t*)rsPtr
-                                 A_results:(uint32_t*)aPtr
-                                 numLength:(uint32_t)numLength
-                                     kappa:(uint32_t)kappa];
-        }
-        
-        (void)KPtr;
-        (void)N0Ptr;
-        (void)N0sqPtr;
-        (void)KInvPtr;
-        (void)onePlusN0InvPtr;
-        (void)rN0Ptr;
-        (void)r2N0Ptr;
-        
-        return (KPtr && N0Ptr && N0sqPtr && KInvPtr && onePlusN0InvPtr && rN0Ptr && r2N0Ptr) ? JNI_TRUE : JNI_FALSE;
+        if (KPtr) (*env)->ReleaseIntArrayElements(env, K, KPtr, JNI_ABORT);
+        if (N0Ptr) (*env)->ReleaseIntArrayElements(env, N0, N0Ptr, JNI_ABORT);
+        if (N0sqPtr) (*env)->ReleaseIntArrayElements(env, N0sq, N0sqPtr, JNI_ABORT);
+        if (negAlphasPtr) (*env)->ReleaseIntArrayElements(env, negAlphas, negAlphasPtr, JNI_ABORT);
+        if (betasPtr) (*env)->ReleaseIntArrayElements(env, betas, betasPtr, JNI_ABORT);
+        if (rsPtr) (*env)->ReleaseIntArrayElements(env, rs, rsPtr, JNI_ABORT);
+        if (APtr) (*env)->ReleaseIntArrayElements(env, A, APtr, 0);
     }
 }
 
 JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeModInverse
-  (JNIEnv *env, jobject obj, jlong handle, jintArray values, jintArray mods, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
+  (JNIEnv *env, jobject obj, jlong handle, jintArray values, jintArray mods, jintArray results, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return;
-        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jsize valuesLen = (*env)->GetArrayLength(env, values);
-        jsize modsLen = (*env)->GetArrayLength(env, mods);
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        jsize resultsLen = (*env)->GetArrayLength(env, results);
+        jint *valuesPtr = (*env)->GetIntArrayElements(env, values, NULL);
+        jint *modsPtr = (*env)->GetIntArrayElements(env, mods, NULL);
+        jint *resultsPtr = (*env)->GetIntArrayElements(env, results, NULL);
         
-        jint *valuesPtr = copy_int_array(env, values, valuesLen);
-        jint *modsPtr = copy_int_array(env, mods, modsLen);
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        jint *resultsPtr = alloc_int_array(resultsLen);
-        
-        if (valuesPtr && modsPtr && rPtr && r2Ptr && resultsPtr) {
+        if (valuesPtr && modsPtr && resultsPtr) {
             [backend modInverse:(const uint32_t*)valuesPtr
                            mods:(const uint32_t*)modsPtr
-                             r:(const uint32_t*)rPtr
-                            r2:(const uint32_t*)r2Ptr
                          results:(uint32_t*)resultsPtr
                        numLength:(uint32_t)numLength
                            count:(uint32_t)count];
         }
         
-        if (resultsPtr) {
-            write_back_int_array(env, results, resultsPtr, resultsLen);
-        }
-        (void)valuesPtr;
-        (void)modsPtr;
-        (void)rPtr;
-        (void)r2Ptr;
-        (void)resultsPtr;
-    }
-}
-
-JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeModInverseDirect
-  (JNIEnv *env, jobject obj, jlong handle, jobject valuesBuffer, jobject modsBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return JNI_FALSE;
-        reset_jni_buffer_cursor();
-        
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-        
-        void *valuesPtr = (*env)->GetDirectBufferAddress(env, valuesBuffer);
-        void *modsPtr = (*env)->GetDirectBufferAddress(env, modsBuffer);
-        void *resultsPtr = (*env)->GetDirectBufferAddress(env, resultsBuffer);
-        if (!valuesPtr || !modsPtr || !resultsPtr) {
-            return JNI_FALSE;
-        }
-        
-        jlong valuesCap = (*env)->GetDirectBufferCapacity(env, valuesBuffer);
-        jlong modsCap = (*env)->GetDirectBufferCapacity(env, modsBuffer);
-        jlong resultsCap = (*env)->GetDirectBufferCapacity(env, resultsBuffer);
-        
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        if (rLen != numLength || r2Len != numLength) {
-            return JNI_FALSE;
-        }
-        
-        size_t bufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)count;
-        if (valuesCap < (jlong)bufferSize || modsCap < (jlong)bufferSize || resultsCap < (jlong)bufferSize) {
-            return JNI_FALSE;
-        }
-        
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        
-        if (rPtr && r2Ptr) {
-            [backend modInverse:(const uint32_t*)valuesPtr
-                           mods:(const uint32_t*)modsPtr
-                             r:(const uint32_t*)rPtr
-                            r2:(const uint32_t*)r2Ptr
-                         results:(uint32_t*)resultsPtr
-                       numLength:(uint32_t)numLength
-                           count:(uint32_t)count];
-        }
-        
-        (void)rPtr;
-        (void)r2Ptr;
-        return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
+        if (valuesPtr) (*env)->ReleaseIntArrayElements(env, values, valuesPtr, JNI_ABORT);
+        if (modsPtr) (*env)->ReleaseIntArrayElements(env, mods, modsPtr, JNI_ABORT);
+        if (resultsPtr) (*env)->ReleaseIntArrayElements(env, results, resultsPtr, 0);
     }
 }
 
@@ -1735,17 +749,12 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
   (JNIEnv *env, jobject obj, jlong handle, jintArray a, jintArray b, jintArray results, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return;
-        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jsize aLen = (*env)->GetArrayLength(env, a);
-        jsize bLen = (*env)->GetArrayLength(env, b);
-        jsize resultsLen = (*env)->GetArrayLength(env, results);
-        
-        jint *aPtr = copy_int_array(env, a, aLen);
-        jint *bPtr = copy_int_array(env, b, bLen);
-        jint *resultsPtr = alloc_int_array(resultsLen);
+        jint *aPtr = (*env)->GetIntArrayElements(env, a, NULL);
+        jint *bPtr = (*env)->GetIntArrayElements(env, b, NULL);
+        jint *resultsPtr = (*env)->GetIntArrayElements(env, results, NULL);
         
         if (aPtr && bPtr && resultsPtr) {
             [backend multiply:(const uint32_t*)aPtr
@@ -1755,248 +764,36 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                          count:(uint32_t)count];
         }
         
-        if (resultsPtr) {
-            write_back_int_array(env, results, resultsPtr, resultsLen);
-        }
-        (void)aPtr;
-        (void)bPtr;
-        (void)resultsPtr;
-    }
-}
-
-JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeMultiplyDirect
-  (JNIEnv *env, jobject obj, jlong handle, jobject aBuffer, jobject bBuffer, jobject resultsBuffer, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return JNI_FALSE;
-        reset_jni_buffer_cursor();
-        
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-        
-        void *aPtr = (*env)->GetDirectBufferAddress(env, aBuffer);
-        void *bPtr = (*env)->GetDirectBufferAddress(env, bBuffer);
-        void *resultsPtr = (*env)->GetDirectBufferAddress(env, resultsBuffer);
-        if (!aPtr || !bPtr || !resultsPtr) {
-            return JNI_FALSE;
-        }
-        
-        jlong aCap = (*env)->GetDirectBufferCapacity(env, aBuffer);
-        jlong bCap = (*env)->GetDirectBufferCapacity(env, bBuffer);
-        jlong resultsCap = (*env)->GetDirectBufferCapacity(env, resultsBuffer);
-        
-        size_t bufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)count;
-        size_t resultsSize = bufferSize * 2;
-        if (aCap < (jlong)bufferSize || bCap < (jlong)bufferSize || resultsCap < (jlong)resultsSize) {
-            return JNI_FALSE;
-        }
-        
-        [backend multiply:(const uint32_t*)aPtr
-                       b:(const uint32_t*)bPtr
-                   results:(uint32_t*)resultsPtr
-                 numLength:(uint32_t)numLength
-                     count:(uint32_t)count];
-        
-        return JNI_TRUE;
+        if (aPtr) (*env)->ReleaseIntArrayElements(env, a, aPtr, JNI_ABORT);
+        if (bPtr) (*env)->ReleaseIntArrayElements(env, b, bPtr, JNI_ABORT);
+        if (resultsPtr) (*env)->ReleaseIntArrayElements(env, results, resultsPtr, 0);
     }
 }
 
 JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDifferentExp
-  (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray exps, jintArray mods, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
+  (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray exps, jintArray mods, jintArray results, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return;
-        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jsize basesLen = (*env)->GetArrayLength(env, bases);
-        jsize expsLen = (*env)->GetArrayLength(env, exps);
-        jsize modsLen = (*env)->GetArrayLength(env, mods);
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        jsize resultsLen = (*env)->GetArrayLength(env, results);
+        jint *basesPtr = (*env)->GetIntArrayElements(env, bases, NULL);
+        jint *expsPtr = (*env)->GetIntArrayElements(env, exps, NULL);
+        jint *modsPtr = (*env)->GetIntArrayElements(env, mods, NULL);
+        jint *resultsPtr = (*env)->GetIntArrayElements(env, results, NULL);
         
-        jint *basesPtr = copy_int_array(env, bases, basesLen);
-        jint *expsPtr = copy_int_array(env, exps, expsLen);
-        jint *modsPtr = copy_int_array(env, mods, modsLen);
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        jint *resultsPtr = alloc_int_array(resultsLen);
-        
-        if (basesPtr && expsPtr && modsPtr && rPtr && r2Ptr && resultsPtr) {
+        if (basesPtr && expsPtr && modsPtr && resultsPtr) {
             [backend batchModPowDifferentExp:(const uint32_t*)basesPtr
                                        exps:(const uint32_t*)expsPtr
                                        mods:(const uint32_t*)modsPtr
-                                          r:(const uint32_t*)rPtr
-                                         r2:(const uint32_t*)r2Ptr
                                     results:(uint32_t*)resultsPtr
                                   numLength:(uint32_t)numLength
                                       count:(uint32_t)count];
         }
         
-        if (resultsPtr) {
-            write_back_int_array(env, results, resultsPtr, resultsLen);
-        }
-        (void)basesPtr;
-        (void)expsPtr;
-        (void)modsPtr;
-        (void)rPtr;
-        (void)r2Ptr;
-        (void)resultsPtr;
-    }
-}
-
-JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDifferentExpDirect
-  (JNIEnv *env, jobject obj, jlong handle, jobject basesBuffer, jobject expsBuffer, jobject modsBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return JNI_FALSE;
-        reset_jni_buffer_cursor();
-        
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-        
-        void *basesPtr = (*env)->GetDirectBufferAddress(env, basesBuffer);
-        void *expsPtr = (*env)->GetDirectBufferAddress(env, expsBuffer);
-        void *modsPtr = (*env)->GetDirectBufferAddress(env, modsBuffer);
-        void *resultsPtr = (*env)->GetDirectBufferAddress(env, resultsBuffer);
-        if (!basesPtr || !expsPtr || !modsPtr || !resultsPtr) {
-            return JNI_FALSE;
-        }
-        
-        jlong basesCap = (*env)->GetDirectBufferCapacity(env, basesBuffer);
-        jlong expsCap = (*env)->GetDirectBufferCapacity(env, expsBuffer);
-        jlong modsCap = (*env)->GetDirectBufferCapacity(env, modsBuffer);
-        jlong resultsCap = (*env)->GetDirectBufferCapacity(env, resultsBuffer);
-        
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        if (rLen != numLength || r2Len != numLength) {
-            return JNI_FALSE;
-        }
-        
-        size_t bufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)count;
-        if (basesCap < (jlong)bufferSize || expsCap < (jlong)bufferSize || modsCap < (jlong)bufferSize || resultsCap < (jlong)bufferSize) {
-            return JNI_FALSE;
-        }
-        
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        
-        if (rPtr && r2Ptr) {
-            [backend batchModPowDifferentExp:(const uint32_t*)basesPtr
-                                       exps:(const uint32_t*)expsPtr
-                                       mods:(const uint32_t*)modsPtr
-                                          r:(const uint32_t*)rPtr
-                                         r2:(const uint32_t*)r2Ptr
-                                    results:(uint32_t*)resultsPtr
-                                  numLength:(uint32_t)numLength
-                                      count:(uint32_t)count];
-        }
-        
-        (void)rPtr;
-        (void)r2Ptr;
-        return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
-    }
-}
-
-JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDifferentExpSigned
-  (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray baseInvs, jintArray exps, jintArray mods, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return;
-        reset_jni_buffer_cursor();
-
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-
-        jsize basesLen = (*env)->GetArrayLength(env, bases);
-        jsize baseInvsLen = (*env)->GetArrayLength(env, baseInvs);
-        jsize expsLen = (*env)->GetArrayLength(env, exps);
-        jsize modsLen = (*env)->GetArrayLength(env, mods);
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        jsize resultsLen = (*env)->GetArrayLength(env, results);
-
-        jint *basesPtr = copy_int_array(env, bases, basesLen);
-        jint *baseInvsPtr = copy_int_array(env, baseInvs, baseInvsLen);
-        jint *expsPtr = copy_int_array(env, exps, expsLen);
-        jint *modsPtr = copy_int_array(env, mods, modsLen);
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-        jint *resultsPtr = alloc_int_array(resultsLen);
-
-        if (basesPtr && baseInvsPtr && expsPtr && modsPtr && rPtr && r2Ptr && resultsPtr) {
-            [backend batchModPowDifferentExpSigned:(const uint32_t*)basesPtr
-                                          baseInvs:(const uint32_t*)baseInvsPtr
-                                              exps:(const uint32_t*)expsPtr
-                                              mods:(const uint32_t*)modsPtr
-                                                 r:(const uint32_t*)rPtr
-                                                r2:(const uint32_t*)r2Ptr
-                                           results:(uint32_t*)resultsPtr
-                                         numLength:(uint32_t)numLength
-                                             count:(uint32_t)count];
-        }
-
-        if (resultsPtr) {
-            write_back_int_array(env, results, resultsPtr, resultsLen);
-        }
-        (void)basesPtr;
-        (void)baseInvsPtr;
-        (void)expsPtr;
-        (void)modsPtr;
-        (void)rPtr;
-        (void)r2Ptr;
-        (void)resultsPtr;
-    }
-}
-
-JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDifferentExpSignedDirect
-  (JNIEnv *env, jobject obj, jlong handle, jobject basesBuffer, jobject baseInvsBuffer, jobject expsBuffer, jobject modsBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
-    @autoreleasepool {
-        if (handle == 0) return JNI_FALSE;
-        reset_jni_buffer_cursor();
-
-        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
-
-        void *basesPtr = (*env)->GetDirectBufferAddress(env, basesBuffer);
-        void *baseInvsPtr = (*env)->GetDirectBufferAddress(env, baseInvsBuffer);
-        void *expsPtr = (*env)->GetDirectBufferAddress(env, expsBuffer);
-        void *modsPtr = (*env)->GetDirectBufferAddress(env, modsBuffer);
-        void *resultsPtr = (*env)->GetDirectBufferAddress(env, resultsBuffer);
-        if (!basesPtr || !baseInvsPtr || !expsPtr || !modsPtr || !resultsPtr) {
-            return JNI_FALSE;
-        }
-
-        jlong basesCap = (*env)->GetDirectBufferCapacity(env, basesBuffer);
-        jlong baseInvsCap = (*env)->GetDirectBufferCapacity(env, baseInvsBuffer);
-        jlong expsCap = (*env)->GetDirectBufferCapacity(env, expsBuffer);
-        jlong modsCap = (*env)->GetDirectBufferCapacity(env, modsBuffer);
-        jlong resultsCap = (*env)->GetDirectBufferCapacity(env, resultsBuffer);
-
-        jsize rLen = (*env)->GetArrayLength(env, r);
-        jsize r2Len = (*env)->GetArrayLength(env, r2);
-        if (rLen != numLength || r2Len != numLength) {
-            return JNI_FALSE;
-        }
-
-        size_t bufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)count;
-        if (basesCap < (jlong)bufferSize || baseInvsCap < (jlong)bufferSize ||
-            expsCap < (jlong)bufferSize || modsCap < (jlong)bufferSize || resultsCap < (jlong)bufferSize) {
-            return JNI_FALSE;
-        }
-
-        jint *rPtr = copy_int_array(env, r, rLen);
-        jint *r2Ptr = copy_int_array(env, r2, r2Len);
-
-        if (rPtr && r2Ptr) {
-            [backend batchModPowDifferentExpSigned:(const uint32_t*)basesPtr
-                                          baseInvs:(const uint32_t*)baseInvsPtr
-                                              exps:(const uint32_t*)expsPtr
-                                              mods:(const uint32_t*)modsPtr
-                                                 r:(const uint32_t*)rPtr
-                                                r2:(const uint32_t*)r2Ptr
-                                           results:(uint32_t*)resultsPtr
-                                         numLength:(uint32_t)numLength
-                                             count:(uint32_t)count];
-        }
-
-        (void)rPtr;
-        (void)r2Ptr;
-        return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
+        if (basesPtr) (*env)->ReleaseIntArrayElements(env, bases, basesPtr, JNI_ABORT);
+        if (expsPtr) (*env)->ReleaseIntArrayElements(env, exps, expsPtr, JNI_ABORT);
+        if (modsPtr) (*env)->ReleaseIntArrayElements(env, mods, modsPtr, JNI_ABORT);
+        if (resultsPtr) (*env)->ReleaseIntArrayElements(env, results, resultsPtr, 0);
     }
 }
