@@ -147,6 +147,9 @@ public final class GpuBigInteger {
             MetalBigIntegerBackend instance = new MetalBigIntegerBackend();
             boolean available = instance.isAvailable();
             logger.debug("Metal initialization: Backend available: {}", available);
+            if (available) {
+                logger.info("Metal GPU device detected: {}", instance.getDeviceName());
+            }
             return available ? instance : null;
         } catch (UnsatisfiedLinkError e) {
             logger.error("Metal initialization: UnsatisfiedLinkError - native library not loaded: {}", e.getMessage());

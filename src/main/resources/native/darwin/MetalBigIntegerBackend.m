@@ -819,6 +819,19 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
     }
 }
 
+JNIEXPORT jstring JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeGetDeviceName
+  (JNIEnv *env, jobject obj, jlong handle) {
+    @autoreleasepool {
+        if (handle == 0) return NULL;
+        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
+        NSString *name = backend.device ? backend.device.name : nil;
+        if (!name) {
+            return NULL;
+        }
+        return (*env)->NewStringUTF(env, [name UTF8String]);
+    }
+}
+
 JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeModPow
   (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray exps, jintArray mods, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
     @autoreleasepool {

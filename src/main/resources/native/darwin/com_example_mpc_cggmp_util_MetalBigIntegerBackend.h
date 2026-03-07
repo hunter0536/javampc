@@ -41,6 +41,14 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
 
 /*
  * Class:     com_example_mpc_cggmp_util_MetalBigIntegerBackend
+ * Method:    nativeGetDeviceName
+ * Signature: (J)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeGetDeviceName
+  (JNIEnv *, jobject, jlong);
+
+/*
+ * Class:     com_example_mpc_cggmp_util_MetalBigIntegerBackend
  * Method:    nativeModPow
  * Signature: (J[I[I[I[I[I[III)V
  */

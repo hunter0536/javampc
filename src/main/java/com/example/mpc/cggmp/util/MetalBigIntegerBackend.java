@@ -28,6 +28,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     
     private long nativeHandle = 0;
     private boolean initialized = false;
+    private String deviceName = null;
     
     static {
         try {
@@ -71,6 +72,10 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
                 boolean available = nativeIsAvailable(nativeHandle);
                 logger.debug("MetalBigIntegerBackend: nativeIsAvailable() returned: {}", available);
                 initialized = available;
+                if (initialized) {
+                    deviceName = nativeGetDeviceName(nativeHandle);
+                    logger.debug("MetalBigIntegerBackend: GPU device name: {}", deviceName);
+                }
             } else {
                 logger.warn("MetalBigIntegerBackend: nativeInit() returned 0, initialization failed");
                 initialized = false;
@@ -592,6 +597,10 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     public boolean isAvailable() {
         return initialized;
     }
+
+    public String getDeviceName() {
+        return deviceName;
+    }
     
     public void destroy() {
         if (nativeHandle != 0) {
@@ -806,6 +815,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     private native long nativeInitWithShaderPath(String shaderPath);
     private native void nativeDestroy(long handle);
     private native boolean nativeIsAvailable(long handle);
+    private native String nativeGetDeviceName(long handle);
     private native void nativeModPow(long handle, int[] bases, int[] exps, int[] mods, int[] r, int[] r2, int[] results, int numLength, int count);
     private native boolean nativeModPowDirect(long handle, java.nio.ByteBuffer bases, java.nio.ByteBuffer exps, java.nio.ByteBuffer mods, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
     private native void nativeBatchModPow(long handle, int[] bases, int[] exp, int[] mod, int[] r, int[] r2, int[] results, int numLength, int count);
