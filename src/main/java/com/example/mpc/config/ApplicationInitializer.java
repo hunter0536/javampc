@@ -51,6 +51,12 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Value("${app.init.legacy.enabled:true}")
     private boolean enableLegacy;
 
+    @Value("${app.cggmp.gpu.enabled:true}")
+    private boolean gpuEnabled;
+
+    @Value("${app.cggmp.jni.enabled:true}")
+    private boolean jniEnabled;
+
     static {
         logger.info("============================================================");
         logger.info("ApplicationInitializer static initialization started");
@@ -60,18 +66,28 @@ public class ApplicationInitializer implements CommandLineRunner {
         } catch (ClassNotFoundException e) {
             logger.error("Failed to load NativeBigInteger class: {}", e.getMessage());
         }
-        try {
-            Class.forName("com.example.mpc.cggmp.util.GpuBigInteger");
-            logger.info("GpuBigInteger class loaded successfully");
-        } catch (ClassNotFoundException e) {
-            logger.error("Failed to load GpuBigInteger class: {}", e.getMessage());
-        }
         logger.info("ApplicationInitializer static initialization completed");
         logger.info("============================================================");
     }
 
     @Override
     public void run(String... args) throws Exception {
+        // 设置GPU启用状态为系统属性，供GpuBigInteger使用
+        System.setProperty("app.cggmp.gpu.enabled", String.valueOf(gpuEnabled));
+        logger.info("Set system property app.cggmp.gpu.enabled={}", gpuEnabled);
+        
+        // 设置JNI启用状态为系统属性，供GpuBigInteger使用
+        System.setProperty("app.cggmp.jni.enabled", String.valueOf(jniEnabled));
+        logger.info("Set system property app.cggmp.jni.enabled={}", jniEnabled);
+        
+        // 延迟加载GpuBigInteger，确保系统属性已设置
+        try {
+            Class.forName("com.example.mpc.cggmp.util.GpuBigInteger");
+            logger.info("GpuBigInteger class loaded successfully");
+        } catch (ClassNotFoundException e) {
+            logger.error("Failed to load GpuBigInteger class: {}", e.getMessage());
+        }
+        
         logger.info("=".repeat(60));
         logger.info("Initializing application for node {}", nodeId);
         logger.info("=".repeat(60));

@@ -190,8 +190,17 @@ public final class PresignProofs {
         AjArr = affGResult.Aj();
         BjArr = affGResult.Bj();
         
-        logger.debug("PiAffG modPow computed in {} ms (GPU batch acceleration)", 
-                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
+        long computeTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart);
+        boolean gpuUsed = com.example.mpc.cggmp.util.GpuBigInteger.isGpuAvailable() && effectiveKappa >= 16;
+        boolean gmpUsed = com.example.mpc.cggmp.util.NativeBigInteger.isNativeAvailable();
+        
+        if (gpuUsed) {
+            logger.debug("PiAffG modPow computed in {} ms (GPU batch acceleration)", computeTime);
+        } else if (gmpUsed) {
+            logger.debug("PiAffG modPow computed in {} ms (GMP batch acceleration)", computeTime);
+        } else {
+            logger.debug("PiAffG modPow computed in {} ms (Java parallel acceleration)", computeTime);
+        }
 
         List<BigInteger> A = new ArrayList<>(effectiveKappa);
         List<BigInteger> B = new ArrayList<>(effectiveKappa);
@@ -596,8 +605,17 @@ public final class PresignProofs {
             C.add(ecMulSigned(g, alphaArr[i]).normalize());
         }
         
-        logger.debug("PiDec A values computed in {} ms (GPU batch acceleration)", 
-                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
+        long computeTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart);
+        boolean gpuUsed = com.example.mpc.cggmp.util.GpuBigInteger.isGpuAvailable() && effectiveKappa >= 16;
+        boolean gmpUsed = com.example.mpc.cggmp.util.NativeBigInteger.isNativeAvailable();
+        
+        if (gpuUsed) {
+            logger.debug("PiDec A values computed in {} ms (GPU batch acceleration)", computeTime);
+        } else if (gmpUsed) {
+            logger.debug("PiDec A values computed in {} ms (GMP batch acceleration)", computeTime);
+        } else {
+            logger.debug("PiDec A values computed in {} ms (Java parallel acceleration)", computeTime);
+        }
 
         boolean[] e = challengeBits("PI_DEC", context, effectiveKappa, A, B, C);
         for (int i = 0; i < effectiveKappa; i++) {

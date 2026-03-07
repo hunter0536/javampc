@@ -1,5 +1,6 @@
 package com.example.mpc.service.cggmp;
 
+import com.example.mpc.cggmp.util.GpuBigInteger;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.dto.CggmpAuxTask;
@@ -265,11 +266,12 @@ public final class CggmpProtocolUtils {
                 continue;
             }
             BigInteger peerBi = indexMap != null && indexMap.get(peerId) != null ? indexMap.get(peerId) : BigInteger.valueOf(peerId);
-            num = num.multiply(peerBi).mod(mod);
+            num = GpuBigInteger.multiply(num, peerBi).mod(mod);
             BigInteger diff = peerBi.subtract(idBi).mod(mod);
-            den = den.multiply(diff).mod(mod);
+            den = GpuBigInteger.multiply(den, diff).mod(mod);
         }
-        return num.multiply(den.modInverse(mod)).mod(mod);
+        BigInteger denInverse = GpuBigInteger.modInverse(den, mod);
+        return GpuBigInteger.multiply(num, denInverse).mod(mod);
     }
 
     private static BigInteger lagrangeCoefficientAtZero(int id, Set<Integer> participants, Map<Integer, BigInteger> indexMap, BigInteger mod) {
@@ -284,11 +286,12 @@ public final class CggmpProtocolUtils {
                 continue;
             }
             BigInteger peerBi = indexMap != null && indexMap.get(peerId) != null ? indexMap.get(peerId) : BigInteger.valueOf(peerId);
-            num = num.multiply(peerBi).mod(mod);
+            num = GpuBigInteger.multiply(num, peerBi).mod(mod);
             BigInteger diff = peerBi.subtract(idBi).mod(mod);
-            den = den.multiply(diff).mod(mod);
+            den = GpuBigInteger.multiply(den, diff).mod(mod);
         }
-        return num.multiply(den.modInverse(mod)).mod(mod);
+        BigInteger denInverse = GpuBigInteger.modInverse(den, mod);
+        return GpuBigInteger.multiply(num, denInverse).mod(mod);
     }
 
     private static String buildSignSid(String taskId) {

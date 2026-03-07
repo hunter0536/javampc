@@ -35,9 +35,29 @@ public final class GpuBigInteger {
         logger.debug("GpuBigInteger static initialization started");
         preferredBackend = System.getProperty("mpc.gpu.backend", "auto");
         logger.debug("Preferred GPU backend: {}", preferredBackend);
-        loadNativeLibraries();
-        initialize();
+        
+        // 检查是否启用GPU加速
+        String gpuEnabled = System.getProperty("app.cggmp.gpu.enabled", "true");
+        logger.debug("GPU enabled: {}", gpuEnabled);
+        
+        // 检查是否启用JNI加速
+        String jniEnabled = System.getProperty("app.cggmp.jni.enabled", "true");
+        logger.debug("JNI enabled: {}", jniEnabled);
+        
+        if (Boolean.parseBoolean(gpuEnabled)) {
+            loadNativeLibraries();
+            initialize();
+        } else {
+            logger.debug("GPU acceleration is disabled via system property");
+        }
+        
         logger.debug("GpuBigInteger static initialization completed, GPU_AVAILABLE={}, backend={}", GPU_AVAILABLE.get(), backend);
+    }
+    
+    // 检查是否启用JNI加速
+    private static boolean isJniEnabled() {
+        String jniEnabled = System.getProperty("app.cggmp.jni.enabled", "true");
+        return Boolean.parseBoolean(jniEnabled);
     }
     
     private static void loadNativeLibraries() {
@@ -57,7 +77,7 @@ public final class GpuBigInteger {
                 
                 // 尝试初始化不同的 GPU 后端
                 boolean jcudaAvailable = false;
-                boolean metalAvailable = false;
+                MetalBigIntegerBackend metalBackend = null;
                 
                 try {
                     jcudaAvailable = tryInitializeJCuda();
@@ -71,8 +91,8 @@ public final class GpuBigInteger {
                 String osName = System.getProperty("os.name", "").toLowerCase();
                 if (osName.contains("mac")) {
                     try {
-                        metalAvailable = tryInitializeMetal();
-                        logger.debug("Metal initialization result: {}", metalAvailable);
+                        metalBackend = tryInitializeMetal();
+                        logger.debug("Metal initialization result: {}", metalBackend != null);
                     } catch (Exception e) {
                         logger.error("Metal initialization failed: {}", e.getMessage());
                         logger.error("Exception stack trace:", e);
@@ -84,8 +104,8 @@ public final class GpuBigInteger {
                     backend = new JCudaBackend();
                     GPU_AVAILABLE.set(true);
                     logger.debug("Selected NVIDIA GPU via JCuda");
-                } else if (metalAvailable && ("metal".equals(preferredBackend) || "auto".equals(preferredBackend))) {
-                    backend = new MetalBigIntegerBackend();
+                } else if (metalBackend != null && ("metal".equals(preferredBackend) || "auto".equals(preferredBackend))) {
+                    backend = metalBackend;
                     GPU_AVAILABLE.set(true);
                     logger.debug("Selected Apple Silicon GPU via Metal");
                 } else {
@@ -121,30 +141,21 @@ public final class GpuBigInteger {
         }
     }
     
-    private static boolean tryInitializeMetal() {
+    private static MetalBigIntegerBackend tryInitializeMetal() {
         try {
-            logger.debug("Metal initialization: Attempting to load MetalBigIntegerBackend class");
-            Class<?> metalClass = Class.forName("com.example.mpc.cggmp.util.MetalBigIntegerBackend");
-            logger.debug("Metal initialization: MetalBigIntegerBackend class loaded successfully");
-            
-            // 尝试创建实例来验证native库是否可用
-            Object instance = metalClass.getDeclaredConstructor().newInstance();
-            java.lang.reflect.Method isAvailableMethod = metalClass.getMethod("isAvailable");
-            boolean available = (Boolean) isAvailableMethod.invoke(instance);
-            
+            logger.debug("Metal initialization: Creating MetalBigIntegerBackend instance");
+            MetalBigIntegerBackend instance = new MetalBigIntegerBackend();
+            boolean available = instance.isAvailable();
             logger.debug("Metal initialization: Backend available: {}", available);
-            return available;
-        } catch (ClassNotFoundException e) {
-            logger.error("Metal initialization: MetalBigIntegerBackend class not found: {}", e.getMessage());
-            return false;
+            return available ? instance : null;
         } catch (UnsatisfiedLinkError e) {
             logger.error("Metal initialization: UnsatisfiedLinkError - native library not loaded: {}", e.getMessage());
             logger.error("Exception stack trace:", e);
-            return false;
+            return null;
         } catch (Exception e) {
             logger.error("Metal initialization failed: {}", e.getMessage());
             logger.error("Exception stack trace:", e);
-            return false;
+            return null;
         }
     }
     
@@ -156,10 +167,14 @@ public final class GpuBigInteger {
     public static BigInteger modPow(BigInteger base, BigInteger exp, BigInteger mod) {
         // 第一层：GPU加速
         if (GPU_AVAILABLE.get() && backend != null) {
-            return backend.modPow(base, exp, mod);
+            try {
+                return backend.modPow(base, exp, mod);
+            } catch (Exception e) {
+                logger.warn("GPU modPow failed, falling back to Java: {}", e.getMessage());
+            }
         }
         // 第二层：GMP JNI加速
-        if (NativeBigInteger.isNativeAvailable()) {
+        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeModPow(base, exp, mod);
             } catch (Exception e) {
@@ -173,10 +188,14 @@ public final class GpuBigInteger {
     public static BigInteger modInverse(BigInteger val, BigInteger mod) {
         // 第一层：GPU加速
         if (GPU_AVAILABLE.get() && backend != null) {
-            return backend.modInverse(val, mod);
+            try {
+                return backend.modInverse(val, mod);
+            } catch (Exception e) {
+                logger.warn("GPU modInverse failed, falling back to Java: {}", e.getMessage());
+            }
         }
         // 第二层：GMP JNI加速
-        if (NativeBigInteger.isNativeAvailable()) {
+        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeModInverse(val, mod);
             } catch (Exception e) {
@@ -190,10 +209,14 @@ public final class GpuBigInteger {
     public static BigInteger multiply(BigInteger a, BigInteger b) {
         // 第一层：GPU加速
         if (GPU_AVAILABLE.get() && backend != null) {
-            return backend.multiply(a, b);
+            try {
+                return backend.multiply(a, b);
+            } catch (Exception e) {
+                logger.warn("GPU multiply failed, falling back to Java: {}", e.getMessage());
+            }
         }
         // 第二层：GMP JNI加速
-        if (NativeBigInteger.isNativeAvailable()) {
+        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeMultiply(a, b);
             } catch (Exception e) {
@@ -207,10 +230,14 @@ public final class GpuBigInteger {
     public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
         // 第一层：GPU加速
         if (GPU_AVAILABLE.get() && backend != null) {
-            return backend.batchModPow(bases, exp, mod);
+            try {
+                return backend.batchModPow(bases, exp, mod);
+            } catch (Exception e) {
+                logger.warn("GPU batchModPow failed, falling back to Java: {}", e.getMessage());
+            }
         }
         // 第二层：GMP JNI加速
-        if (NativeBigInteger.isNativeAvailable()) {
+        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeBatchModPow(bases, exp, mod);
             } catch (Exception e) {
@@ -230,10 +257,14 @@ public final class GpuBigInteger {
         }
         // 第一层：GPU加速
         if (GPU_AVAILABLE.get() && backend != null) {
-            return backend.batchModPowDifferentExp(bases, exps, mod);
+            try {
+                return backend.batchModPowDifferentExp(bases, exps, mod);
+            } catch (Exception e) {
+                logger.warn("GPU batchModPowDifferentExp failed, falling back to Java: {}", e.getMessage());
+            }
         }
         // 第二层：GMP JNI加速
-        if (NativeBigInteger.isNativeAvailable()) {
+        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeBatchModPowDifferentExp(bases, exps, mod);
             } catch (Exception e) {
@@ -267,7 +298,7 @@ public final class GpuBigInteger {
         }
         
         // 第二层：GMP JNI加速
-        if (NativeBigInteger.isNativeAvailable()) {
+        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 BigInteger[] results = NativeBigInteger.nativeAffGProofTuple(C, onePlusN0, N0sq, onePlusN1, N1sq, alphas, betasForN0, betasForN1, rs, ss);
                 BigInteger[] Aj = new BigInteger[kappa];
@@ -318,7 +349,7 @@ public final class GpuBigInteger {
         }
         
         // 第二层：GMP JNI加速
-        if (NativeBigInteger.isNativeAvailable()) {
+        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 BigInteger[] results = NativeBigInteger.nativeDecProofTuple(K, N0, N0sq, alphas, betas, rs);
                 BigInteger[] A = new BigInteger[kappa];
