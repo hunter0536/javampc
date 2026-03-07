@@ -7,7 +7,94 @@
 #import <Metal/Metal.h>
 #include <limits.h>
 #include <unistd.h>
+#include <pthread.h>
 #include "com_example_mpc_cggmp_util_MetalBigIntegerBackend.h"
+
+typedef struct {
+    jint *buf;
+    jsize len;
+} JIntBuffer;
+
+typedef struct {
+    JIntBuffer buffers[20];
+    int cursor;
+} JIntBufferPool;
+
+static pthread_key_t g_jni_buffer_key;
+static pthread_once_t g_jni_buffer_once = PTHREAD_ONCE_INIT;
+
+static void free_jni_buffers(void *ptr) {
+    if (!ptr) {
+        return;
+    }
+    JIntBufferPool *pool = (JIntBufferPool *)ptr;
+    for (int i = 0; i < 20; i++) {
+        free(pool->buffers[i].buf);
+    }
+    free(pool);
+}
+
+static void init_jni_buffer_key(void) {
+    pthread_key_create(&g_jni_buffer_key, free_jni_buffers);
+}
+
+static JIntBufferPool *get_jni_buffers(void) {
+    pthread_once(&g_jni_buffer_once, init_jni_buffer_key);
+    JIntBufferPool *pool = (JIntBufferPool *)pthread_getspecific(g_jni_buffer_key);
+    if (!pool) {
+        pool = (JIntBufferPool *)calloc(1, sizeof(JIntBufferPool));
+        pthread_setspecific(g_jni_buffer_key, pool);
+    }
+    return pool;
+}
+
+static void reset_jni_buffer_cursor(void) {
+    JIntBufferPool *pool = get_jni_buffers();
+    pool->cursor = 0;
+}
+
+static jint *acquire_jni_buffer(jsize len) {
+    if (len <= 0) {
+        return NULL;
+    }
+    JIntBufferPool *pool = get_jni_buffers();
+    int slot = pool->cursor++;
+    if (slot >= 20) {
+        return NULL;
+    }
+    if (pool->buffers[slot].buf == NULL || pool->buffers[slot].len < len) {
+        free(pool->buffers[slot].buf);
+        pool->buffers[slot].buf = (jint *)malloc(sizeof(jint) * (size_t)len);
+        pool->buffers[slot].len = len;
+    }
+    return pool->buffers[slot].buf;
+}
+
+static jint *copy_int_array(JNIEnv *env, jintArray array, jsize len) {
+    if (!array || len <= 0) {
+        return NULL;
+    }
+    jint *buffer = acquire_jni_buffer(len);
+    if (!buffer) {
+        return NULL;
+    }
+    (*env)->GetIntArrayRegion(env, array, 0, len, buffer);
+    return buffer;
+}
+
+static jint *alloc_int_array(jsize len) {
+    if (len <= 0) {
+        return NULL;
+    }
+    return acquire_jni_buffer(len);
+}
+
+static void write_back_int_array(JNIEnv *env, jintArray array, jint *buffer, jsize len) {
+    if (!array || !buffer || len <= 0) {
+        return;
+    }
+    (*env)->SetIntArrayRegion(env, array, 0, len, buffer);
+}
 
 @interface MetalBigIntegerBackend : NSObject
 
@@ -736,6 +823,7 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
   (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray exps, jintArray mods, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
@@ -750,12 +838,12 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
             return;
         }
         
-        jint *basesPtr = (*env)->GetIntArrayElements(env, bases, NULL);
-        jint *expsPtr = (*env)->GetIntArrayElements(env, exps, NULL);
-        jint *modsPtr = (*env)->GetIntArrayElements(env, mods, NULL);
-        jint *rPtr = (*env)->GetIntArrayElements(env, r, NULL);
-        jint *r2Ptr = (*env)->GetIntArrayElements(env, r2, NULL);
-        jint *resultsPtr = (*env)->GetIntArrayElements(env, results, NULL);
+        jint *basesPtr = copy_int_array(env, bases, basesLen);
+        jint *expsPtr = copy_int_array(env, exps, expsLen);
+        jint *modsPtr = copy_int_array(env, mods, modsLen);
+        jint *rPtr = copy_int_array(env, r, rLen);
+        jint *r2Ptr = copy_int_array(env, r2, r2Len);
+        jint *resultsPtr = alloc_int_array(resultsLen);
         
         if (basesPtr && expsPtr && modsPtr && rPtr && r2Ptr && resultsPtr) {
             [backend modPow:(const uint32_t*)basesPtr 
@@ -768,12 +856,15 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                       count:(uint32_t)count];
         }
         
-        if (basesPtr) (*env)->ReleaseIntArrayElements(env, bases, basesPtr, JNI_ABORT);
-        if (expsPtr) (*env)->ReleaseIntArrayElements(env, exps, expsPtr, JNI_ABORT);
-        if (modsPtr) (*env)->ReleaseIntArrayElements(env, mods, modsPtr, JNI_ABORT);
-        if (rPtr) (*env)->ReleaseIntArrayElements(env, r, rPtr, JNI_ABORT);
-        if (r2Ptr) (*env)->ReleaseIntArrayElements(env, r2, r2Ptr, JNI_ABORT);
-        if (resultsPtr) (*env)->ReleaseIntArrayElements(env, results, resultsPtr, 0);
+        if (resultsPtr) {
+            write_back_int_array(env, results, resultsPtr, resultsLen);
+        }
+        (void)basesPtr;
+        (void)expsPtr;
+        (void)modsPtr;
+        (void)rPtr;
+        (void)r2Ptr;
+        (void)resultsPtr;
     }
 }
 
@@ -781,6 +872,7 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
   (JNIEnv *env, jobject obj, jlong handle, jobject basesBuffer, jobject expsBuffer, jobject modsBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return JNI_FALSE;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
@@ -808,8 +900,8 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
             return JNI_FALSE;
         }
         
-        jint *rPtr = (*env)->GetIntArrayElements(env, r, NULL);
-        jint *r2Ptr = (*env)->GetIntArrayElements(env, r2, NULL);
+        jint *rPtr = copy_int_array(env, r, rLen);
+        jint *r2Ptr = copy_int_array(env, r2, r2Len);
         
         if (rPtr && r2Ptr) {
             [backend modPow:(const uint32_t*)basesPtr
@@ -822,8 +914,8 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
                       count:(uint32_t)count];
         }
         
-        if (rPtr) (*env)->ReleaseIntArrayElements(env, r, rPtr, JNI_ABORT);
-        if (r2Ptr) (*env)->ReleaseIntArrayElements(env, r2, r2Ptr, JNI_ABORT);
+        (void)rPtr;
+        (void)r2Ptr;
         return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
     }
 }
@@ -832,6 +924,7 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
   (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray exp, jintArray mod, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
@@ -846,12 +939,12 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
             return;
         }
         
-        jint *basesPtr = (*env)->GetIntArrayElements(env, bases, NULL);
-        jint *expPtr = (*env)->GetIntArrayElements(env, exp, NULL);
-        jint *modPtr = (*env)->GetIntArrayElements(env, mod, NULL);
-        jint *rPtr = (*env)->GetIntArrayElements(env, r, NULL);
-        jint *r2Ptr = (*env)->GetIntArrayElements(env, r2, NULL);
-        jint *resultsPtr = (*env)->GetIntArrayElements(env, results, NULL);
+        jint *basesPtr = copy_int_array(env, bases, basesLen);
+        jint *expPtr = copy_int_array(env, exp, expLen);
+        jint *modPtr = copy_int_array(env, mod, modLen);
+        jint *rPtr = copy_int_array(env, r, rLen);
+        jint *r2Ptr = copy_int_array(env, r2, r2Len);
+        jint *resultsPtr = alloc_int_array(resultsLen);
         
         if (basesPtr && expPtr && modPtr && rPtr && r2Ptr && resultsPtr) {
             [backend batchModPow:(const uint32_t*)basesPtr
@@ -864,12 +957,68 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                            count:(uint32_t)count];
         }
         
-        if (basesPtr) (*env)->ReleaseIntArrayElements(env, bases, basesPtr, JNI_ABORT);
-        if (expPtr) (*env)->ReleaseIntArrayElements(env, exp, expPtr, JNI_ABORT);
-        if (modPtr) (*env)->ReleaseIntArrayElements(env, mod, modPtr, JNI_ABORT);
-        if (rPtr) (*env)->ReleaseIntArrayElements(env, r, rPtr, JNI_ABORT);
-        if (r2Ptr) (*env)->ReleaseIntArrayElements(env, r2, r2Ptr, JNI_ABORT);
-        if (resultsPtr) (*env)->ReleaseIntArrayElements(env, results, resultsPtr, 0);
+        if (resultsPtr) {
+            write_back_int_array(env, results, resultsPtr, resultsLen);
+        }
+        (void)basesPtr;
+        (void)expPtr;
+        (void)modPtr;
+        (void)rPtr;
+        (void)r2Ptr;
+        (void)resultsPtr;
+    }
+}
+
+JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDirect
+  (JNIEnv *env, jobject obj, jlong handle, jobject basesBuffer, jobject expBuffer, jobject modBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
+    @autoreleasepool {
+        if (handle == 0) return JNI_FALSE;
+        reset_jni_buffer_cursor();
+        
+        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
+        
+        void *basesPtr = (*env)->GetDirectBufferAddress(env, basesBuffer);
+        void *expPtr = (*env)->GetDirectBufferAddress(env, expBuffer);
+        void *modPtr = (*env)->GetDirectBufferAddress(env, modBuffer);
+        void *resultsPtr = (*env)->GetDirectBufferAddress(env, resultsBuffer);
+        if (!basesPtr || !expPtr || !modPtr || !resultsPtr) {
+            return JNI_FALSE;
+        }
+        
+        jlong basesCap = (*env)->GetDirectBufferCapacity(env, basesBuffer);
+        jlong expCap = (*env)->GetDirectBufferCapacity(env, expBuffer);
+        jlong modCap = (*env)->GetDirectBufferCapacity(env, modBuffer);
+        jlong resultsCap = (*env)->GetDirectBufferCapacity(env, resultsBuffer);
+        
+        jsize rLen = (*env)->GetArrayLength(env, r);
+        jsize r2Len = (*env)->GetArrayLength(env, r2);
+        if (rLen != numLength || r2Len != numLength) {
+            return JNI_FALSE;
+        }
+        
+        size_t bufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)count;
+        size_t singleSize = (size_t)numLength * sizeof(uint32_t);
+        if (basesCap < (jlong)bufferSize || resultsCap < (jlong)bufferSize || expCap < (jlong)singleSize || modCap < (jlong)singleSize) {
+            return JNI_FALSE;
+        }
+        
+        jint *rPtr = copy_int_array(env, r, rLen);
+        jint *r2Ptr = copy_int_array(env, r2, r2Len);
+        
+        if (rPtr && r2Ptr) {
+            [backend batchModPow:(const uint32_t*)basesPtr
+                             exp:(const uint32_t*)expPtr
+                             mod:(const uint32_t*)modPtr
+                               r:(const uint32_t*)rPtr
+                              r2:(const uint32_t*)r2Ptr
+                         results:(uint32_t*)resultsPtr
+                       numLength:(uint32_t)numLength
+                           count:(uint32_t)count];
+        }
+        
+        (void)rPtr;
+        (void)r2Ptr;
+        return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
     }
 }
 
@@ -880,25 +1029,43 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
             jintArray Aj, jintArray Bj, jint numLength, jint kappa) {
     @autoreleasepool {
         if (handle == 0) return;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jint *CPtr = (*env)->GetIntArrayElements(env, C, NULL);
-        jint *N0Ptr = (*env)->GetIntArrayElements(env, N0, NULL);
-        jint *N0sqPtr = (*env)->GetIntArrayElements(env, N0sq, NULL);
-        jint *N1Ptr = (*env)->GetIntArrayElements(env, N1, NULL);
-        jint *N1sqPtr = (*env)->GetIntArrayElements(env, N1sq, NULL);
-        jint *rN0Ptr = (*env)->GetIntArrayElements(env, rN0, NULL);
-        jint *r2N0Ptr = (*env)->GetIntArrayElements(env, r2N0, NULL);
-        jint *rN1Ptr = (*env)->GetIntArrayElements(env, rN1, NULL);
-        jint *r2N1Ptr = (*env)->GetIntArrayElements(env, r2N1, NULL);
-        jint *alphasPtr = (*env)->GetIntArrayElements(env, alphas, NULL);
-        jint *betasForN0Ptr = (*env)->GetIntArrayElements(env, betasForN0, NULL);
-        jint *betasForN1Ptr = (*env)->GetIntArrayElements(env, betasForN1, NULL);
-        jint *rsPtr = (*env)->GetIntArrayElements(env, rs, NULL);
-        jint *ssPtr = (*env)->GetIntArrayElements(env, ss, NULL);
-        jint *AjPtr = (*env)->GetIntArrayElements(env, Aj, NULL);
-        jint *BjPtr = (*env)->GetIntArrayElements(env, Bj, NULL);
+        jsize cLen = (*env)->GetArrayLength(env, C);
+        jsize n0Len = (*env)->GetArrayLength(env, N0);
+        jsize n0sqLen = (*env)->GetArrayLength(env, N0sq);
+        jsize n1Len = (*env)->GetArrayLength(env, N1);
+        jsize n1sqLen = (*env)->GetArrayLength(env, N1sq);
+        jsize rN0Len = (*env)->GetArrayLength(env, rN0);
+        jsize r2N0Len = (*env)->GetArrayLength(env, r2N0);
+        jsize rN1Len = (*env)->GetArrayLength(env, rN1);
+        jsize r2N1Len = (*env)->GetArrayLength(env, r2N1);
+        jsize alphasLen = (*env)->GetArrayLength(env, alphas);
+        jsize betasForN0Len = (*env)->GetArrayLength(env, betasForN0);
+        jsize betasForN1Len = (*env)->GetArrayLength(env, betasForN1);
+        jsize rsLen = (*env)->GetArrayLength(env, rs);
+        jsize ssLen = (*env)->GetArrayLength(env, ss);
+        jsize ajLen = (*env)->GetArrayLength(env, Aj);
+        jsize bjLen = (*env)->GetArrayLength(env, Bj);
+        
+        jint *CPtr = copy_int_array(env, C, cLen);
+        jint *N0Ptr = copy_int_array(env, N0, n0Len);
+        jint *N0sqPtr = copy_int_array(env, N0sq, n0sqLen);
+        jint *N1Ptr = copy_int_array(env, N1, n1Len);
+        jint *N1sqPtr = copy_int_array(env, N1sq, n1sqLen);
+        jint *rN0Ptr = copy_int_array(env, rN0, rN0Len);
+        jint *r2N0Ptr = copy_int_array(env, r2N0, r2N0Len);
+        jint *rN1Ptr = copy_int_array(env, rN1, rN1Len);
+        jint *r2N1Ptr = copy_int_array(env, r2N1, r2N1Len);
+        jint *alphasPtr = copy_int_array(env, alphas, alphasLen);
+        jint *betasForN0Ptr = copy_int_array(env, betasForN0, betasForN0Len);
+        jint *betasForN1Ptr = copy_int_array(env, betasForN1, betasForN1Len);
+        jint *rsPtr = copy_int_array(env, rs, rsLen);
+        jint *ssPtr = copy_int_array(env, ss, ssLen);
+        jint *AjPtr = alloc_int_array(ajLen);
+        jint *BjPtr = alloc_int_array(bjLen);
         
         if (CPtr && N0Ptr && N0sqPtr && N1Ptr && N1sqPtr && rN0Ptr && r2N0Ptr && rN1Ptr && r2N1Ptr && alphasPtr && betasForN0Ptr && betasForN1Ptr && rsPtr && ssPtr && AjPtr && BjPtr) {
             [backend computeAffGProofTuple:(const uint32_t*)CPtr
@@ -921,22 +1088,123 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                                     kappa:(uint32_t)kappa];
         }
         
-        if (CPtr) (*env)->ReleaseIntArrayElements(env, C, CPtr, JNI_ABORT);
-        if (N0Ptr) (*env)->ReleaseIntArrayElements(env, N0, N0Ptr, JNI_ABORT);
-        if (N0sqPtr) (*env)->ReleaseIntArrayElements(env, N0sq, N0sqPtr, JNI_ABORT);
-        if (N1Ptr) (*env)->ReleaseIntArrayElements(env, N1, N1Ptr, JNI_ABORT);
-        if (N1sqPtr) (*env)->ReleaseIntArrayElements(env, N1sq, N1sqPtr, JNI_ABORT);
-        if (rN0Ptr) (*env)->ReleaseIntArrayElements(env, rN0, rN0Ptr, JNI_ABORT);
-        if (r2N0Ptr) (*env)->ReleaseIntArrayElements(env, r2N0, r2N0Ptr, JNI_ABORT);
-        if (rN1Ptr) (*env)->ReleaseIntArrayElements(env, rN1, rN1Ptr, JNI_ABORT);
-        if (r2N1Ptr) (*env)->ReleaseIntArrayElements(env, r2N1, r2N1Ptr, JNI_ABORT);
-        if (alphasPtr) (*env)->ReleaseIntArrayElements(env, alphas, alphasPtr, JNI_ABORT);
-        if (betasForN0Ptr) (*env)->ReleaseIntArrayElements(env, betasForN0, betasForN0Ptr, JNI_ABORT);
-        if (betasForN1Ptr) (*env)->ReleaseIntArrayElements(env, betasForN1, betasForN1Ptr, JNI_ABORT);
-        if (rsPtr) (*env)->ReleaseIntArrayElements(env, rs, rsPtr, JNI_ABORT);
-        if (ssPtr) (*env)->ReleaseIntArrayElements(env, ss, ssPtr, JNI_ABORT);
-        if (AjPtr) (*env)->ReleaseIntArrayElements(env, Aj, AjPtr, 0);
-        if (BjPtr) (*env)->ReleaseIntArrayElements(env, Bj, BjPtr, 0);
+        if (AjPtr) {
+            write_back_int_array(env, Aj, AjPtr, ajLen);
+        }
+        if (BjPtr) {
+            write_back_int_array(env, Bj, BjPtr, bjLen);
+        }
+        (void)CPtr;
+        (void)N0Ptr;
+        (void)N0sqPtr;
+        (void)N1Ptr;
+        (void)N1sqPtr;
+        (void)rN0Ptr;
+        (void)r2N0Ptr;
+        (void)rN1Ptr;
+        (void)r2N1Ptr;
+        (void)alphasPtr;
+        (void)betasForN0Ptr;
+        (void)betasForN1Ptr;
+        (void)rsPtr;
+        (void)ssPtr;
+        (void)AjPtr;
+        (void)BjPtr;
+    }
+}
+
+JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeComputeAffGProofTupleDirect
+  (JNIEnv *env, jobject obj, jlong handle, jintArray C, jintArray N0, jintArray N0sq, jintArray N1, jintArray N1sq,
+            jintArray rN0, jintArray r2N0, jintArray rN1, jintArray r2N1,
+            jobject alphasBuffer, jobject betasForN0Buffer, jobject betasForN1Buffer, jobject rsBuffer, jobject ssBuffer,
+            jobject AjBuffer, jobject BjBuffer, jint numLength, jint kappa) {
+    @autoreleasepool {
+        if (handle == 0) return JNI_FALSE;
+        reset_jni_buffer_cursor();
+        
+        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
+        
+        void *alphasPtr = (*env)->GetDirectBufferAddress(env, alphasBuffer);
+        void *betasForN0Ptr = (*env)->GetDirectBufferAddress(env, betasForN0Buffer);
+        void *betasForN1Ptr = (*env)->GetDirectBufferAddress(env, betasForN1Buffer);
+        void *rsPtr = (*env)->GetDirectBufferAddress(env, rsBuffer);
+        void *ssPtr = (*env)->GetDirectBufferAddress(env, ssBuffer);
+        void *AjPtr = (*env)->GetDirectBufferAddress(env, AjBuffer);
+        void *BjPtr = (*env)->GetDirectBufferAddress(env, BjBuffer);
+        if (!alphasPtr || !betasForN0Ptr || !betasForN1Ptr || !rsPtr || !ssPtr || !AjPtr || !BjPtr) {
+            return JNI_FALSE;
+        }
+        
+        jlong alphasCap = (*env)->GetDirectBufferCapacity(env, alphasBuffer);
+        jlong betasForN0Cap = (*env)->GetDirectBufferCapacity(env, betasForN0Buffer);
+        jlong betasForN1Cap = (*env)->GetDirectBufferCapacity(env, betasForN1Buffer);
+        jlong rsCap = (*env)->GetDirectBufferCapacity(env, rsBuffer);
+        jlong ssCap = (*env)->GetDirectBufferCapacity(env, ssBuffer);
+        jlong ajCap = (*env)->GetDirectBufferCapacity(env, AjBuffer);
+        jlong bjCap = (*env)->GetDirectBufferCapacity(env, BjBuffer);
+        
+        size_t arrayBufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)kappa;
+        if (alphasCap < (jlong)arrayBufferSize || betasForN0Cap < (jlong)arrayBufferSize || betasForN1Cap < (jlong)arrayBufferSize ||
+            rsCap < (jlong)arrayBufferSize || ssCap < (jlong)arrayBufferSize || ajCap < (jlong)arrayBufferSize || bjCap < (jlong)arrayBufferSize) {
+            return JNI_FALSE;
+        }
+        
+        jsize cLen = (*env)->GetArrayLength(env, C);
+        jsize n0Len = (*env)->GetArrayLength(env, N0);
+        jsize n0sqLen = (*env)->GetArrayLength(env, N0sq);
+        jsize n1Len = (*env)->GetArrayLength(env, N1);
+        jsize n1sqLen = (*env)->GetArrayLength(env, N1sq);
+        jsize rN0Len = (*env)->GetArrayLength(env, rN0);
+        jsize r2N0Len = (*env)->GetArrayLength(env, r2N0);
+        jsize rN1Len = (*env)->GetArrayLength(env, rN1);
+        jsize r2N1Len = (*env)->GetArrayLength(env, r2N1);
+        if (cLen != numLength || n0Len != numLength || n0sqLen != numLength || n1Len != numLength || n1sqLen != numLength ||
+            rN0Len != numLength || r2N0Len != numLength || rN1Len != numLength || r2N1Len != numLength) {
+            return JNI_FALSE;
+        }
+        
+        jint *CPtr = copy_int_array(env, C, cLen);
+        jint *N0Ptr = copy_int_array(env, N0, n0Len);
+        jint *N0sqPtr = copy_int_array(env, N0sq, n0sqLen);
+        jint *N1Ptr = copy_int_array(env, N1, n1Len);
+        jint *N1sqPtr = copy_int_array(env, N1sq, n1sqLen);
+        jint *rN0Ptr = copy_int_array(env, rN0, rN0Len);
+        jint *r2N0Ptr = copy_int_array(env, r2N0, r2N0Len);
+        jint *rN1Ptr = copy_int_array(env, rN1, rN1Len);
+        jint *r2N1Ptr = copy_int_array(env, r2N1, r2N1Len);
+        
+        if (CPtr && N0Ptr && N0sqPtr && N1Ptr && N1sqPtr && rN0Ptr && r2N0Ptr && rN1Ptr && r2N1Ptr) {
+            [backend computeAffGProofTuple:(const uint32_t*)CPtr
+                                       N0:(const uint32_t*)N0Ptr
+                                     N0sq:(const uint32_t*)N0sqPtr
+                                       N1:(const uint32_t*)N1Ptr
+                                     N1sq:(const uint32_t*)N1sqPtr
+                                       rN0:(const uint32_t*)rN0Ptr
+                                     r2N0:(const uint32_t*)r2N0Ptr
+                                       rN1:(const uint32_t*)rN1Ptr
+                                     r2N1:(const uint32_t*)r2N1Ptr
+                                   alphas:(const uint32_t*)alphasPtr
+                              betasForN0:(const uint32_t*)betasForN0Ptr
+                              betasForN1:(const uint32_t*)betasForN1Ptr
+                                       rs:(const uint32_t*)rsPtr
+                                       ss:(const uint32_t*)ssPtr
+                               Aj_results:(uint32_t*)AjPtr
+                               Bj_results:(uint32_t*)BjPtr
+                                numLength:(uint32_t)numLength
+                                    kappa:(uint32_t)kappa];
+        }
+        
+        (void)CPtr;
+        (void)N0Ptr;
+        (void)N0sqPtr;
+        (void)N1Ptr;
+        (void)N1sqPtr;
+        (void)rN0Ptr;
+        (void)r2N0Ptr;
+        (void)rN1Ptr;
+        (void)r2N1Ptr;
+        
+        return (CPtr && N0Ptr && N0sqPtr && N1Ptr && N1sqPtr && rN0Ptr && r2N0Ptr && rN1Ptr && r2N1Ptr) ? JNI_TRUE : JNI_FALSE;
     }
 }
 
@@ -947,18 +1215,29 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
             jintArray A, jint numLength, jint kappa) {
     @autoreleasepool {
         if (handle == 0) return;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jint *KPtr = (*env)->GetIntArrayElements(env, K, NULL);
-        jint *N0Ptr = (*env)->GetIntArrayElements(env, N0, NULL);
-        jint *N0sqPtr = (*env)->GetIntArrayElements(env, N0sq, NULL);
-        jint *rN0Ptr = (*env)->GetIntArrayElements(env, rN0, NULL);
-        jint *r2N0Ptr = (*env)->GetIntArrayElements(env, r2N0, NULL);
-        jint *negAlphasPtr = (*env)->GetIntArrayElements(env, negAlphas, NULL);
-        jint *betasPtr = (*env)->GetIntArrayElements(env, betas, NULL);
-        jint *rsPtr = (*env)->GetIntArrayElements(env, rs, NULL);
-        jint *APtr = (*env)->GetIntArrayElements(env, A, NULL);
+        jsize kLen = (*env)->GetArrayLength(env, K);
+        jsize n0Len = (*env)->GetArrayLength(env, N0);
+        jsize n0sqLen = (*env)->GetArrayLength(env, N0sq);
+        jsize rN0Len = (*env)->GetArrayLength(env, rN0);
+        jsize r2N0Len = (*env)->GetArrayLength(env, r2N0);
+        jsize negAlphasLen = (*env)->GetArrayLength(env, negAlphas);
+        jsize betasLen = (*env)->GetArrayLength(env, betas);
+        jsize rsLen = (*env)->GetArrayLength(env, rs);
+        jsize aLen = (*env)->GetArrayLength(env, A);
+        
+        jint *KPtr = copy_int_array(env, K, kLen);
+        jint *N0Ptr = copy_int_array(env, N0, n0Len);
+        jint *N0sqPtr = copy_int_array(env, N0sq, n0sqLen);
+        jint *rN0Ptr = copy_int_array(env, rN0, rN0Len);
+        jint *r2N0Ptr = copy_int_array(env, r2N0, r2N0Len);
+        jint *negAlphasPtr = copy_int_array(env, negAlphas, negAlphasLen);
+        jint *betasPtr = copy_int_array(env, betas, betasLen);
+        jint *rsPtr = copy_int_array(env, rs, rsLen);
+        jint *APtr = alloc_int_array(aLen);
         
         if (KPtr && N0Ptr && N0sqPtr && rN0Ptr && r2N0Ptr && negAlphasPtr && betasPtr && rsPtr && APtr) {
             [backend computeDecProofTuple:(const uint32_t*)KPtr
@@ -974,15 +1253,87 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                                      kappa:(uint32_t)kappa];
         }
         
-        if (KPtr) (*env)->ReleaseIntArrayElements(env, K, KPtr, JNI_ABORT);
-        if (N0Ptr) (*env)->ReleaseIntArrayElements(env, N0, N0Ptr, JNI_ABORT);
-        if (N0sqPtr) (*env)->ReleaseIntArrayElements(env, N0sq, N0sqPtr, JNI_ABORT);
-        if (rN0Ptr) (*env)->ReleaseIntArrayElements(env, rN0, rN0Ptr, JNI_ABORT);
-        if (r2N0Ptr) (*env)->ReleaseIntArrayElements(env, r2N0, r2N0Ptr, JNI_ABORT);
-        if (negAlphasPtr) (*env)->ReleaseIntArrayElements(env, negAlphas, negAlphasPtr, JNI_ABORT);
-        if (betasPtr) (*env)->ReleaseIntArrayElements(env, betas, betasPtr, JNI_ABORT);
-        if (rsPtr) (*env)->ReleaseIntArrayElements(env, rs, rsPtr, JNI_ABORT);
-        if (APtr) (*env)->ReleaseIntArrayElements(env, A, APtr, 0);
+        if (APtr) {
+            write_back_int_array(env, A, APtr, aLen);
+        }
+        (void)KPtr;
+        (void)N0Ptr;
+        (void)N0sqPtr;
+        (void)rN0Ptr;
+        (void)r2N0Ptr;
+        (void)negAlphasPtr;
+        (void)betasPtr;
+        (void)rsPtr;
+        (void)APtr;
+    }
+}
+
+JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeComputeDecProofTupleDirect
+  (JNIEnv *env, jobject obj, jlong handle, jintArray K, jintArray N0, jintArray N0sq,
+            jintArray rN0, jintArray r2N0,
+            jobject negAlphasBuffer, jobject betasBuffer, jobject rsBuffer,
+            jobject ABuffer, jint numLength, jint kappa) {
+    @autoreleasepool {
+        if (handle == 0) return JNI_FALSE;
+        reset_jni_buffer_cursor();
+        
+        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
+        
+        void *negAlphasPtr = (*env)->GetDirectBufferAddress(env, negAlphasBuffer);
+        void *betasPtr = (*env)->GetDirectBufferAddress(env, betasBuffer);
+        void *rsPtr = (*env)->GetDirectBufferAddress(env, rsBuffer);
+        void *aPtr = (*env)->GetDirectBufferAddress(env, ABuffer);
+        if (!negAlphasPtr || !betasPtr || !rsPtr || !aPtr) {
+            return JNI_FALSE;
+        }
+        
+        jlong negAlphasCap = (*env)->GetDirectBufferCapacity(env, negAlphasBuffer);
+        jlong betasCap = (*env)->GetDirectBufferCapacity(env, betasBuffer);
+        jlong rsCap = (*env)->GetDirectBufferCapacity(env, rsBuffer);
+        jlong aCap = (*env)->GetDirectBufferCapacity(env, ABuffer);
+        
+        size_t arrayBufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)kappa;
+        if (negAlphasCap < (jlong)arrayBufferSize || betasCap < (jlong)arrayBufferSize ||
+            rsCap < (jlong)arrayBufferSize || aCap < (jlong)arrayBufferSize) {
+            return JNI_FALSE;
+        }
+        
+        jsize kLen = (*env)->GetArrayLength(env, K);
+        jsize n0Len = (*env)->GetArrayLength(env, N0);
+        jsize n0sqLen = (*env)->GetArrayLength(env, N0sq);
+        jsize rN0Len = (*env)->GetArrayLength(env, rN0);
+        jsize r2N0Len = (*env)->GetArrayLength(env, r2N0);
+        if (kLen != numLength || n0Len != numLength || n0sqLen != numLength || rN0Len != numLength || r2N0Len != numLength) {
+            return JNI_FALSE;
+        }
+        
+        jint *KPtr = copy_int_array(env, K, kLen);
+        jint *N0Ptr = copy_int_array(env, N0, n0Len);
+        jint *N0sqPtr = copy_int_array(env, N0sq, n0sqLen);
+        jint *rN0Ptr = copy_int_array(env, rN0, rN0Len);
+        jint *r2N0Ptr = copy_int_array(env, r2N0, r2N0Len);
+        
+        if (KPtr && N0Ptr && N0sqPtr && rN0Ptr && r2N0Ptr) {
+            [backend computeDecProofTuple:(const uint32_t*)KPtr
+                                        N0:(const uint32_t*)N0Ptr
+                                      N0sq:(const uint32_t*)N0sqPtr
+                                      rN0:(const uint32_t*)rN0Ptr
+                                    r2N0:(const uint32_t*)r2N0Ptr
+                                 negAlphas:(const uint32_t*)negAlphasPtr
+                                     betas:(const uint32_t*)betasPtr
+                                        rs:(const uint32_t*)rsPtr
+                                 A_results:(uint32_t*)aPtr
+                                 numLength:(uint32_t)numLength
+                                     kappa:(uint32_t)kappa];
+        }
+        
+        (void)KPtr;
+        (void)N0Ptr;
+        (void)N0sqPtr;
+        (void)rN0Ptr;
+        (void)r2N0Ptr;
+        
+        return (KPtr && N0Ptr && N0sqPtr && rN0Ptr && r2N0Ptr) ? JNI_TRUE : JNI_FALSE;
     }
 }
 
@@ -990,14 +1341,21 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
   (JNIEnv *env, jobject obj, jlong handle, jintArray values, jintArray mods, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jint *valuesPtr = (*env)->GetIntArrayElements(env, values, NULL);
-        jint *modsPtr = (*env)->GetIntArrayElements(env, mods, NULL);
-        jint *rPtr = (*env)->GetIntArrayElements(env, r, NULL);
-        jint *r2Ptr = (*env)->GetIntArrayElements(env, r2, NULL);
-        jint *resultsPtr = (*env)->GetIntArrayElements(env, results, NULL);
+        jsize valuesLen = (*env)->GetArrayLength(env, values);
+        jsize modsLen = (*env)->GetArrayLength(env, mods);
+        jsize rLen = (*env)->GetArrayLength(env, r);
+        jsize r2Len = (*env)->GetArrayLength(env, r2);
+        jsize resultsLen = (*env)->GetArrayLength(env, results);
+        
+        jint *valuesPtr = copy_int_array(env, values, valuesLen);
+        jint *modsPtr = copy_int_array(env, mods, modsLen);
+        jint *rPtr = copy_int_array(env, r, rLen);
+        jint *r2Ptr = copy_int_array(env, r2, r2Len);
+        jint *resultsPtr = alloc_int_array(resultsLen);
         
         if (valuesPtr && modsPtr && rPtr && r2Ptr && resultsPtr) {
             [backend modInverse:(const uint32_t*)valuesPtr
@@ -1009,11 +1367,14 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                            count:(uint32_t)count];
         }
         
-        if (valuesPtr) (*env)->ReleaseIntArrayElements(env, values, valuesPtr, JNI_ABORT);
-        if (modsPtr) (*env)->ReleaseIntArrayElements(env, mods, modsPtr, JNI_ABORT);
-        if (rPtr) (*env)->ReleaseIntArrayElements(env, r, rPtr, JNI_ABORT);
-        if (r2Ptr) (*env)->ReleaseIntArrayElements(env, r2, r2Ptr, JNI_ABORT);
-        if (resultsPtr) (*env)->ReleaseIntArrayElements(env, results, resultsPtr, 0);
+        if (resultsPtr) {
+            write_back_int_array(env, results, resultsPtr, resultsLen);
+        }
+        (void)valuesPtr;
+        (void)modsPtr;
+        (void)rPtr;
+        (void)r2Ptr;
+        (void)resultsPtr;
     }
 }
 
@@ -1021,6 +1382,7 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
   (JNIEnv *env, jobject obj, jlong handle, jobject valuesBuffer, jobject modsBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return JNI_FALSE;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
@@ -1046,8 +1408,8 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
             return JNI_FALSE;
         }
         
-        jint *rPtr = (*env)->GetIntArrayElements(env, r, NULL);
-        jint *r2Ptr = (*env)->GetIntArrayElements(env, r2, NULL);
+        jint *rPtr = copy_int_array(env, r, rLen);
+        jint *r2Ptr = copy_int_array(env, r2, r2Len);
         
         if (rPtr && r2Ptr) {
             [backend modInverse:(const uint32_t*)valuesPtr
@@ -1059,8 +1421,8 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
                            count:(uint32_t)count];
         }
         
-        if (rPtr) (*env)->ReleaseIntArrayElements(env, r, rPtr, JNI_ABORT);
-        if (r2Ptr) (*env)->ReleaseIntArrayElements(env, r2, r2Ptr, JNI_ABORT);
+        (void)rPtr;
+        (void)r2Ptr;
         return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
     }
 }
@@ -1069,12 +1431,17 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
   (JNIEnv *env, jobject obj, jlong handle, jintArray a, jintArray b, jintArray results, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jint *aPtr = (*env)->GetIntArrayElements(env, a, NULL);
-        jint *bPtr = (*env)->GetIntArrayElements(env, b, NULL);
-        jint *resultsPtr = (*env)->GetIntArrayElements(env, results, NULL);
+        jsize aLen = (*env)->GetArrayLength(env, a);
+        jsize bLen = (*env)->GetArrayLength(env, b);
+        jsize resultsLen = (*env)->GetArrayLength(env, results);
+        
+        jint *aPtr = copy_int_array(env, a, aLen);
+        jint *bPtr = copy_int_array(env, b, bLen);
+        jint *resultsPtr = alloc_int_array(resultsLen);
         
         if (aPtr && bPtr && resultsPtr) {
             [backend multiply:(const uint32_t*)aPtr
@@ -1084,9 +1451,12 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                          count:(uint32_t)count];
         }
         
-        if (aPtr) (*env)->ReleaseIntArrayElements(env, a, aPtr, JNI_ABORT);
-        if (bPtr) (*env)->ReleaseIntArrayElements(env, b, bPtr, JNI_ABORT);
-        if (resultsPtr) (*env)->ReleaseIntArrayElements(env, results, resultsPtr, 0);
+        if (resultsPtr) {
+            write_back_int_array(env, results, resultsPtr, resultsLen);
+        }
+        (void)aPtr;
+        (void)bPtr;
+        (void)resultsPtr;
     }
 }
 
@@ -1094,6 +1464,7 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
   (JNIEnv *env, jobject obj, jlong handle, jobject aBuffer, jobject bBuffer, jobject resultsBuffer, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return JNI_FALSE;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
@@ -1128,15 +1499,23 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
   (JNIEnv *env, jobject obj, jlong handle, jintArray bases, jintArray exps, jintArray mods, jintArray r, jintArray r2, jintArray results, jint numLength, jint count) {
     @autoreleasepool {
         if (handle == 0) return;
+        reset_jni_buffer_cursor();
         
         MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
         
-        jint *basesPtr = (*env)->GetIntArrayElements(env, bases, NULL);
-        jint *expsPtr = (*env)->GetIntArrayElements(env, exps, NULL);
-        jint *modsPtr = (*env)->GetIntArrayElements(env, mods, NULL);
-        jint *rPtr = (*env)->GetIntArrayElements(env, r, NULL);
-        jint *r2Ptr = (*env)->GetIntArrayElements(env, r2, NULL);
-        jint *resultsPtr = (*env)->GetIntArrayElements(env, results, NULL);
+        jsize basesLen = (*env)->GetArrayLength(env, bases);
+        jsize expsLen = (*env)->GetArrayLength(env, exps);
+        jsize modsLen = (*env)->GetArrayLength(env, mods);
+        jsize rLen = (*env)->GetArrayLength(env, r);
+        jsize r2Len = (*env)->GetArrayLength(env, r2);
+        jsize resultsLen = (*env)->GetArrayLength(env, results);
+        
+        jint *basesPtr = copy_int_array(env, bases, basesLen);
+        jint *expsPtr = copy_int_array(env, exps, expsLen);
+        jint *modsPtr = copy_int_array(env, mods, modsLen);
+        jint *rPtr = copy_int_array(env, r, rLen);
+        jint *r2Ptr = copy_int_array(env, r2, r2Len);
+        jint *resultsPtr = alloc_int_array(resultsLen);
         
         if (basesPtr && expsPtr && modsPtr && rPtr && r2Ptr && resultsPtr) {
             [backend batchModPowDifferentExp:(const uint32_t*)basesPtr
@@ -1149,11 +1528,66 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
                                       count:(uint32_t)count];
         }
         
-        if (basesPtr) (*env)->ReleaseIntArrayElements(env, bases, basesPtr, JNI_ABORT);
-        if (expsPtr) (*env)->ReleaseIntArrayElements(env, exps, expsPtr, JNI_ABORT);
-        if (modsPtr) (*env)->ReleaseIntArrayElements(env, mods, modsPtr, JNI_ABORT);
-        if (rPtr) (*env)->ReleaseIntArrayElements(env, r, rPtr, JNI_ABORT);
-        if (r2Ptr) (*env)->ReleaseIntArrayElements(env, r2, r2Ptr, JNI_ABORT);
-        if (resultsPtr) (*env)->ReleaseIntArrayElements(env, results, resultsPtr, 0);
+        if (resultsPtr) {
+            write_back_int_array(env, results, resultsPtr, resultsLen);
+        }
+        (void)basesPtr;
+        (void)expsPtr;
+        (void)modsPtr;
+        (void)rPtr;
+        (void)r2Ptr;
+        (void)resultsPtr;
+    }
+}
+
+JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDifferentExpDirect
+  (JNIEnv *env, jobject obj, jlong handle, jobject basesBuffer, jobject expsBuffer, jobject modsBuffer, jintArray r, jintArray r2, jobject resultsBuffer, jint numLength, jint count) {
+    @autoreleasepool {
+        if (handle == 0) return JNI_FALSE;
+        reset_jni_buffer_cursor();
+        
+        MetalBigIntegerBackend *backend = (__bridge MetalBigIntegerBackend *)(void *)handle;
+        
+        void *basesPtr = (*env)->GetDirectBufferAddress(env, basesBuffer);
+        void *expsPtr = (*env)->GetDirectBufferAddress(env, expsBuffer);
+        void *modsPtr = (*env)->GetDirectBufferAddress(env, modsBuffer);
+        void *resultsPtr = (*env)->GetDirectBufferAddress(env, resultsBuffer);
+        if (!basesPtr || !expsPtr || !modsPtr || !resultsPtr) {
+            return JNI_FALSE;
+        }
+        
+        jlong basesCap = (*env)->GetDirectBufferCapacity(env, basesBuffer);
+        jlong expsCap = (*env)->GetDirectBufferCapacity(env, expsBuffer);
+        jlong modsCap = (*env)->GetDirectBufferCapacity(env, modsBuffer);
+        jlong resultsCap = (*env)->GetDirectBufferCapacity(env, resultsBuffer);
+        
+        jsize rLen = (*env)->GetArrayLength(env, r);
+        jsize r2Len = (*env)->GetArrayLength(env, r2);
+        if (rLen != numLength || r2Len != numLength) {
+            return JNI_FALSE;
+        }
+        
+        size_t bufferSize = (size_t)numLength * sizeof(uint32_t) * (size_t)count;
+        if (basesCap < (jlong)bufferSize || expsCap < (jlong)bufferSize || modsCap < (jlong)bufferSize || resultsCap < (jlong)bufferSize) {
+            return JNI_FALSE;
+        }
+        
+        jint *rPtr = copy_int_array(env, r, rLen);
+        jint *r2Ptr = copy_int_array(env, r2, r2Len);
+        
+        if (rPtr && r2Ptr) {
+            [backend batchModPowDifferentExp:(const uint32_t*)basesPtr
+                                       exps:(const uint32_t*)expsPtr
+                                       mods:(const uint32_t*)modsPtr
+                                          r:(const uint32_t*)rPtr
+                                         r2:(const uint32_t*)r2Ptr
+                                    results:(uint32_t*)resultsPtr
+                                  numLength:(uint32_t)numLength
+                                      count:(uint32_t)count];
+        }
+        
+        (void)rPtr;
+        (void)r2Ptr;
+        return (rPtr && r2Ptr) ? JNI_TRUE : JNI_FALSE;
     }
 }

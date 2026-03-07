@@ -35,6 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import jakarta.annotation.PostConstruct;
 
 /**
  * CGGMP辅助密钥生成服务
@@ -83,6 +84,24 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     public volatile BigInteger auxHatN;
     public volatile BigInteger auxS;
     public volatile BigInteger auxT;
+
+    @PostConstruct
+    public void validateAuxParams() {
+        int max = PaillierEncryption.MAX_KEY_SIZE;
+        if (auxPaillierBits > max) {
+            logger.warn("app.cggmp.aux.paillierBits={} exceeds max {}, clamping to {}", auxPaillierBits, max, max);
+            auxPaillierBits = max;
+        }
+        if (auxMinPaillierBitsForProof > max) {
+            logger.warn("app.cggmp.aux.minPaillierBitsForProof={} exceeds max {}, clamping to {}", auxMinPaillierBitsForProof, max, max);
+            auxMinPaillierBitsForProof = max;
+        }
+        if (auxMinPaillierBitsForProof > auxPaillierBits) {
+            logger.warn("app.cggmp.aux.minPaillierBitsForProof={} exceeds app.cggmp.aux.paillierBits={}, clamping to {}",
+                    auxMinPaillierBitsForProof, auxPaillierBits, auxPaillierBits);
+            auxMinPaillierBitsForProof = auxPaillierBits;
+        }
+    }
 
     public CompletableFuture<Void> init(int nodesCount) {
         return nodeService.startP2PServer()

@@ -10,7 +10,7 @@ import java.nio.ByteOrder;
 
 public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     private static final Logger logger = LoggerFactory.getLogger(MetalBigIntegerBackend.class);
-    private static final int BIGINT_BITS = 3072;
+    private static final int BIGINT_BITS = 4096;
     private static final int R_CACHE_MAX = 64;
     private static final ThreadLocal<BatchBuffers> BATCH_BUFFERS =
             ThreadLocal.withInitial(BatchBuffers::new);
@@ -111,6 +111,9 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         if (!initialized) {
             return base.modPow(exp, mod);
         }
+        if (mod.bitLength() > BIGINT_BITS) {
+            return base.modPow(exp, mod);
+        }
         
         int numLength = getNumLength(mod);
         DirectBuffers directBuffers = DIRECT_BUFFERS.get();
@@ -155,6 +158,9 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         if (!initialized) {
             return val.modInverse(mod);
         }
+        if (mod.bitLength() > BIGINT_BITS) {
+            return val.modInverse(mod);
+        }
         
         int numLength = getNumLength(mod);
         DirectBuffers directBuffers = DIRECT_BUFFERS.get();
@@ -182,6 +188,9 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     @Override
     public BigInteger multiply(BigInteger a, BigInteger b) {
         if (!initialized) {
+            return a.multiply(b);
+        }
+        if (Math.max(a.bitLength(), b.bitLength()) > BIGINT_BITS) {
             return a.multiply(b);
         }
         
@@ -221,30 +230,58 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         int kappa = bases.length;
         BigInteger[] results = new BigInteger[kappa];
         int numLength = getNumLength(mod);
-        
-        BatchBuffers buffers = BATCH_BUFFERS.get();
-        int[] basesArray = buffers.ensureBases(kappa * numLength);
-        int[] expArray = buffers.ensureExp(numLength);
-        int[] modArray = buffers.ensureMod(numLength);
-        writeBigIntegerToIntArray(exp, expArray, 0, numLength);
-        writeBigIntegerToIntArray(mod, modArray, 0, numLength);
+        if (mod.bitLength() > BIGINT_BITS) {
+            for (int i = 0; i < kappa; i++) {
+                results[i] = bases[i].modPow(exp, mod);
+            }
+            return results;
+        }
+
         RPair rPair = getRPair(mod, numLength);
-        
+        DirectBuffers directBuffers = DIRECT_BUFFERS.get();
+        java.nio.ByteBuffer basesBuffer = directBuffers.ensureBases(kappa * numLength);
+        java.nio.ByteBuffer expBuffer = directBuffers.ensureExps(numLength);
+        java.nio.ByteBuffer modBuffer = directBuffers.ensureMods(numLength);
+        java.nio.ByteBuffer resultsBuffer = directBuffers.ensureResults(kappa * numLength);
+        java.nio.IntBuffer basesIntBuffer = basesBuffer.asIntBuffer();
         for (int i = 0; i < kappa; i++) {
-            writeBigIntegerToIntArray(bases[i], basesArray, i * numLength, numLength);
+            writeBigIntegerToIntBuffer(bases[i], basesIntBuffer, i * numLength, numLength);
         }
+        writeBigIntegerToIntBuffer(exp, expBuffer, 0, numLength);
+        writeBigIntegerToIntBuffer(mod, modBuffer, 0, numLength);
         
-        int[] resultsArray = buffers.ensureResults(kappa * numLength);
         long startTime = System.currentTimeMillis();
-        nativeBatchModPow(nativeHandle, basesArray, expArray, modArray, rPair.r, rPair.r2, resultsArray, numLength, kappa);
+        boolean ok = nativeBatchModPowDirect(nativeHandle, basesBuffer, expBuffer, modBuffer, rPair.r, rPair.r2, resultsBuffer, numLength, kappa);
+        if (!ok) {
+            BatchBuffers buffers = BATCH_BUFFERS.get();
+            int[] basesArray = buffers.ensureBases(kappa * numLength);
+            int[] expArray = buffers.ensureExp(numLength);
+            int[] modArray = buffers.ensureMod(numLength);
+            writeBigIntegerToIntArray(exp, expArray, 0, numLength);
+            writeBigIntegerToIntArray(mod, modArray, 0, numLength);
+            
+            for (int i = 0; i < kappa; i++) {
+                writeBigIntegerToIntArray(bases[i], basesArray, i * numLength, numLength);
+            }
+            
+            int[] resultsArray = buffers.ensureResults(kappa * numLength);
+            nativeBatchModPow(nativeHandle, basesArray, expArray, modArray, rPair.r, rPair.r2, resultsArray, numLength, kappa);
+            long endTime = System.currentTimeMillis();
+            logger.debug("MetalBigIntegerBackend: batchModPow completed for {} bases in {} ms (GPU)",
+                    bases.length, endTime - startTime);
+            
+            for (int i = 0; i < kappa; i++) {
+                results[i] = intArrayToBigInteger(resultsArray, i * numLength, numLength);
+            }
+            return results;
+        }
         long endTime = System.currentTimeMillis();
+        logger.debug("MetalBigIntegerBackend: batchModPow completed for {} bases in {} ms (GPU)",
+                bases.length, endTime - startTime);
         
         for (int i = 0; i < kappa; i++) {
-            results[i] = intArrayToBigInteger(resultsArray, i * numLength, numLength);
+            results[i] = intBufferToBigInteger(resultsBuffer, i * numLength, numLength);
         }
-        
-        logger.debug("MetalBigIntegerBackend: batchModPow completed for {} bases in {} ms (GPU)", 
-                    bases.length, endTime - startTime);
         
         return results;
     }
@@ -273,6 +310,18 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         int kappa = alphas.length;
         BigInteger[] results = new BigInteger[kappa];
         int numLength = getNumLength(N0sq);
+        if (N0sq.bitLength() > BIGINT_BITS) {
+            BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+            java.util.stream.IntStream.range(0, kappa)
+                .parallel()
+                .forEach(i -> {
+                    results[i] = BigIntegerUtils.powSigned(K, alphas[i].negate(), N0sq)
+                            .multiply(BigIntegerUtils.powSigned(onePlusN0, betas[i], N0sq))
+                            .multiply(rs[i].modPow(N0, N0sq))
+                            .mod(N0sq);
+                });
+            return results;
+        }
         
         SingleBuffers singleBuffers = SINGLE_BUFFERS.get();
         int[] kArray = singleBuffers.ensureK(numLength);
@@ -283,26 +332,54 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         writeBigIntegerToIntArray(N0sq, n0sqArray, 0, numLength);
         RPair rPair = getRPair(N0sq, numLength);
         
-        BatchBuffers buffers = BATCH_BUFFERS.get();
-        int[] negAlphasArray = buffers.ensureNegAlphas(kappa * numLength);
-        int[] betasArray = buffers.ensureBetas(kappa * numLength);
-        int[] rsArray = buffers.ensureRs(kappa * numLength);
+        DirectBuffers directBuffers = DIRECT_BUFFERS.get();
+        java.nio.ByteBuffer negAlphasBuffer = directBuffers.ensureNegAlphas(kappa * numLength);
+        java.nio.ByteBuffer betasBuffer = directBuffers.ensureDecBetas(kappa * numLength);
+        java.nio.ByteBuffer rsBuffer = directBuffers.ensureDecRs(kappa * numLength);
+        java.nio.ByteBuffer resultsBuffer = directBuffers.ensureDecResults(kappa * numLength);
+        java.nio.IntBuffer negAlphasIntBuffer = negAlphasBuffer.asIntBuffer();
+        java.nio.IntBuffer betasIntBuffer = betasBuffer.asIntBuffer();
+        java.nio.IntBuffer rsIntBuffer = rsBuffer.asIntBuffer();
         
         for (int i = 0; i < kappa; i++) {
+            int offset = i * numLength;
             BigInteger negAlpha = alphas[i].negate();
-            writeBigIntegerToIntArray(negAlpha, negAlphasArray, i * numLength, numLength);
-            writeBigIntegerToIntArray(betas[i], betasArray, i * numLength, numLength);
-            writeBigIntegerToIntArray(rs[i], rsArray, i * numLength, numLength);
+            writeBigIntegerToIntBuffer(negAlpha, negAlphasIntBuffer, offset, numLength);
+            writeBigIntegerToIntBuffer(betas[i], betasIntBuffer, offset, numLength);
+            writeBigIntegerToIntBuffer(rs[i], rsIntBuffer, offset, numLength);
         }
         
-        int[] resultsArray = buffers.ensureResults(kappa * numLength);
-        nativeComputeDecProofTuple(nativeHandle, kArray, n0Array, n0sqArray,
+        boolean ok = nativeComputeDecProofTupleDirect(nativeHandle, kArray, n0Array, n0sqArray,
                 rPair.r, rPair.r2,
-                negAlphasArray, betasArray, rsArray,
-                resultsArray, numLength, kappa);
+                negAlphasBuffer, betasBuffer, rsBuffer,
+                resultsBuffer, numLength, kappa);
+        if (!ok) {
+            BatchBuffers buffers = BATCH_BUFFERS.get();
+            int[] negAlphasArray = buffers.ensureNegAlphas(kappa * numLength);
+            int[] betasArray = buffers.ensureBetas(kappa * numLength);
+            int[] rsArray = buffers.ensureRs(kappa * numLength);
+            
+            for (int i = 0; i < kappa; i++) {
+                BigInteger negAlpha = alphas[i].negate();
+                writeBigIntegerToIntArray(negAlpha, negAlphasArray, i * numLength, numLength);
+                writeBigIntegerToIntArray(betas[i], betasArray, i * numLength, numLength);
+                writeBigIntegerToIntArray(rs[i], rsArray, i * numLength, numLength);
+            }
+            
+            int[] resultsArray = buffers.ensureResults(kappa * numLength);
+            nativeComputeDecProofTuple(nativeHandle, kArray, n0Array, n0sqArray,
+                    rPair.r, rPair.r2,
+                    negAlphasArray, betasArray, rsArray,
+                    resultsArray, numLength, kappa);
+            
+            for (int i = 0; i < kappa; i++) {
+                results[i] = intArrayToBigInteger(resultsArray, i * numLength, numLength);
+            }
+            return results;
+        }
         
         for (int i = 0; i < kappa; i++) {
-            results[i] = intArrayToBigInteger(resultsArray, i * numLength, numLength);
+            results[i] = intBufferToBigInteger(resultsBuffer, i * numLength, numLength);
         }
         
         return results;
@@ -321,27 +398,57 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         int kappa = bases.length;
         BigInteger[] results = new BigInteger[kappa];
         int numLength = getNumLength(mod);
-        
-        BatchBuffers buffers = BATCH_BUFFERS.get();
-        int[] basesArray = buffers.ensureBases(kappa * numLength);
-        int[] expsArray = buffers.ensureExps(kappa * numLength);
-        int[] modsArray = buffers.ensureMods(kappa * numLength);
-        int[] modArray = buffers.ensureMod(numLength);
-        writeBigIntegerToIntArray(mod, modArray, 0, numLength);
+        if (mod.bitLength() > BIGINT_BITS) {
+            for (int i = 0; i < kappa; i++) {
+                results[i] = bases[i].modPow(exps[i], mod);
+            }
+            return results;
+        }
+
         RPair rPair = getRPair(mod, numLength);
-        
+        DirectBuffers directBuffers = DIRECT_BUFFERS.get();
+        java.nio.ByteBuffer basesBuffer = directBuffers.ensureBases(kappa * numLength);
+        java.nio.ByteBuffer expsBuffer = directBuffers.ensureExps(kappa * numLength);
+        java.nio.ByteBuffer modsBuffer = directBuffers.ensureMods(kappa * numLength);
+        java.nio.ByteBuffer resultsBuffer = directBuffers.ensureResults(kappa * numLength);
+        java.nio.IntBuffer basesIntBuffer = basesBuffer.asIntBuffer();
+        java.nio.IntBuffer expsIntBuffer = expsBuffer.asIntBuffer();
+        java.nio.IntBuffer modsIntBuffer = modsBuffer.asIntBuffer();
         for (int i = 0; i < kappa; i++) {
-            writeBigIntegerToIntArray(bases[i], basesArray, i * numLength, numLength);
-            writeBigIntegerToIntArray(exps[i], expsArray, i * numLength, numLength);
-            System.arraycopy(modArray, 0, modsArray, i * numLength, numLength);
+            int offset = i * numLength;
+            writeBigIntegerToIntBuffer(bases[i], basesIntBuffer, offset, numLength);
+            writeBigIntegerToIntBuffer(exps[i], expsIntBuffer, offset, numLength);
+            writeBigIntegerToIntBuffer(mod, modsIntBuffer, offset, numLength);
         }
         
-        int[] resultsArray = buffers.ensureResults(kappa * numLength);
-        nativeBatchModPowDifferentExp(nativeHandle, basesArray, expsArray, modsArray,
-                rPair.r, rPair.r2, resultsArray, numLength, kappa);
+        boolean ok = nativeBatchModPowDifferentExpDirect(nativeHandle, basesBuffer, expsBuffer, modsBuffer,
+                rPair.r, rPair.r2, resultsBuffer, numLength, kappa);
+        if (!ok) {
+            BatchBuffers buffers = BATCH_BUFFERS.get();
+            int[] basesArray = buffers.ensureBases(kappa * numLength);
+            int[] expsArray = buffers.ensureExps(kappa * numLength);
+            int[] modsArray = buffers.ensureMods(kappa * numLength);
+            int[] modArray = buffers.ensureMod(numLength);
+            writeBigIntegerToIntArray(mod, modArray, 0, numLength);
+            
+            for (int i = 0; i < kappa; i++) {
+                writeBigIntegerToIntArray(bases[i], basesArray, i * numLength, numLength);
+                writeBigIntegerToIntArray(exps[i], expsArray, i * numLength, numLength);
+                System.arraycopy(modArray, 0, modsArray, i * numLength, numLength);
+            }
+            
+            int[] resultsArray = buffers.ensureResults(kappa * numLength);
+            nativeBatchModPowDifferentExp(nativeHandle, basesArray, expsArray, modsArray,
+                    rPair.r, rPair.r2, resultsArray, numLength, kappa);
+            
+            for (int i = 0; i < kappa; i++) {
+                results[i] = intArrayToBigInteger(resultsArray, i * numLength, numLength);
+            }
+            return results;
+        }
         
         for (int i = 0; i < kappa; i++) {
-            results[i] = intArrayToBigInteger(resultsArray, i * numLength, numLength);
+            results[i] = intBufferToBigInteger(resultsBuffer, i * numLength, numLength);
         }
         
         return results;
@@ -380,6 +487,26 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         int kappa = alphas.length;
         BigInteger[] results = new BigInteger[kappa * 2];
         int numLength = getNumLength(N0sq);
+        if (N0sq.bitLength() > BIGINT_BITS || N1sq.bitLength() > BIGINT_BITS) {
+            BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+            BigInteger onePlusN1 = BigInteger.ONE.add(N1);
+            java.util.stream.IntStream.range(0, kappa)
+                .parallel()
+                .forEach(i -> {
+                    BigInteger Aj = C.modPow(alphas[i], N0sq)
+                            .multiply(onePlusN0.modPow(betasForN0[i], N0sq))
+                            .multiply(rs[i].modPow(N0, N0sq))
+                            .mod(N0sq);
+                    
+                    BigInteger Bj = onePlusN1.modPow(betasForN1[i], N1sq)
+                            .multiply(ss[i].modPow(N1, N1sq))
+                            .mod(N1sq);
+                    
+                    results[i * 2] = Aj;
+                    results[i * 2 + 1] = Bj;
+                });
+            return results;
+        }
         
         SingleBuffers singleBuffers = SINGLE_BUFFERS.get();
         int[] cArray = singleBuffers.ensureC(numLength);
@@ -395,31 +522,67 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         RPair rN0Pair = getRPair(N0sq, numLength);
         RPair rN1Pair = getRPair(N1sq, numLength);
         
-        BatchBuffers buffers = BATCH_BUFFERS.get();
-        int[] alphasArray = buffers.ensureAlphas(kappa * numLength);
-        int[] betasForN0Array = buffers.ensureBetasForN0(kappa * numLength);
-        int[] betasForN1Array = buffers.ensureBetasForN1(kappa * numLength);
-        int[] rsArray = buffers.ensureRs(kappa * numLength);
-        int[] ssArray = buffers.ensureSs(kappa * numLength);
+        DirectBuffers directBuffers = DIRECT_BUFFERS.get();
+        java.nio.ByteBuffer alphasBuffer = directBuffers.ensureAlphas(kappa * numLength);
+        java.nio.ByteBuffer betasForN0Buffer = directBuffers.ensureBetasForN0(kappa * numLength);
+        java.nio.ByteBuffer betasForN1Buffer = directBuffers.ensureBetasForN1(kappa * numLength);
+        java.nio.ByteBuffer rsBuffer = directBuffers.ensureRs(kappa * numLength);
+        java.nio.ByteBuffer ssBuffer = directBuffers.ensureSs(kappa * numLength);
+        java.nio.ByteBuffer ajBuffer = directBuffers.ensureAj(kappa * numLength);
+        java.nio.ByteBuffer bjBuffer = directBuffers.ensureBj(kappa * numLength);
+        java.nio.IntBuffer alphasIntBuffer = alphasBuffer.asIntBuffer();
+        java.nio.IntBuffer betasForN0IntBuffer = betasForN0Buffer.asIntBuffer();
+        java.nio.IntBuffer betasForN1IntBuffer = betasForN1Buffer.asIntBuffer();
+        java.nio.IntBuffer rsIntBuffer = rsBuffer.asIntBuffer();
+        java.nio.IntBuffer ssIntBuffer = ssBuffer.asIntBuffer();
         
         for (int i = 0; i < kappa; i++) {
-            writeBigIntegerToIntArray(alphas[i], alphasArray, i * numLength, numLength);
-            writeBigIntegerToIntArray(betasForN0[i], betasForN0Array, i * numLength, numLength);
-            writeBigIntegerToIntArray(betasForN1[i], betasForN1Array, i * numLength, numLength);
-            writeBigIntegerToIntArray(rs[i], rsArray, i * numLength, numLength);
-            writeBigIntegerToIntArray(ss[i], ssArray, i * numLength, numLength);
+            int offset = i * numLength;
+            writeBigIntegerToIntBuffer(alphas[i], alphasIntBuffer, offset, numLength);
+            writeBigIntegerToIntBuffer(betasForN0[i], betasForN0IntBuffer, offset, numLength);
+            writeBigIntegerToIntBuffer(betasForN1[i], betasForN1IntBuffer, offset, numLength);
+            writeBigIntegerToIntBuffer(rs[i], rsIntBuffer, offset, numLength);
+            writeBigIntegerToIntBuffer(ss[i], ssIntBuffer, offset, numLength);
         }
         
-        int[] ajArray = buffers.ensureAj(kappa * numLength);
-        int[] bjArray = buffers.ensureBj(kappa * numLength);
-        nativeComputeAffGProofTuple(nativeHandle, cArray, n0Array, n0sqArray, n1Array, n1sqArray,
+        boolean ok = nativeComputeAffGProofTupleDirect(nativeHandle, cArray, n0Array, n0sqArray, n1Array, n1sqArray,
                 rN0Pair.r, rN0Pair.r2, rN1Pair.r, rN1Pair.r2,
-                alphasArray, betasForN0Array, betasForN1Array, rsArray, ssArray,
-                ajArray, bjArray, numLength, kappa);
+                alphasBuffer, betasForN0Buffer, betasForN1Buffer, rsBuffer, ssBuffer,
+                ajBuffer, bjBuffer, numLength, kappa);
+        
+        if (!ok) {
+            BatchBuffers buffers = BATCH_BUFFERS.get();
+            int[] alphasArray = buffers.ensureAlphas(kappa * numLength);
+            int[] betasForN0Array = buffers.ensureBetasForN0(kappa * numLength);
+            int[] betasForN1Array = buffers.ensureBetasForN1(kappa * numLength);
+            int[] rsArray = buffers.ensureRs(kappa * numLength);
+            int[] ssArray = buffers.ensureSs(kappa * numLength);
+            
+            for (int i = 0; i < kappa; i++) {
+                writeBigIntegerToIntArray(alphas[i], alphasArray, i * numLength, numLength);
+                writeBigIntegerToIntArray(betasForN0[i], betasForN0Array, i * numLength, numLength);
+                writeBigIntegerToIntArray(betasForN1[i], betasForN1Array, i * numLength, numLength);
+                writeBigIntegerToIntArray(rs[i], rsArray, i * numLength, numLength);
+                writeBigIntegerToIntArray(ss[i], ssArray, i * numLength, numLength);
+            }
+            
+            int[] ajArray = buffers.ensureAj(kappa * numLength);
+            int[] bjArray = buffers.ensureBj(kappa * numLength);
+            nativeComputeAffGProofTuple(nativeHandle, cArray, n0Array, n0sqArray, n1Array, n1sqArray,
+                    rN0Pair.r, rN0Pair.r2, rN1Pair.r, rN1Pair.r2,
+                    alphasArray, betasForN0Array, betasForN1Array, rsArray, ssArray,
+                    ajArray, bjArray, numLength, kappa);
+            
+            for (int i = 0; i < kappa; i++) {
+                results[i * 2] = intArrayToBigInteger(ajArray, i * numLength, numLength);
+                results[i * 2 + 1] = intArrayToBigInteger(bjArray, i * numLength, numLength);
+            }
+            return results;
+        }
         
         for (int i = 0; i < kappa; i++) {
-            results[i * 2] = intArrayToBigInteger(ajArray, i * numLength, numLength);
-            results[i * 2 + 1] = intArrayToBigInteger(bjArray, i * numLength, numLength);
+            results[i * 2] = intBufferToBigInteger(ajBuffer, i * numLength, numLength);
+            results[i * 2 + 1] = intBufferToBigInteger(bjBuffer, i * numLength, numLength);
         }
         
         return results;
@@ -440,7 +603,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     private int getNumLength(BigInteger value) {
         int bitLength = value.bitLength();
         int numLength = (bitLength + 31) / 32;
-        return Math.max(numLength, 96); // Minimum 3072 bits for MPC
+        return Math.max(numLength, 128); // Minimum 4096 bits for MPC
     }
 
     private RPair getRPair(BigInteger mod, int numLength) {
@@ -503,6 +666,10 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
 
     private void writeBigIntegerToIntBuffer(BigInteger value, java.nio.ByteBuffer buffer, int offset, int numLength) {
         java.nio.IntBuffer intBuffer = buffer.asIntBuffer();
+        writeBigIntegerToIntBuffer(value, intBuffer, offset, numLength);
+    }
+
+    private void writeBigIntegerToIntBuffer(BigInteger value, java.nio.IntBuffer intBuffer, int offset, int numLength) {
         for (int i = 0; i < numLength; i++) {
             intBuffer.put(offset + i, 0);
         }
@@ -642,19 +809,29 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     private native void nativeModPow(long handle, int[] bases, int[] exps, int[] mods, int[] r, int[] r2, int[] results, int numLength, int count);
     private native boolean nativeModPowDirect(long handle, java.nio.ByteBuffer bases, java.nio.ByteBuffer exps, java.nio.ByteBuffer mods, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
     private native void nativeBatchModPow(long handle, int[] bases, int[] exp, int[] mod, int[] r, int[] r2, int[] results, int numLength, int count);
+    private native boolean nativeBatchModPowDirect(long handle, java.nio.ByteBuffer bases, java.nio.ByteBuffer exp, java.nio.ByteBuffer mod, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
     private native void nativeComputeAffGProofTuple(long handle, int[] C, int[] N0, int[] N0sq, int[] N1, int[] N1sq,
             int[] rN0, int[] r2N0, int[] rN1, int[] r2N1,
             int[] alphas, int[] betasForN0, int[] betasForN1, int[] rs, int[] ss,
             int[] Aj, int[] Bj, int numLength, int kappa);
+    private native boolean nativeComputeAffGProofTupleDirect(long handle, int[] C, int[] N0, int[] N0sq, int[] N1, int[] N1sq,
+            int[] rN0, int[] r2N0, int[] rN1, int[] r2N1,
+            java.nio.ByteBuffer alphas, java.nio.ByteBuffer betasForN0, java.nio.ByteBuffer betasForN1, java.nio.ByteBuffer rs, java.nio.ByteBuffer ss,
+            java.nio.ByteBuffer Aj, java.nio.ByteBuffer Bj, int numLength, int kappa);
     private native void nativeComputeDecProofTuple(long handle, int[] K, int[] N0, int[] N0sq,
             int[] rN0, int[] r2N0,
             int[] negAlphas, int[] betas, int[] rs,
             int[] A, int numLength, int kappa);
+    private native boolean nativeComputeDecProofTupleDirect(long handle, int[] K, int[] N0, int[] N0sq,
+            int[] rN0, int[] r2N0,
+            java.nio.ByteBuffer negAlphas, java.nio.ByteBuffer betas, java.nio.ByteBuffer rs,
+            java.nio.ByteBuffer A, int numLength, int kappa);
     private native void nativeModInverse(long handle, int[] values, int[] mods, int[] r, int[] r2, int[] results, int numLength, int count);
     private native boolean nativeModInverseDirect(long handle, java.nio.ByteBuffer values, java.nio.ByteBuffer mods, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
     private native void nativeMultiply(long handle, int[] a, int[] b, int[] results, int numLength, int count);
     private native boolean nativeMultiplyDirect(long handle, java.nio.ByteBuffer a, java.nio.ByteBuffer b, java.nio.ByteBuffer results, int numLength, int count);
     private native void nativeBatchModPowDifferentExp(long handle, int[] bases, int[] exps, int[] mods, int[] r, int[] r2, int[] results, int numLength, int count);
+    private native boolean nativeBatchModPowDifferentExpDirect(long handle, java.nio.ByteBuffer bases, java.nio.ByteBuffer exps, java.nio.ByteBuffer mods, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
 
     private static final class BatchBuffers {
         private int[] bases;
@@ -729,12 +906,34 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         private java.nio.ByteBuffer mods;
         private java.nio.ByteBuffer values;
         private java.nio.ByteBuffer results;
+        private java.nio.ByteBuffer alphas;
+        private java.nio.ByteBuffer betasForN0;
+        private java.nio.ByteBuffer betasForN1;
+        private java.nio.ByteBuffer rs;
+        private java.nio.ByteBuffer ss;
+        private java.nio.ByteBuffer aj;
+        private java.nio.ByteBuffer bj;
+        private java.nio.ByteBuffer negAlphas;
+        private java.nio.ByteBuffer decBetas;
+        private java.nio.ByteBuffer decRs;
+        private java.nio.ByteBuffer decResults;
 
         java.nio.ByteBuffer ensureBases(int numLength) { bases = ensureDirect(bases, numLength); return bases; }
         java.nio.ByteBuffer ensureExps(int numLength) { exps = ensureDirect(exps, numLength); return exps; }
         java.nio.ByteBuffer ensureMods(int numLength) { mods = ensureDirect(mods, numLength); return mods; }
         java.nio.ByteBuffer ensureValues(int numLength) { values = ensureDirect(values, numLength); return values; }
         java.nio.ByteBuffer ensureResults(int numLength) { results = ensureDirect(results, numLength); return results; }
+        java.nio.ByteBuffer ensureAlphas(int numLength) { alphas = ensureDirect(alphas, numLength); return alphas; }
+        java.nio.ByteBuffer ensureBetasForN0(int numLength) { betasForN0 = ensureDirect(betasForN0, numLength); return betasForN0; }
+        java.nio.ByteBuffer ensureBetasForN1(int numLength) { betasForN1 = ensureDirect(betasForN1, numLength); return betasForN1; }
+        java.nio.ByteBuffer ensureRs(int numLength) { rs = ensureDirect(rs, numLength); return rs; }
+        java.nio.ByteBuffer ensureSs(int numLength) { ss = ensureDirect(ss, numLength); return ss; }
+        java.nio.ByteBuffer ensureAj(int numLength) { aj = ensureDirect(aj, numLength); return aj; }
+        java.nio.ByteBuffer ensureBj(int numLength) { bj = ensureDirect(bj, numLength); return bj; }
+        java.nio.ByteBuffer ensureNegAlphas(int numLength) { negAlphas = ensureDirect(negAlphas, numLength); return negAlphas; }
+        java.nio.ByteBuffer ensureDecBetas(int numLength) { decBetas = ensureDirect(decBetas, numLength); return decBetas; }
+        java.nio.ByteBuffer ensureDecRs(int numLength) { decRs = ensureDirect(decRs, numLength); return decRs; }
+        java.nio.ByteBuffer ensureDecResults(int numLength) { decResults = ensureDirect(decResults, numLength); return decResults; }
     }
 
     private static java.nio.ByteBuffer ensureDirect(java.nio.ByteBuffer existing, int numLength) {

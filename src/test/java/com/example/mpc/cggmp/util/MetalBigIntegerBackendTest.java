@@ -11,9 +11,9 @@ public class MetalBigIntegerBackendTest {
     @Test
     public void testMultiply() {
         System.out.println("Testing multiply...");
-        // 生成接近3072位的大整数
-        BigInteger a = new BigInteger(3000, new java.util.Random());
-        BigInteger b = new BigInteger(3000, new java.util.Random());
+        // 生成接近4096位的大整数
+        BigInteger a = new BigInteger(4090, new java.util.Random());
+        BigInteger b = new BigInteger(4090, new java.util.Random());
         
         // 测试GPU计算
         BigInteger gpuResult = GpuBigInteger.multiply(a, b);
@@ -27,10 +27,10 @@ public class MetalBigIntegerBackendTest {
     @Test
     public void testModPow() {
         System.out.println("Testing modPow...");
-        // 生成接近3072位的大整数
-        BigInteger base = new BigInteger(3000, new java.util.Random());
+        // 生成接近4096位的大整数
+        BigInteger base = new BigInteger(4090, new java.util.Random());
         BigInteger exponent = new BigInteger(256, new java.util.Random());
-        BigInteger modulus = new BigInteger(3000, new java.util.Random()).nextProbablePrime();
+        BigInteger modulus = new BigInteger(4090, new java.util.Random()).nextProbablePrime();
         
         // 测试GPU计算
         BigInteger gpuResult = GpuBigInteger.modPow(base, exponent, modulus);
@@ -44,12 +44,12 @@ public class MetalBigIntegerBackendTest {
     @Test
     public void testModInverse() {
         System.out.println("Testing modInverse...");
-        // 生成接近3072位的大整数
-        BigInteger modulus = new BigInteger(3000, new java.util.Random()).nextProbablePrime();
-        BigInteger a = new BigInteger(3000, new java.util.Random());
+        // 生成接近4096位的大整数
+        BigInteger modulus = new BigInteger(4090, new java.util.Random()).nextProbablePrime();
+        BigInteger a = new BigInteger(4090, new java.util.Random());
         // 确保a与modulus互质
         while (!a.gcd(modulus).equals(BigInteger.ONE)) {
-            a = new BigInteger(3000, new java.util.Random());
+            a = new BigInteger(4090, new java.util.Random());
         }
         
         // 测试GPU计算
@@ -64,14 +64,14 @@ public class MetalBigIntegerBackendTest {
     @Test
     public void testBatchModPow() {
         System.out.println("Testing batchModPow...");
-        // 生成接近3072位的大整数
+        // 生成接近4096位的大整数
         int count = 3;
         BigInteger[] bases = new BigInteger[count];
         for (int i = 0; i < count; i++) {
-            bases[i] = new BigInteger(3000, new java.util.Random());
+            bases[i] = new BigInteger(4090, new java.util.Random());
         }
         BigInteger exponent = new BigInteger(256, new java.util.Random());
-        BigInteger modulus = new BigInteger(3000, new java.util.Random()).nextProbablePrime();
+        BigInteger modulus = new BigInteger(4090, new java.util.Random()).nextProbablePrime();
         
         // 测试GPU计算
         BigInteger[] gpuResults = GpuBigInteger.batchModPow(bases, exponent, modulus);
@@ -90,15 +90,15 @@ public class MetalBigIntegerBackendTest {
     @Test
     public void testBatchModPowDifferentExp() {
         System.out.println("Testing batchModPowDifferentExp...");
-        // 生成接近3072位的大整数
+        // 生成接近4096位的大整数
         int count = 3;
         BigInteger[] bases = new BigInteger[count];
         BigInteger[] exponents = new BigInteger[count];
         for (int i = 0; i < count; i++) {
-            bases[i] = new BigInteger(3000, new java.util.Random());
+            bases[i] = new BigInteger(4090, new java.util.Random());
             exponents[i] = new BigInteger(256, new java.util.Random());
         }
-        BigInteger modulus = new BigInteger(3000, new java.util.Random()).nextProbablePrime();
+        BigInteger modulus = new BigInteger(4090, new java.util.Random()).nextProbablePrime();
         
         // 测试GPU计算
         BigInteger[] gpuResults = GpuBigInteger.batchModPowDifferentExp(bases, exponents, modulus);
@@ -214,10 +214,10 @@ public class MetalBigIntegerBackendTest {
     public void testLargeIntegerOperations() {
         System.out.println("Testing large integer operations...");
         
-        // 生成接近3072位的大整数（Metal shader设计的目标大小）
-        BigInteger largeA = new BigInteger(3000, new java.util.Random());
-        BigInteger largeB = new BigInteger(3000, new java.util.Random());
-        BigInteger largeMod = new BigInteger(3000, new java.util.Random()).nextProbablePrime();
+        // 生成接近4096位的大整数（Metal shader设计的目标大小）
+        BigInteger largeA = new BigInteger(4090, new java.util.Random());
+        BigInteger largeB = new BigInteger(4090, new java.util.Random());
+        BigInteger largeMod = new BigInteger(4090, new java.util.Random()).nextProbablePrime();
         
         // 测试大整数乘法
         System.out.println("Testing large multiply...");
@@ -238,7 +238,7 @@ public class MetalBigIntegerBackendTest {
         System.out.println("Testing large modInverse...");
         // 确保largeA与largeMod互质
         while (!largeA.gcd(largeMod).equals(BigInteger.ONE)) {
-            largeA = new BigInteger(3000, new java.util.Random());
+            largeA = new BigInteger(4090, new java.util.Random());
         }
         BigInteger gpuModInverse = GpuBigInteger.modInverse(largeA, largeMod);
         BigInteger cpuModInverse = largeA.modInverse(largeMod);

@@ -1,24 +1,24 @@
 /**
  * Big Integer Operations for Metal GPU
- * Implements 3072-bit big integer operations using Montgomery multiplication
+ * Implements 4096-bit big integer operations using Montgomery multiplication
  */
 
 #include <metal_stdlib>
 using namespace metal;
 
-// Big integer size (3072 bits = 96 * 32 bits)
-constant uint BIGINT_SIZE = 96;
-constant uint BIGINT_BITS = 3072;
-constant uint DOUBLE_BIGINT_SIZE = 192; // For multiplication results
+// Big integer size (4096 bits = 128 * 32 bits)
+constant uint BIGINT_SIZE = 128;
+constant uint BIGINT_BITS = 4096;
+constant uint DOUBLE_BIGINT_SIZE = 256; // For multiplication results
 
 // Big integer structure
 struct BigInteger {
-    uint32_t data[96];
+    uint32_t data[128];
 };
 
 // Double-sized big integer structure for multiplication
 struct DoubleBigInteger {
-    uint32_t data[192];
+    uint32_t data[256];
 };
 
 // ============================================================================
@@ -119,7 +119,7 @@ void bigint_mul(thread BigInteger& result, thread const BigInteger& a, thread co
         }
     }
 
-    // Copy lower 96 words to result
+    // Copy lower BIGINT_SIZE words to result
     for (uint i = 0; i < BIGINT_SIZE; i++) {
         result.data[i] = temp.data[i];
     }
@@ -145,7 +145,7 @@ void bigint_double_mod(thread BigInteger& result, thread const BigInteger& a, th
     }
 }
 
-// Calculate R mod n (R = 2^3072)
+// Calculate R mod n (R = 2^4096)
 void bigint_calc_r_mod_n(thread BigInteger& result, thread const BigInteger& n) {
     thread BigInteger r;
     bigint_set_zero(r);
@@ -158,7 +158,7 @@ void bigint_calc_r_mod_n(thread BigInteger& result, thread const BigInteger& n) 
     bigint_copy(result, r);
 }
 
-// Calculate R^2 mod n (R = 2^3072, so R^2 = 2^6144)
+// Calculate R^2 mod n (R = 2^4096, so R^2 = 2^8192)
 void bigint_calc_r2_mod_n(thread BigInteger& result, thread const BigInteger& n) {
     thread BigInteger r;
     bigint_calc_r_mod_n(r, n);
@@ -212,7 +212,7 @@ void montgomery_reduce(thread BigInteger& result, thread DoubleBigInteger& t, th
         }
     }
 
-    // Shift right by 3072 bits (96 words) - copy upper 96 words
+    // Shift right by BIGINT_BITS - copy upper BIGINT_SIZE words
     for (uint i = 0; i < BIGINT_SIZE; i++) {
         result.data[i] = temp.data[i + BIGINT_SIZE];
     }
@@ -281,7 +281,7 @@ void montgomery_mul(thread BigInteger& result, thread const BigInteger& a, threa
         }
     }
 
-    // Shift right by 3072 bits (96 words) - copy upper 96 words
+    // Shift right by BIGINT_BITS - copy upper BIGINT_SIZE words
     for (uint i = 0; i < BIGINT_SIZE; i++) {
         result.data[i] = temp.data[i + BIGINT_SIZE];
     }
@@ -589,7 +589,7 @@ kernel void multiplyKernel(
     thread BigInteger b_val = b[id];
     thread DoubleBigInteger result;
 
-    // Full 192-word product
+    // Full DOUBLE_BIGINT_SIZE-word product
     for (uint i = 0; i < DOUBLE_BIGINT_SIZE; i++) {
         result.data[i] = 0;
     }

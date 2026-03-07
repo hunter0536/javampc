@@ -65,6 +65,14 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
 
 /*
  * Class:     com_example_mpc_cggmp_util_MetalBigIntegerBackend
+ * Method:    nativeBatchModPowDirect
+ * Signature: (JLjava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;[I[ILjava/nio/ByteBuffer;II)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDirect
+  (JNIEnv *, jobject, jlong, jobject, jobject, jobject, jintArray, jintArray, jobject, jint, jint);
+
+/*
+ * Class:     com_example_mpc_cggmp_util_MetalBigIntegerBackend
  * Method:    nativeComputeAffGProofTuple
  * Signature: (J[I[I[I[I[I[I[I[I[I[I[I[I[I[I[I[III)V
  */
@@ -73,11 +81,27 @@ JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_na
 
 /*
  * Class:     com_example_mpc_cggmp_util_MetalBigIntegerBackend
+ * Method:    nativeComputeAffGProofTupleDirect
+ * Signature: (J[I[I[I[I[I[I[I[I[I[Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;II)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeComputeAffGProofTupleDirect
+  (JNIEnv *, jobject, jlong, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jobject, jobject, jobject, jobject, jobject, jobject, jobject, jint, jint);
+
+/*
+ * Class:     com_example_mpc_cggmp_util_MetalBigIntegerBackend
  * Method:    nativeComputeDecProofTuple
  * Signature: (J[I[I[I[I[I[I[I[I[III)V
  */
 JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeComputeDecProofTuple
   (JNIEnv *, jobject, jlong, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jint, jint);
+
+/*
+ * Class:     com_example_mpc_cggmp_util_MetalBigIntegerBackend
+ * Method:    nativeComputeDecProofTupleDirect
+ * Signature: (J[I[I[I[I[I[Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;II)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeComputeDecProofTupleDirect
+  (JNIEnv *, jobject, jlong, jintArray, jintArray, jintArray, jintArray, jintArray, jobject, jobject, jobject, jobject, jint, jint);
 
 /*
  * Class:     com_example_mpc_cggmp_util_MetalBigIntegerBackend
@@ -118,6 +142,14 @@ JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBacken
  */
 JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDifferentExp
   (JNIEnv *, jobject, jlong, jintArray, jintArray, jintArray, jintArray, jintArray, jintArray, jint, jint);
+
+/*
+ * Class:     com_example_mpc_cggmp_util_MetalBigIntegerBackend
+ * Method:    nativeBatchModPowDifferentExpDirect
+ * Signature: (JLjava/nio/ByteBuffer;Ljava/nio/ByteBuffer;Ljava/nio/ByteBuffer;[I[ILjava/nio/ByteBuffer;II)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_example_mpc_cggmp_util_MetalBigIntegerBackend_nativeBatchModPowDifferentExpDirect
+  (JNIEnv *, jobject, jlong, jobject, jobject, jobject, jintArray, jintArray, jobject, jint, jint);
 
 #ifdef __cplusplus
 }
