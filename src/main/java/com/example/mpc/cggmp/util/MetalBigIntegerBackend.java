@@ -114,10 +114,17 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     @Override
     public BigInteger modPow(BigInteger base, BigInteger exp, BigInteger mod) {
         if (!initialized) {
-            return base.modPow(exp, mod);
+            return BigIntegerUtils.powSigned(base, exp, mod);
         }
         if (mod.bitLength() > BIGINT_BITS) {
-            return base.modPow(exp, mod);
+            return BigIntegerUtils.powSigned(base, exp, mod);
+        }
+        if (exp.signum() < 0) {
+            try {
+                base.modInverse(mod);
+            } catch (ArithmeticException e) {
+                return BigIntegerUtils.powSigned(base, exp, mod);
+            }
         }
         
         int numLength = getNumLength(mod);
@@ -126,23 +133,46 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         java.nio.ByteBuffer expsBuffer = directBuffers.ensureExps(numLength);
         java.nio.ByteBuffer modsBuffer = directBuffers.ensureMods(numLength);
         java.nio.ByteBuffer resultsBuffer = directBuffers.ensureResults(numLength);
+        java.nio.ByteBuffer baseInvsBuffer = null;
+        if (exp.signum() < 0) {
+            baseInvsBuffer = directBuffers.ensureBaseInvs(numLength);
+        }
         writeBigIntegerToIntBuffer(base, basesBuffer, 0, numLength);
         writeBigIntegerToIntBuffer(exp, expsBuffer, 0, numLength);
         writeBigIntegerToIntBuffer(mod, modsBuffer, 0, numLength);
+        if (exp.signum() < 0) {
+            BigInteger baseInv = base.modInverse(mod);
+            writeBigIntegerToIntBuffer(baseInv, baseInvsBuffer, 0, numLength);
+        }
         RPair rPair = getRPair(mod, numLength);
         
         long startTime = System.currentTimeMillis();
-        boolean ok = nativeModPowDirect(nativeHandle, basesBuffer, expsBuffer, modsBuffer, rPair.r, rPair.r2, resultsBuffer, numLength, 1);
+        boolean ok;
+        if (exp.signum() < 0) {
+            ok = nativeModPowSignedDirect(nativeHandle, basesBuffer, baseInvsBuffer, expsBuffer, modsBuffer, rPair.r, rPair.r2, resultsBuffer, numLength, 1);
+        } else {
+            ok = nativeModPowDirect(nativeHandle, basesBuffer, expsBuffer, modsBuffer, rPair.r, rPair.r2, resultsBuffer, numLength, 1);
+        }
         if (!ok) {
             SingleBuffers singleBuffers = SINGLE_BUFFERS.get();
             int[] basesArray = singleBuffers.ensureBases(numLength);
             int[] expsArray = singleBuffers.ensureExps(numLength);
             int[] modsArray = singleBuffers.ensureMods(numLength);
             int[] resultsArray = singleBuffers.ensureResults(numLength);
+            int[] baseInvsArray = null;
+            if (exp.signum() < 0) {
+                baseInvsArray = singleBuffers.ensureBaseInvs(numLength);
+            }
             writeBigIntegerToIntArray(base, basesArray, 0, numLength);
             writeBigIntegerToIntArray(exp, expsArray, 0, numLength);
             writeBigIntegerToIntArray(mod, modsArray, 0, numLength);
-            nativeModPow(nativeHandle, basesArray, expsArray, modsArray, rPair.r, rPair.r2, resultsArray, numLength, 1);
+            if (exp.signum() < 0) {
+                BigInteger baseInv = base.modInverse(mod);
+                writeBigIntegerToIntArray(baseInv, baseInvsArray, 0, numLength);
+                nativeModPowSigned(nativeHandle, basesArray, baseInvsArray, expsArray, modsArray, rPair.r, rPair.r2, resultsArray, numLength, 1);
+            } else {
+                nativeModPow(nativeHandle, basesArray, expsArray, modsArray, rPair.r, rPair.r2, resultsArray, numLength, 1);
+            }
             long endTime = System.currentTimeMillis();
             if (endTime - startTime > 100) {
                 logger.debug("MetalBigIntegerBackend: modPow completed in {} ms (GPU)", endTime - startTime);
@@ -332,9 +362,16 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         int[] kArray = singleBuffers.ensureK(numLength);
         int[] n0Array = singleBuffers.ensureN0(numLength);
         int[] n0sqArray = singleBuffers.ensureN0sq(numLength);
+        int[] kInvArray = singleBuffers.ensureKInv(numLength);
+        int[] onePlusN0InvArray = singleBuffers.ensureOnePlusN0Inv(numLength);
+        BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+        BigInteger kInv = K.modInverse(N0sq);
+        BigInteger onePlusN0Inv = onePlusN0.modInverse(N0sq);
         writeBigIntegerToIntArray(K, kArray, 0, numLength);
         writeBigIntegerToIntArray(N0, n0Array, 0, numLength);
         writeBigIntegerToIntArray(N0sq, n0sqArray, 0, numLength);
+        writeBigIntegerToIntArray(kInv, kInvArray, 0, numLength);
+        writeBigIntegerToIntArray(onePlusN0Inv, onePlusN0InvArray, 0, numLength);
         RPair rPair = getRPair(N0sq, numLength);
         
         DirectBuffers directBuffers = DIRECT_BUFFERS.get();
@@ -355,7 +392,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         }
         
         boolean ok = nativeComputeDecProofTupleDirect(nativeHandle, kArray, n0Array, n0sqArray,
-                rPair.r, rPair.r2,
+                kInvArray, onePlusN0InvArray, rPair.r, rPair.r2,
                 negAlphasBuffer, betasBuffer, rsBuffer,
                 resultsBuffer, numLength, kappa);
         if (!ok) {
@@ -373,7 +410,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
             
             int[] resultsArray = buffers.ensureResults(kappa * numLength);
             nativeComputeDecProofTuple(nativeHandle, kArray, n0Array, n0sqArray,
-                    rPair.r, rPair.r2,
+                    kInvArray, onePlusN0InvArray, rPair.r, rPair.r2,
                     negAlphasArray, betasArray, rsArray,
                     resultsArray, numLength, kappa);
             
@@ -395,7 +432,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         if (!initialized) {
             BigInteger[] results = new BigInteger[bases.length];
             for (int i = 0; i < bases.length; i++) {
-                results[i] = bases[i].modPow(exps[i], mod);
+                results[i] = BigIntegerUtils.powSigned(bases[i], exps[i], mod);
             }
             return results;
         }
@@ -405,7 +442,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         int numLength = getNumLength(mod);
         if (mod.bitLength() > BIGINT_BITS) {
             for (int i = 0; i < kappa; i++) {
-                results[i] = bases[i].modPow(exps[i], mod);
+                results[i] = BigIntegerUtils.powSigned(bases[i], exps[i], mod);
             }
             return results;
         }
@@ -416,23 +453,45 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         java.nio.ByteBuffer expsBuffer = directBuffers.ensureExps(kappa * numLength);
         java.nio.ByteBuffer modsBuffer = directBuffers.ensureMods(kappa * numLength);
         java.nio.ByteBuffer resultsBuffer = directBuffers.ensureResults(kappa * numLength);
+        java.nio.ByteBuffer baseInvsBuffer = directBuffers.ensureBaseInvs(kappa * numLength);
         java.nio.IntBuffer basesIntBuffer = basesBuffer.asIntBuffer();
         java.nio.IntBuffer expsIntBuffer = expsBuffer.asIntBuffer();
         java.nio.IntBuffer modsIntBuffer = modsBuffer.asIntBuffer();
+        java.nio.IntBuffer baseInvsIntBuffer = baseInvsBuffer.asIntBuffer();
+        boolean hasNegativeExp = false;
         for (int i = 0; i < kappa; i++) {
             int offset = i * numLength;
             writeBigIntegerToIntBuffer(bases[i], basesIntBuffer, offset, numLength);
             writeBigIntegerToIntBuffer(exps[i], expsIntBuffer, offset, numLength);
             writeBigIntegerToIntBuffer(mod, modsIntBuffer, offset, numLength);
+            if (exps[i].signum() < 0) {
+                hasNegativeExp = true;
+                try {
+                    BigInteger baseInv = bases[i].modInverse(mod);
+                    writeBigIntegerToIntBuffer(baseInv, baseInvsIntBuffer, offset, numLength);
+                } catch (ArithmeticException e) {
+                    for (int j = 0; j < kappa; j++) {
+                        results[j] = BigIntegerUtils.powSigned(bases[j], exps[j], mod);
+                    }
+                    return results;
+                }
+            }
         }
         
-        boolean ok = nativeBatchModPowDifferentExpDirect(nativeHandle, basesBuffer, expsBuffer, modsBuffer,
-                rPair.r, rPair.r2, resultsBuffer, numLength, kappa);
+        boolean ok;
+        if (hasNegativeExp) {
+            ok = nativeBatchModPowDifferentExpSignedDirect(nativeHandle, basesBuffer, baseInvsBuffer, expsBuffer, modsBuffer,
+                    rPair.r, rPair.r2, resultsBuffer, numLength, kappa);
+        } else {
+            ok = nativeBatchModPowDifferentExpDirect(nativeHandle, basesBuffer, expsBuffer, modsBuffer,
+                    rPair.r, rPair.r2, resultsBuffer, numLength, kappa);
+        }
         if (!ok) {
             BatchBuffers buffers = BATCH_BUFFERS.get();
             int[] basesArray = buffers.ensureBases(kappa * numLength);
             int[] expsArray = buffers.ensureExps(kappa * numLength);
             int[] modsArray = buffers.ensureMods(kappa * numLength);
+            int[] baseInvsArray = buffers.ensureBaseInvs(kappa * numLength);
             int[] modArray = buffers.ensureMod(numLength);
             writeBigIntegerToIntArray(mod, modArray, 0, numLength);
             
@@ -440,11 +499,20 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
                 writeBigIntegerToIntArray(bases[i], basesArray, i * numLength, numLength);
                 writeBigIntegerToIntArray(exps[i], expsArray, i * numLength, numLength);
                 System.arraycopy(modArray, 0, modsArray, i * numLength, numLength);
+                if (exps[i].signum() < 0) {
+                    BigInteger baseInv = bases[i].modInverse(mod);
+                    writeBigIntegerToIntArray(baseInv, baseInvsArray, i * numLength, numLength);
+                }
             }
             
             int[] resultsArray = buffers.ensureResults(kappa * numLength);
-            nativeBatchModPowDifferentExp(nativeHandle, basesArray, expsArray, modsArray,
-                    rPair.r, rPair.r2, resultsArray, numLength, kappa);
+            if (hasNegativeExp) {
+                nativeBatchModPowDifferentExpSigned(nativeHandle, basesArray, baseInvsArray, expsArray, modsArray,
+                        rPair.r, rPair.r2, resultsArray, numLength, kappa);
+            } else {
+                nativeBatchModPowDifferentExp(nativeHandle, basesArray, expsArray, modsArray,
+                        rPair.r, rPair.r2, resultsArray, numLength, kappa);
+            }
             
             for (int i = 0; i < kappa; i++) {
                 results[i] = intArrayToBigInteger(resultsArray, i * numLength, numLength);
@@ -473,12 +541,12 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
             java.util.stream.IntStream.range(0, kappa)
                 .parallel()
                 .forEach(i -> {
-                    BigInteger Aj = C.modPow(alphas[i], N0sq)
-                            .multiply(onePlusN0.modPow(betasForN0[i], N0sq))
+                    BigInteger Aj = BigIntegerUtils.powSigned(C, alphas[i], N0sq)
+                            .multiply(BigIntegerUtils.powSigned(onePlusN0, betasForN0[i], N0sq))
                             .multiply(rs[i].modPow(N0, N0sq))
                             .mod(N0sq);
                     
-                    BigInteger Bj = onePlusN1.modPow(betasForN1[i], N1sq)
+                    BigInteger Bj = BigIntegerUtils.powSigned(onePlusN1, betasForN1[i], N1sq)
                             .multiply(ss[i].modPow(N1, N1sq))
                             .mod(N1sq);
                     
@@ -498,12 +566,12 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
             java.util.stream.IntStream.range(0, kappa)
                 .parallel()
                 .forEach(i -> {
-                    BigInteger Aj = C.modPow(alphas[i], N0sq)
-                            .multiply(onePlusN0.modPow(betasForN0[i], N0sq))
+                    BigInteger Aj = BigIntegerUtils.powSigned(C, alphas[i], N0sq)
+                            .multiply(BigIntegerUtils.powSigned(onePlusN0, betasForN0[i], N0sq))
                             .multiply(rs[i].modPow(N0, N0sq))
                             .mod(N0sq);
                     
-                    BigInteger Bj = onePlusN1.modPow(betasForN1[i], N1sq)
+                    BigInteger Bj = BigIntegerUtils.powSigned(onePlusN1, betasForN1[i], N1sq)
                             .multiply(ss[i].modPow(N1, N1sq))
                             .mod(N1sq);
                     
@@ -519,11 +587,22 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         int[] n0sqArray = singleBuffers.ensureN0sq(numLength);
         int[] n1Array = singleBuffers.ensureN1(numLength);
         int[] n1sqArray = singleBuffers.ensureN1sq(numLength);
+        int[] cInvArray = singleBuffers.ensureCInv(numLength);
+        int[] onePlusN0InvArray = singleBuffers.ensureOnePlusN0Inv(numLength);
+        int[] onePlusN1InvArray = singleBuffers.ensureOnePlusN1Inv(numLength);
+        BigInteger onePlusN0 = BigInteger.ONE.add(N0);
+        BigInteger onePlusN1 = BigInteger.ONE.add(N1);
+        BigInteger cInv = C.modInverse(N0sq);
+        BigInteger onePlusN0Inv = onePlusN0.modInverse(N0sq);
+        BigInteger onePlusN1Inv = onePlusN1.modInverse(N1sq);
         writeBigIntegerToIntArray(C, cArray, 0, numLength);
         writeBigIntegerToIntArray(N0, n0Array, 0, numLength);
         writeBigIntegerToIntArray(N0sq, n0sqArray, 0, numLength);
         writeBigIntegerToIntArray(N1, n1Array, 0, numLength);
         writeBigIntegerToIntArray(N1sq, n1sqArray, 0, numLength);
+        writeBigIntegerToIntArray(cInv, cInvArray, 0, numLength);
+        writeBigIntegerToIntArray(onePlusN0Inv, onePlusN0InvArray, 0, numLength);
+        writeBigIntegerToIntArray(onePlusN1Inv, onePlusN1InvArray, 0, numLength);
         RPair rN0Pair = getRPair(N0sq, numLength);
         RPair rN1Pair = getRPair(N1sq, numLength);
         
@@ -551,6 +630,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         }
         
         boolean ok = nativeComputeAffGProofTupleDirect(nativeHandle, cArray, n0Array, n0sqArray, n1Array, n1sqArray,
+                cInvArray, onePlusN0InvArray, onePlusN1InvArray,
                 rN0Pair.r, rN0Pair.r2, rN1Pair.r, rN1Pair.r2,
                 alphasBuffer, betasForN0Buffer, betasForN1Buffer, rsBuffer, ssBuffer,
                 ajBuffer, bjBuffer, numLength, kappa);
@@ -574,6 +654,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
             int[] ajArray = buffers.ensureAj(kappa * numLength);
             int[] bjArray = buffers.ensureBj(kappa * numLength);
             nativeComputeAffGProofTuple(nativeHandle, cArray, n0Array, n0sqArray, n1Array, n1sqArray,
+                    cInvArray, onePlusN0InvArray, onePlusN1InvArray,
                     rN0Pair.r, rN0Pair.r2, rN1Pair.r, rN1Pair.r2,
                     alphasArray, betasForN0Array, betasForN1Array, rsArray, ssArray,
                     ajArray, bjArray, numLength, kappa);
@@ -642,7 +723,8 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     }
 
     private void writeBigIntegerToIntArray(BigInteger value, int[] dest, int offset, int numLength) {
-        java.util.Arrays.fill(dest, offset, offset + numLength, 0);
+        int fill = value.signum() < 0 ? 0xFFFFFFFF : 0;
+        java.util.Arrays.fill(dest, offset, offset + numLength, fill);
         
         // Get bytes in big-endian order
         byte[] bytes = value.toByteArray();
@@ -659,8 +741,10 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         while (byteIndex >= start && intIndex < numLength) {
             byte b = bytes[byteIndex];
             
-            // Set the byte in the int array (little-endian)
-            dest[offset + intIndex] |= ((b & 0xFF) << bitOffset);
+            int current = dest[offset + intIndex];
+            int mask = ~(0xFF << bitOffset);
+            current = (current & mask) | ((b & 0xFF) << bitOffset);
+            dest[offset + intIndex] = current;
             
             // Move to the next byte
             bitOffset += 8;
@@ -679,8 +763,9 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     }
 
     private void writeBigIntegerToIntBuffer(BigInteger value, java.nio.IntBuffer intBuffer, int offset, int numLength) {
+        int fill = value.signum() < 0 ? 0xFFFFFFFF : 0;
         for (int i = 0; i < numLength; i++) {
-            intBuffer.put(offset + i, 0);
+            intBuffer.put(offset + i, fill);
         }
         
         byte[] bytes = value.toByteArray();
@@ -691,7 +776,8 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         
         while (byteIndex >= start && intIndex < numLength) {
             int current = intBuffer.get(offset + intIndex);
-            current |= ((bytes[byteIndex] & 0xFF) << bitOffset);
+            int mask = ~(0xFF << bitOffset);
+            current = (current & mask) | ((bytes[byteIndex] & 0xFF) << bitOffset);
             intBuffer.put(offset + intIndex, current);
             
             bitOffset += 8;
@@ -794,12 +880,12 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         BigInteger onePlusN1 = BigInteger.ONE.add(N1);
         
         for (int i = 0; i < kappa; i++) {
-            BigInteger Aj = C.modPow(alphas[i], N0sq)
-                    .multiply(onePlusN0.modPow(betas[i], N0sq))
+            BigInteger Aj = BigIntegerUtils.powSigned(C, alphas[i], N0sq)
+                    .multiply(BigIntegerUtils.powSigned(onePlusN0, betas[i], N0sq))
                     .multiply(rs[i].modPow(N0, N0sq))
                     .mod(N0sq);
             
-            BigInteger Bj = onePlusN1.modPow(betas[i], N1sq)
+            BigInteger Bj = BigIntegerUtils.powSigned(onePlusN1, betas[i], N1sq)
                     .multiply(ss[i].modPow(N1, N1sq))
                     .mod(N1sq);
             
@@ -818,22 +904,26 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     private native String nativeGetDeviceName(long handle);
     private native void nativeModPow(long handle, int[] bases, int[] exps, int[] mods, int[] r, int[] r2, int[] results, int numLength, int count);
     private native boolean nativeModPowDirect(long handle, java.nio.ByteBuffer bases, java.nio.ByteBuffer exps, java.nio.ByteBuffer mods, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
+    private native void nativeModPowSigned(long handle, int[] bases, int[] baseInvs, int[] exps, int[] mods, int[] r, int[] r2, int[] results, int numLength, int count);
+    private native boolean nativeModPowSignedDirect(long handle, java.nio.ByteBuffer bases, java.nio.ByteBuffer baseInvs, java.nio.ByteBuffer exps, java.nio.ByteBuffer mods, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
     private native void nativeBatchModPow(long handle, int[] bases, int[] exp, int[] mod, int[] r, int[] r2, int[] results, int numLength, int count);
     private native boolean nativeBatchModPowDirect(long handle, java.nio.ByteBuffer bases, java.nio.ByteBuffer exp, java.nio.ByteBuffer mod, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
     private native void nativeComputeAffGProofTuple(long handle, int[] C, int[] N0, int[] N0sq, int[] N1, int[] N1sq,
+            int[] C_inv, int[] onePlusN0_inv, int[] onePlusN1_inv,
             int[] rN0, int[] r2N0, int[] rN1, int[] r2N1,
             int[] alphas, int[] betasForN0, int[] betasForN1, int[] rs, int[] ss,
             int[] Aj, int[] Bj, int numLength, int kappa);
     private native boolean nativeComputeAffGProofTupleDirect(long handle, int[] C, int[] N0, int[] N0sq, int[] N1, int[] N1sq,
+            int[] C_inv, int[] onePlusN0_inv, int[] onePlusN1_inv,
             int[] rN0, int[] r2N0, int[] rN1, int[] r2N1,
             java.nio.ByteBuffer alphas, java.nio.ByteBuffer betasForN0, java.nio.ByteBuffer betasForN1, java.nio.ByteBuffer rs, java.nio.ByteBuffer ss,
             java.nio.ByteBuffer Aj, java.nio.ByteBuffer Bj, int numLength, int kappa);
     private native void nativeComputeDecProofTuple(long handle, int[] K, int[] N0, int[] N0sq,
-            int[] rN0, int[] r2N0,
+            int[] K_inv, int[] onePlusN0_inv, int[] rN0, int[] r2N0,
             int[] negAlphas, int[] betas, int[] rs,
             int[] A, int numLength, int kappa);
     private native boolean nativeComputeDecProofTupleDirect(long handle, int[] K, int[] N0, int[] N0sq,
-            int[] rN0, int[] r2N0,
+            int[] K_inv, int[] onePlusN0_inv, int[] rN0, int[] r2N0,
             java.nio.ByteBuffer negAlphas, java.nio.ByteBuffer betas, java.nio.ByteBuffer rs,
             java.nio.ByteBuffer A, int numLength, int kappa);
     private native void nativeModInverse(long handle, int[] values, int[] mods, int[] r, int[] r2, int[] results, int numLength, int count);
@@ -842,9 +932,12 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
     private native boolean nativeMultiplyDirect(long handle, java.nio.ByteBuffer a, java.nio.ByteBuffer b, java.nio.ByteBuffer results, int numLength, int count);
     private native void nativeBatchModPowDifferentExp(long handle, int[] bases, int[] exps, int[] mods, int[] r, int[] r2, int[] results, int numLength, int count);
     private native boolean nativeBatchModPowDifferentExpDirect(long handle, java.nio.ByteBuffer bases, java.nio.ByteBuffer exps, java.nio.ByteBuffer mods, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
+    private native void nativeBatchModPowDifferentExpSigned(long handle, int[] bases, int[] baseInvs, int[] exps, int[] mods, int[] r, int[] r2, int[] results, int numLength, int count);
+    private native boolean nativeBatchModPowDifferentExpSignedDirect(long handle, java.nio.ByteBuffer bases, java.nio.ByteBuffer baseInvs, java.nio.ByteBuffer exps, java.nio.ByteBuffer mods, int[] r, int[] r2, java.nio.ByteBuffer results, int numLength, int count);
 
     private static final class BatchBuffers {
         private int[] bases;
+        private int[] baseInvs;
         private int[] exps;
         private int[] mods;
         private int[] results;
@@ -861,6 +954,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         private int[] bj;
 
         int[] ensureBases(int size) { bases = ensureCapacity(bases, size); return bases; }
+        int[] ensureBaseInvs(int size) { baseInvs = ensureCapacity(baseInvs, size); return baseInvs; }
         int[] ensureExps(int size) { exps = ensureCapacity(exps, size); return exps; }
         int[] ensureMods(int size) { mods = ensureCapacity(mods, size); return mods; }
         int[] ensureResults(int size) { results = ensureCapacity(results, size); return results; }
@@ -886,32 +980,43 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
 
     private static final class SingleBuffers {
         private int[] bases;
+        private int[] baseInvs;
         private int[] exps;
         private int[] mods;
         private int[] values;
         private int[] results;
         private int[] c;
+        private int[] cInv;
         private int[] k;
+        private int[] kInv;
         private int[] n0;
         private int[] n0sq;
+        private int[] onePlusN0Inv;
         private int[] n1;
         private int[] n1sq;
+        private int[] onePlusN1Inv;
 
         int[] ensureBases(int size) { bases = ensureExact(bases, size); return bases; }
+        int[] ensureBaseInvs(int size) { baseInvs = ensureExact(baseInvs, size); return baseInvs; }
         int[] ensureExps(int size) { exps = ensureExact(exps, size); return exps; }
         int[] ensureMods(int size) { mods = ensureExact(mods, size); return mods; }
         int[] ensureValues(int size) { values = ensureExact(values, size); return values; }
         int[] ensureResults(int size) { results = ensureExact(results, size); return results; }
         int[] ensureC(int size) { c = ensureExact(c, size); return c; }
+        int[] ensureCInv(int size) { cInv = ensureExact(cInv, size); return cInv; }
         int[] ensureK(int size) { k = ensureExact(k, size); return k; }
+        int[] ensureKInv(int size) { kInv = ensureExact(kInv, size); return kInv; }
         int[] ensureN0(int size) { n0 = ensureExact(n0, size); return n0; }
         int[] ensureN0sq(int size) { n0sq = ensureExact(n0sq, size); return n0sq; }
+        int[] ensureOnePlusN0Inv(int size) { onePlusN0Inv = ensureExact(onePlusN0Inv, size); return onePlusN0Inv; }
         int[] ensureN1(int size) { n1 = ensureExact(n1, size); return n1; }
         int[] ensureN1sq(int size) { n1sq = ensureExact(n1sq, size); return n1sq; }
+        int[] ensureOnePlusN1Inv(int size) { onePlusN1Inv = ensureExact(onePlusN1Inv, size); return onePlusN1Inv; }
     }
 
     private static final class DirectBuffers {
         private java.nio.ByteBuffer bases;
+        private java.nio.ByteBuffer baseInvs;
         private java.nio.ByteBuffer exps;
         private java.nio.ByteBuffer mods;
         private java.nio.ByteBuffer values;
@@ -929,6 +1034,7 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         private java.nio.ByteBuffer decResults;
 
         java.nio.ByteBuffer ensureBases(int numLength) { bases = ensureDirect(bases, numLength); return bases; }
+        java.nio.ByteBuffer ensureBaseInvs(int numLength) { baseInvs = ensureDirect(baseInvs, numLength); return baseInvs; }
         java.nio.ByteBuffer ensureExps(int numLength) { exps = ensureDirect(exps, numLength); return exps; }
         java.nio.ByteBuffer ensureMods(int numLength) { mods = ensureDirect(mods, numLength); return mods; }
         java.nio.ByteBuffer ensureValues(int numLength) { values = ensureDirect(values, numLength); return values; }

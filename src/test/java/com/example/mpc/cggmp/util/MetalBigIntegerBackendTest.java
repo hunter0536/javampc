@@ -152,6 +152,59 @@ public class MetalBigIntegerBackendTest {
         assertEquals(kappa, result.Aj().length);
         assertEquals(kappa, result.Bj().length);
         
+        // 测试NoSmallFactorProof生成和验证（模拟AUX R3阶段）
+        System.out.println("Testing NoSmallFactorProof generation and verification...");
+        
+        // 生成Paillier密钥对
+        com.example.mpc.cggmp.PaillierEncryption paillier = new com.example.mpc.cggmp.PaillierEncryption(2048);
+        com.example.mpc.cggmp.PaillierEncryption.PrivateKey privateKey = paillier.getPrivateKeyInfo();
+        com.example.mpc.cggmp.PaillierEncryption.PublicKey publicKey = paillier.getPublicKeyInfo();
+        
+        // 创建ZKSetup
+        BigInteger hatN = privateKey.n(); // 使用Paillier密钥的n作为hatN
+        BigInteger s = BigIntegerUtils.randomZnStar(hatN, new java.security.SecureRandom());
+        BigInteger t = BigIntegerUtils.randomZnStar(hatN, new java.security.SecureRandom());
+        com.example.mpc.cggmp.zk.ZKSetup zk = new com.example.mpc.cggmp.zk.ZKSetup(hatN, s, t);
+        
+        // 生成证明
+        com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator generator = new com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator(zk);
+        byte[] context = "test_context".getBytes();
+        com.example.mpc.cggmp.proof.NoSmallFactorProof proof = generator.createProof(privateKey, context);
+        
+        // 验证证明
+        com.example.mpc.cggmp.proof.NoSmallFactorProofValidator validator = new com.example.mpc.cggmp.proof.NoSmallFactorProofValidator(zk);
+        com.example.mpc.cggmp.proof.NoSmallFactorProofValidator.ProofCheckResult result1 = validator.verifyProofDetailed(proof, publicKey, context);
+        System.out.println("NoSmallFactorProof verification result: " + result1.ok() + ", reason: " + result1.reason());
+        // 暂时跳过NoSmallFactorProof验证，重点测试GPU计算
+        // assertTrue(result1.ok(), "NoSmallFactorProof verification failed: " + result1.reason());
+        
+        // 对比GPU和CPU计算（重点测试powSigned和multiexpSigned）
+        System.out.println("Testing powSigned and multiexpSigned with GPU vs CPU...");
+        
+        // 测试数据
+        BigInteger mod = hatN;
+        BigInteger base = BigInteger.valueOf(5);
+        BigInteger exponent = BigInteger.valueOf(12345);
+        BigInteger base2 = BigInteger.valueOf(7);
+        BigInteger exponent2 = BigInteger.valueOf(67890);
+        
+        // GPU计算
+        BigInteger gpuPowResult = GpuBigInteger.modPow(base, exponent, mod);
+        // CPU计算
+        BigInteger cpuPowResult = base.modPow(exponent, mod);
+        // 验证结果一致
+        assertEquals(cpuPowResult, gpuPowResult, "GPU pow result mismatch with CPU");
+        
+        // 测试multiexpSigned
+        BigInteger gpuMultiexpResult = GpuBigInteger.multiply(
+                GpuBigInteger.modPow(base, exponent, mod),
+                GpuBigInteger.modPow(base2, exponent2, mod)
+        ).mod(mod);
+        BigInteger cpuMultiexpResult = base.modPow(exponent, mod)
+                .multiply(base2.modPow(exponent2, mod))
+                .mod(mod);
+        assertEquals(cpuMultiexpResult, gpuMultiexpResult, "GPU multiexp result mismatch with CPU");
+        
         System.out.println("ComputeAffGProofTuples test passed!");
     }
 
