@@ -2,28 +2,30 @@
 
 # 启动所有五个节点（后台运行）
 
+mkdir -p logs
+
 # 启动节点1
-nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node1 &
+nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node1 > logs/node1.out 2>&1 &
 NODE1_PID=$!
 echo "Node 1 started with PID: $NODE1_PID"
 
 # 启动节点2
-nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node2 &
+nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node2 > logs/node2.out 2>&1 &
 NODE2_PID=$!
 echo "Node 2 started with PID: $NODE2_PID"
 
 # 启动节点3
-nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node3 &
+nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node3 > logs/node3.out 2>&1 &
 NODE3_PID=$!
 echo "Node 3 started with PID: $NODE3_PID"
 
 # 启动节点4
-nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node4 &
+nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node4 > logs/node4.out 2>&1 &
 NODE4_PID=$!
 echo "Node 4 started with PID: $NODE4_PID"
 
 # 启动节点5
-nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node5 &
+nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node5 > logs/node5.out 2>&1 &
 NODE5_PID=$!
 echo "Node 5 started with PID: $NODE5_PID"
 

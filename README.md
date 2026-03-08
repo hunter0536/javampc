@@ -22,6 +22,7 @@
 - ✅ **完整的零知识证明**：实现多种零知识证明，包括 Paillier 范围证明、BiPrime 证明等
 - ✅ **预签名机制**：支持 CGGMP 预签名流程，提高签名性能
 - ✅ **MtA 协议**：实现安全的乘法到加法转换协议
+- ✅ **GPU/GMP 加速**：支持 GPU 和 GMP 本地库加速大整数运算
 
 ## 技术栈
 
@@ -58,6 +59,7 @@ mpc/
 │   │   │               │   ├── PaillierEncryption.java
 │   │   │               │   └── PedersenCommitment.java
 │   │   │               ├── common/           # 通用组件
+│   │   │               │   ├── request/      # 请求体类
 │   │   │               │   ├── response/     # 响应类
 │   │   │               │   └── util/         # 工具类
 │   │   │               ├── config/           # 配置和初始化
@@ -180,11 +182,9 @@ mpc/
 | 阶段 | 耗时 |
 |------|------|
 | Presign R1 (Commitment) | ~1秒 |
-| Presign R2 (MtA Response + Proof) | ~2.7秒 |
-| Presign R3 (Accumulate) | ~4秒 |
-| **签名总耗时** | **约 4 秒** |
-
-相比优化前（~24秒），性能提升约 **6 倍**。
+| Presign R2 (MtA Response + Proof) | ~8秒 |
+| Presign R3 (Accumulate) | ~23秒 |
+| **签名总耗时** | **约 32 秒** |
 
 ## 安装和运行
 
@@ -211,20 +211,15 @@ mpc/
 4. **运行 5 个节点**
    - 后台运行模式（推荐）：
    ```bash
-   # 节点 1
-   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node1 > node1.log 2>&1 &
-
-   # 节点 2
-   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node2 > node2.log 2>&1 &
-
-   # 节点 3
-   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node3 > node3.log 2>&1 &
-
-   # 节点 4
-   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node4 > node4.log 2>&1 &
-
-   # 节点 5
-   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node5 > node5.log 2>&1 &
+   # 使用启动脚本
+   ./start_all_nodes.sh
+   
+   # 或手动启动
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node1 > logs/node1.out 2>&1 &
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node2 > logs/node2.out 2>&1 &
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node3 > logs/node3.out 2>&1 &
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node4 > logs/node4.out 2>&1 &
+   nohup java -jar build/libs/mpc-0.0.1-SNAPSHOT.jar --spring.profiles.active=node5 > logs/node5.out 2>&1 &
    ```
 
    - 或使用前台模式（5 个终端窗口）：
@@ -312,11 +307,17 @@ curl -X GET "http://localhost:8081/api/cggmp/aux/start"
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/aux/status`
-- 参数：`taskId`（任务 ID）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| taskId | String | 是 | 任务 ID |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/aux/status?taskId=550e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/aux/status" \
+  -H "Content-Type: application/json" \
+  -d '{"taskId": "550e8400-e29b-41d4-a716-446655440000"}'
 ```
 
 **响应示例**
@@ -327,8 +328,9 @@ curl -X POST "http://localhost:8081/api/cggmp/aux/status?taskId=550e8400-e29b-41
   "data": {
     "taskId": "550e8400-e29b-41d4-a716-446655440000",
     "status": "COMPLETED",
-    "currentRound": 3,
-    "participants": [1, 2, 3, 4, 5]
+    "inProgress": false,
+    "completed": true,
+    "errorMessage": null
   },
   "success": true
 }
@@ -369,11 +371,17 @@ curl -X GET "http://localhost:8081/api/cggmp/dkg/start"
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/dkg/status`
-- 参数：`taskId`（任务 ID）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| taskId | String | 是 | 任务 ID |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/dkg/status?taskId=550e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/dkg/status" \
+  -H "Content-Type: application/json" \
+  -d '{"taskId": "550e8400-e29b-41d4-a716-446655440000"}'
 ```
 
 **响应示例**
@@ -398,11 +406,17 @@ curl -X POST "http://localhost:8081/api/cggmp/dkg/status?taskId=550e8400-e29b-41
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/dkg/public-key`
-- 参数：`taskId`（任务 ID）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| taskId | String | 是 | 任务 ID |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/dkg/public-key?taskId=550e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/dkg/public-key" \
+  -H "Content-Type: application/json" \
+  -d '{"taskId": "550e8400-e29b-41d4-a716-446655440000"}'
 ```
 
 **响应示例**
@@ -424,13 +438,21 @@ curl -X POST "http://localhost:8081/api/cggmp/dkg/public-key?taskId=550e8400-e29
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/sign/start`
-- 参数：
-  - `groupPublicKey`（聚合公钥，Hex 编码）
-  - `message`（待签名消息，Hex 编码）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| groupPublicKey | String | 是 | 聚合公钥（Hex 编码） |
+| message | String | 是 | 待签名消息（Hex 编码） |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/sign/start?groupPublicKey=04a1b2c3...&message=48656c6c6f"
+curl -X POST "http://localhost:8081/api/cggmp/sign/start" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "groupPublicKey": "04a1b2c3d4e5f6...",
+    "message": "48656c6c6f"
+  }'
 ```
 
 **响应示例**
@@ -453,11 +475,17 @@ curl -X POST "http://localhost:8081/api/cggmp/sign/start?groupPublicKey=04a1b2c3
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/sign/status`
-- 参数：`signatureTaskId`（签名任务 ID）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| signatureTaskId | String | 是 | 签名任务 ID |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/sign/status?signatureTaskId=660e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/sign/status" \
+  -H "Content-Type: application/json" \
+  -d '{"signatureTaskId": "660e8400-e29b-41d4-a716-446655440000"}'
 ```
 
 **响应示例**
@@ -484,11 +512,17 @@ curl -X POST "http://localhost:8081/api/cggmp/sign/status?signatureTaskId=660e84
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/sign/result`
-- 参数：`signatureTaskId`（签名任务 ID）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| signatureTaskId | String | 是 | 签名任务 ID |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/sign/result?signatureTaskId=660e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/sign/result" \
+  -H "Content-Type: application/json" \
+  -d '{"signatureTaskId": "660e8400-e29b-41d4-a716-446655440000"}'
 ```
 
 **响应示例**
@@ -518,11 +552,17 @@ curl -X POST "http://localhost:8081/api/cggmp/sign/result?signatureTaskId=660e84
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/refresh/start`
-- 参数：`groupPublicKey`（聚合公钥，Hex 编码）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| groupPublicKey | String | 是 | 聚合公钥（Hex 编码） |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/refresh/start?groupPublicKey=04a1b2c3..."
+curl -X POST "http://localhost:8081/api/cggmp/refresh/start" \
+  -H "Content-Type: application/json" \
+  -d '{"groupPublicKey": "04a1b2c3d4e5f6..."}'
 ```
 
 **响应示例**
@@ -544,11 +584,34 @@ curl -X POST "http://localhost:8081/api/cggmp/refresh/start?groupPublicKey=04a1b
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/refresh/status`
-- 参数：`taskId`（任务 ID）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| taskId | String | 是 | 任务 ID |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/refresh/status?taskId=770e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/cggmp/refresh/status" \
+  -H "Content-Type: application/json" \
+  -d '{"taskId": "770e8400-e29b-41d4-a716-446655440000"}'
+```
+
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "taskId": "770e8400-e29b-41d4-a716-446655440000",
+    "status": "COMPLETED",
+    "inProgress": false,
+    "completed": true,
+    "groupPublicKey": "04a1b2c3...",
+    "errorMessage": null
+  },
+  "success": true
+}
 ```
 
 ---
@@ -591,20 +654,44 @@ curl -X GET "http://localhost:8081/api/cggmp/proof/self-check"
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/complaints`
-- 参数（均为可选）：
-  - `taskId`：任务 ID
-  - `reason`：投诉原因
-  - `reasonLike`：投诉原因模糊匹配
-  - `senderId`：投诉发送方节点 ID
-  - `offenderId`：被投诉节点 ID
-  - `fromTs`：起始时间戳
-  - `toTs`：结束时间戳
-  - `limit`：返回记录数限制（默认 50）
-  - `offset`：偏移量（默认 0）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| taskId | String | 否 | 任务 ID |
+| reason | String | 否 | 投诉原因 |
+| reasonLike | String | 否 | 投诉原因模糊匹配 |
+| senderId | Integer | 否 | 投诉发送方节点 ID |
+| offenderId | Integer | 否 | 被投诉节点 ID |
+| fromTs | Long | 否 | 起始时间戳 |
+| toTs | Long | 否 | 结束时间戳 |
+| limit | Integer | 否 | 返回记录数限制（默认 50） |
+| offset | Integer | 否 | 偏移量（默认 0） |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/complaints?limit=10"
+curl -X POST "http://localhost:8081/api/cggmp/complaints" \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 10}'
+```
+
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": [
+    {
+      "ts": 1709800000000,
+      "taskId": "xxx-xxx-xxx",
+      "senderId": 1,
+      "offenderId": 2,
+      "reason": "Invalid proof",
+      "evidence": "{...}"
+    }
+  ],
+  "success": true
+}
 ```
 
 #### 6.2 导出投诉记录（JSONL）
@@ -612,10 +699,14 @@ curl -X POST "http://localhost:8081/api/cggmp/complaints?limit=10"
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/complaints/export`
+- 请求体：JSON 格式（参数同查询投诉记录）
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/complaints/export" -o complaints.jsonl
+curl -X POST "http://localhost:8081/api/cggmp/complaints/export" \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 100}' \
+  -o complaints.jsonl
 ```
 
 #### 6.3 导出投诉记录（CSV）
@@ -623,10 +714,14 @@ curl -X POST "http://localhost:8081/api/cggmp/complaints/export" -o complaints.j
 **请求**
 - 方法：`POST`
 - 路径：`/api/cggmp/complaints/export.csv`
+- 请求体：JSON 格式（参数同查询投诉记录）
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/cggmp/complaints/export.csv" -o complaints.csv
+curl -X POST "http://localhost:8081/api/cggmp/complaints/export.csv" \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 100}' \
+  -o complaints.csv
 ```
 
 ---
@@ -644,16 +739,52 @@ curl -X POST "http://localhost:8081/api/cggmp/complaints/export.csv" -o complain
 curl -X GET "http://localhost:8081/api/gennaro/dkg/start"
 ```
 
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "taskId": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "DKG process started"
+  },
+  "success": true
+}
+```
+
 ### 2. 查询 DKG 任务状态
 
 **请求**
 - 方法：`POST`
 - 路径：`/api/gennaro/dkg/status`
-- 参数：`taskId`（任务 ID）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| taskId | String | 是 | 任务 ID |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/gennaro/dkg/status?taskId=550e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/gennaro/dkg/status" \
+  -H "Content-Type: application/json" \
+  -d '{"taskId": "550e8400-e29b-41d4-a716-446655440000"}'
+```
+
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "taskId": "550e8400-e29b-41d4-a716-446655440000",
+    "status": "COMPLETED",
+    "inProgress": false,
+    "completed": true,
+    "groupPublicKey": "04a1b2c3...",
+    "errorMessage": null
+  },
+  "success": true
+}
 ```
 
 ### 3. 获取聚合公钥
@@ -661,22 +792,34 @@ curl -X POST "http://localhost:8081/api/gennaro/dkg/status?taskId=550e8400-e29b-
 **请求**
 - 方法：`POST`
 - 路径：`/api/gennaro/dkg/public-key`
-- 参数：`taskId`（任务 ID）
+- 请求体：JSON 格式
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| taskId | String | 是 | 任务 ID |
 
 **示例**
 ```bash
-curl -X POST "http://localhost:8081/api/gennaro/dkg/public-key?taskId=550e8400-e29b-41d4-a716-446655440000"
+curl -X POST "http://localhost:8081/api/gennaro/dkg/public-key" \
+  -H "Content-Type: application/json" \
+  -d '{"taskId": "550e8400-e29b-41d4-a716-446655440000"}'
 ```
 
----
-
-
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": "04a1b2c3d4e5f6...",
+  "success": true
+}
+```
 
 ---
 
 ## API 汇总表
 
-| 模块 | 方法 | 路径 | 参数 | 说明 |
+| 模块 | 方法 | 路径 | 请求体参数 | 说明 |
 |------|------|------|------|------|
 | **CGGMP AUX** | GET | `/api/cggmp/aux/start` | - | 启动 AUX 任务 |
 | | POST | `/api/cggmp/aux/status` | taskId | 查询 AUX 状态 |
@@ -689,13 +832,12 @@ curl -X POST "http://localhost:8081/api/gennaro/dkg/public-key?taskId=550e8400-e
 | **CGGMP Refresh** | POST | `/api/cggmp/refresh/start` | groupPublicKey | 启动刷新任务 |
 | | POST | `/api/cggmp/refresh/status` | taskId | 查询刷新状态 |
 | **诊断** | GET | `/api/cggmp/proof/self-check` | - | 零知识证明自检 |
-| **投诉** | POST | `/api/cggmp/complaints` | 多个可选参数 | 查询投诉记录 |
-| | POST | `/api/cggmp/complaints/export` | 多个可选参数 | 导出 JSONL |
-| | POST | `/api/cggmp/complaints/export.csv` | 多个可选参数 | 导出 CSV |
+| **投诉** | POST | `/api/cggmp/complaints` | taskId, reason, reasonLike, senderId, offenderId, fromTs, toTs, limit, offset | 查询投诉记录 |
+| | POST | `/api/cggmp/complaints/export` | 同上 | 导出 JSONL |
+| | POST | `/api/cggmp/complaints/export.csv` | 同上 | 导出 CSV |
 | **Gennaro DKG** | GET | `/api/gennaro/dkg/start` | - | 启动 DKG 任务 |
 | | POST | `/api/gennaro/dkg/status` | taskId | 查询 DKG 状态 |
 | | POST | `/api/gennaro/dkg/public-key` | taskId | 获取聚合公钥 |
-
 
 ---
 
@@ -786,6 +928,12 @@ app:
       enabled: true
     legacy:
       enabled: true
+  cggmp:
+    aux:
+      gpu:
+        enabled: true  # 启用 GPU 加速
+      gmp:
+        enabled: true  # 启用 GMP 加速
 ```
 
 ## 扩展和定制

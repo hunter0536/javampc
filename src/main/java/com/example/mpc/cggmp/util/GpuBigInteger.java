@@ -264,8 +264,8 @@ public final class GpuBigInteger {
         BigInteger N0 = N0sq.sqrt();
         BigInteger N1 = N1sq.sqrt();
         
-        // 第一层：GPU加速
-        if (GPU_AVAILABLE.get() && backend != null && kappa >= 16) {
+        // 第一层：GPU加速 (阈值100)
+        if (GPU_AVAILABLE.get() && backend != null && kappa >= 100) {
             BigInteger[] results = backend.computeAffGProofTuple(C, N0, N0sq, N1, N1sq, alphas, betasForN0, betasForN1, rs, ss);
             BigInteger[] Aj = new BigInteger[kappa];
             BigInteger[] Bj = new BigInteger[kappa];
@@ -317,8 +317,8 @@ public final class GpuBigInteger {
             BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs) {
         int kappa = alphas.length;
         
-        // 第一层：GPU加速
-        if (GPU_AVAILABLE.get() && backend != null && kappa >= 16) {
+        // 第一层：GPU加速 (阈值100)
+        if (GPU_AVAILABLE.get() && backend != null && kappa >= 100) {
             BigInteger[] results = backend.computeDecProofTuple(K, N0, N0sq, alphas, betas, rs);
             BigInteger[] A = new BigInteger[kappa];
             for (int i = 0; i < kappa; i++) {
