@@ -67,8 +67,8 @@ app:
       autoCheckIntervalSeconds: 60 # 自动 AUX 轮询间隔（秒）
     gpu:
       enabled: true # 启用 GPU 加速
-    jni:
-      enabled: true # 启用 JNI 加速
+    gmp:
+      enabled: true # 启用 GMP 加速
 
 # MPC 全局参数
 mpc:
