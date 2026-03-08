@@ -16,6 +16,8 @@ public final class GpuBigInteger {
     private static GpuBackend backend;
     private static String preferredBackend;
     
+    private static final int GPU_BATCH_THRESHOLD = 100;
+    
     public interface GpuBackend {
         BigInteger modPow(BigInteger base, BigInteger exp, BigInteger mod);
         BigInteger modInverse(BigInteger val, BigInteger mod);
@@ -208,7 +210,7 @@ public final class GpuBigInteger {
     
     public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
         // 第一层：GPU加速（仅当批量大小足够大时）
-        if (GPU_AVAILABLE.get() && backend != null && bases.length >= 16) {
+        if (GPU_AVAILABLE.get() && backend != null && bases.length >= GPU_BATCH_THRESHOLD) {
             try {
                 return backend.batchModPow(bases, exp, mod);
             } catch (Exception e) {
@@ -234,8 +236,8 @@ public final class GpuBigInteger {
         if (bases.length != exps.length) {
             throw new IllegalArgumentException("bases and exps must have same length");
         }
-        // 第一层：GPU加速（仅当批量大小足够大时）
-        if (GPU_AVAILABLE.get() && backend != null && bases.length >= 16) {
+        
+        if (GPU_AVAILABLE.get() && backend != null && bases.length >= GPU_BATCH_THRESHOLD) {
             try {
                 return backend.batchModPowDifferentExp(bases, exps, mod);
             } catch (Exception e) {
@@ -264,8 +266,7 @@ public final class GpuBigInteger {
         BigInteger N0 = N0sq.sqrt();
         BigInteger N1 = N1sq.sqrt();
         
-        // 第一层：GPU加速 (阈值100)
-        if (GPU_AVAILABLE.get() && backend != null && kappa >= 100) {
+        if (GPU_AVAILABLE.get() && backend != null && kappa >= GPU_BATCH_THRESHOLD) {
             BigInteger[] results = backend.computeAffGProofTuple(C, N0, N0sq, N1, N1sq, alphas, betasForN0, betasForN1, rs, ss);
             BigInteger[] Aj = new BigInteger[kappa];
             BigInteger[] Bj = new BigInteger[kappa];
@@ -317,8 +318,7 @@ public final class GpuBigInteger {
             BigInteger[] alphas, BigInteger[] betas, BigInteger[] rs) {
         int kappa = alphas.length;
         
-        // 第一层：GPU加速 (阈值100)
-        if (GPU_AVAILABLE.get() && backend != null && kappa >= 100) {
+        if (GPU_AVAILABLE.get() && backend != null && kappa >= GPU_BATCH_THRESHOLD) {
             BigInteger[] results = backend.computeDecProofTuple(K, N0, N0sq, alphas, betas, rs);
             BigInteger[] A = new BigInteger[kappa];
             for (int i = 0; i < kappa; i++) {
