@@ -14,7 +14,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
 NATIVE_SRC="$PROJECT_ROOT/src/main/native"
-NATIVE_LIB="$PROJECT_ROOT/src/main/resources/native/cpu"
+NATIVE_LIB="$PROJECT_ROOT/src/main/resources/native/gmp"
 GMP_BUILD="$PROJECT_ROOT/build/gmp"
 
 STATIC_BUILD=false
@@ -85,7 +85,7 @@ if [ "$STATIC_BUILD" = true ]; then
     
     echo "Compiling $LIB_NAME with static GMP..."
     gcc $FLAGS $INCLUDES -I"$GMP_INCLUDE" \
-        "$NATIVE_SRC/mpc_gmp.c" \
+        "$NATIVE_LIB/mpc_gmp.c" \
         "$GMP_LIB/libgmp.a" \
         -o "$NATIVE_LIB/$LIB_NAME"
     
@@ -119,7 +119,7 @@ else
     
     echo "Compiling $LIB_NAME with dynamic GMP..."
     gcc $FLAGS $INCLUDES -I"$GMP_INCLUDE" -L"$GMP_LIB" \
-        "$NATIVE_SRC/mpc_gmp.c" \
+        "$NATIVE_LIB/mpc_gmp.c" \
         -lgmp -o "$NATIVE_LIB/$LIB_NAME"
 fi
 

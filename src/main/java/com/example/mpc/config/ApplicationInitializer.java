@@ -54,8 +54,8 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Value("${app.cggmp.gpu.enabled:true}")
     private boolean gpuEnabled;
 
-    @Value("${app.cggmp.jni.enabled:true}")
-    private boolean jniEnabled;
+    @Value("${app.cggmp.gmp.enabled:true}")
+    private boolean gmpEnabled;
 
     static {
         logger.info("============================================================");
@@ -76,9 +76,9 @@ public class ApplicationInitializer implements CommandLineRunner {
         System.setProperty("app.cggmp.gpu.enabled", String.valueOf(gpuEnabled));
         logger.info("Set system property app.cggmp.gpu.enabled={}", gpuEnabled);
         
-        // 设置JNI启用状态为系统属性，供GpuBigInteger使用
-        System.setProperty("app.cggmp.jni.enabled", String.valueOf(jniEnabled));
-        logger.info("Set system property app.cggmp.jni.enabled={}", jniEnabled);
+        // 设置GMP启用状态为系统属性，供GpuBigInteger使用
+        System.setProperty("app.cggmp.gmp.enabled", String.valueOf(gmpEnabled));
+        logger.info("Set system property app.cggmp.gmp.enabled={}", gmpEnabled);
         
         // 延迟加载GpuBigInteger，确保系统属性已设置
         try {

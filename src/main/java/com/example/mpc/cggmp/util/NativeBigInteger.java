@@ -20,9 +20,9 @@ public class NativeBigInteger {
             String libName = System.mapLibraryName("mpc_gmp");
             logger.info("Attempting to load native library: {}", libName);
             
-            InputStream libStream = NativeBigInteger.class.getResourceAsStream("/native/cpu/" + libName);
+            InputStream libStream = NativeBigInteger.class.getResourceAsStream("/native/gmp/" + libName);
             if (libStream != null) {
-                logger.info("Native library found in classpath: /native/cpu/{}", libName);
+                logger.info("Native library found in classpath: /native/gmp/{}", libName);
                 Path tempDir = Files.createTempDirectory("mpc_native");
                 Path tempLib = tempDir.resolve(libName);
                 Files.copy(libStream, tempLib, StandardCopyOption.REPLACE_EXISTING);

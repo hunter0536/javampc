@@ -34,11 +34,7 @@ public final class BigIntegerUtils {
     
     public static BigInteger powSigned(NativeBigInteger.NativeModPowContext ctx, BigInteger base, BigInteger exp) {
         if (ctx != null && NativeBigInteger.isNativeAvailable()) {
-            if (exp.signum() >= 0) {
-                return ctx.modPow(base, exp);
-            }
-            BigInteger inv = NativeBigInteger.modInverse(base, ctx.getMod());
-            return ctx.modPow(inv, exp.negate());
+            return ctx.modPow(base, exp);
         }
         if (exp.signum() >= 0) {
             return base.modPow(exp, BigInteger.ONE);

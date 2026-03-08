@@ -630,8 +630,8 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         }
         
         boolean ok = nativeComputeAffGProofTupleDirect(nativeHandle, cArray, n0Array, n0sqArray, n1Array, n1sqArray,
-                cInvArray, onePlusN0InvArray, onePlusN1InvArray,
                 rN0Pair.r, rN0Pair.r2, rN1Pair.r, rN1Pair.r2,
+                cInvArray, onePlusN0InvArray, onePlusN1InvArray,
                 alphasBuffer, betasForN0Buffer, betasForN1Buffer, rsBuffer, ssBuffer,
                 ajBuffer, bjBuffer, numLength, kappa);
         
@@ -731,6 +731,9 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         
         // Skip the sign byte if present
         int start = (bytes.length > 0 && bytes[0] == 0) ? 1 : 0;
+        if (value.signum() < 0 && bytes.length > 0 && bytes[0] == (byte)0xFF) {
+            start = 1;
+        }
         
         // Convert to little-endian int array
         int byteIndex = bytes.length - 1;
@@ -770,6 +773,9 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
         
         byte[] bytes = value.toByteArray();
         int start = (bytes.length > 0 && bytes[0] == 0) ? 1 : 0;
+        if (value.signum() < 0 && bytes.length > 0 && bytes[0] == (byte)0xFF) {
+            start = 1;
+        }
         int byteIndex = bytes.length - 1;
         int intIndex = 0;
         int bitOffset = 0;
@@ -914,8 +920,8 @@ public class MetalBigIntegerBackend implements GpuBigInteger.GpuBackend {
             int[] alphas, int[] betasForN0, int[] betasForN1, int[] rs, int[] ss,
             int[] Aj, int[] Bj, int numLength, int kappa);
     private native boolean nativeComputeAffGProofTupleDirect(long handle, int[] C, int[] N0, int[] N0sq, int[] N1, int[] N1sq,
-            int[] C_inv, int[] onePlusN0_inv, int[] onePlusN1_inv,
             int[] rN0, int[] r2N0, int[] rN1, int[] r2N1,
+            int[] C_inv, int[] onePlusN0_inv, int[] onePlusN1_inv,
             java.nio.ByteBuffer alphas, java.nio.ByteBuffer betasForN0, java.nio.ByteBuffer betasForN1, java.nio.ByteBuffer rs, java.nio.ByteBuffer ss,
             java.nio.ByteBuffer Aj, java.nio.ByteBuffer Bj, int numLength, int kappa);
     private native void nativeComputeDecProofTuple(long handle, int[] K, int[] N0, int[] N0sq,

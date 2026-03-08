@@ -86,10 +86,10 @@ task buildNative(type: Exec) {
     description = 'Build GMP JNI native library (static linked, no runtime dependency)'
     
     workingDir projectDir
-    commandLine 'bash', 'src/main/resources/native/cpu/build_native.sh', '--static'
+    commandLine 'bash', 'src/main/resources/native/gmp/build_native.sh', '--static'
     
     onlyIf {
-        file('src/main/native/mpc_gmp.c').exists()
+        file('src/main/resources/native/gmp/mpc_gmp.c').exists()
     }
 }
 
@@ -99,10 +99,10 @@ task buildNativeDynamic(type: Exec) {
     description = 'Build GMP JNI native library (dynamic linked, requires GMP at runtime)'
     
     workingDir projectDir
-    commandLine 'bash', 'src/main/resources/native/cpu/build_native.sh', '--dynamic'
+    commandLine 'bash', 'src/main/resources/native/gmp/build_native.sh', '--dynamic'
     
     onlyIf {
-        file('src/main/native/mpc_gmp.c').exists()
+        file('src/main/resources/native/gmp/mpc_gmp.c').exists()
     }
 }
 
@@ -120,11 +120,11 @@ tasks.register('benchmarkGMP', JavaExec) {
 // 编译前自动尝试编译原生库
 tasks.named('compileJava') {
     doFirst {
-        if (file('src/main/native/mpc_gmp.c').exists()) {
+        if (file('src/main/resources/native/gmp/mpc_gmp.c').exists()) {
             try {
                 exec {
                     workingDir projectDir
-                    commandLine 'bash', 'src/main/resources/native/cpu/build_native.sh'
+                    commandLine 'bash', 'src/main/resources/native/gmp/build_native.sh'
                     ignoreExitValue = true
                 }
             } catch (Exception e) {

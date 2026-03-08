@@ -40,9 +40,9 @@ public final class GpuBigInteger {
         String gpuEnabled = System.getProperty("app.cggmp.gpu.enabled", "true");
         logger.debug("GPU enabled: {}", gpuEnabled);
         
-        // 检查是否启用JNI加速
-        String jniEnabled = System.getProperty("app.cggmp.jni.enabled", "true");
-        logger.debug("JNI enabled: {}", jniEnabled);
+        // 检查是否启用GMP加速
+        String gmpEnabled = System.getProperty("app.cggmp.gmp.enabled", "true");
+        logger.debug("GMP enabled: {}", gmpEnabled);
         
         if (Boolean.parseBoolean(gpuEnabled)) {
             loadNativeLibraries();
@@ -54,10 +54,10 @@ public final class GpuBigInteger {
         logger.debug("GpuBigInteger static initialization completed, GPU_AVAILABLE={}, backend={}", GPU_AVAILABLE.get(), backend);
     }
     
-    // 检查是否启用JNI加速
-    private static boolean isJniEnabled() {
-        String jniEnabled = System.getProperty("app.cggmp.jni.enabled", "true");
-        return Boolean.parseBoolean(jniEnabled);
+    // 检查是否启用GMP加速
+    private static boolean isGmpEnabled() {
+        String gmpEnabled = System.getProperty("app.cggmp.gmp.enabled", "true");
+        return Boolean.parseBoolean(gmpEnabled);
     }
     
     private static void loadNativeLibraries() {
@@ -168,79 +168,55 @@ public final class GpuBigInteger {
     }
     
     public static BigInteger modPow(BigInteger base, BigInteger exp, BigInteger mod) {
-        // 第一层：GPU加速
-        if (GPU_AVAILABLE.get() && backend != null) {
-            try {
-                return backend.modPow(base, exp, mod);
-            } catch (Exception e) {
-                logger.warn("GPU modPow failed, falling back to Java: {}", e.getMessage());
-            }
-        }
-        // 第二层：GMP JNI加速
-        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
+        // 第一层：GMP加速（对于单个操作，GMP通常比GPU更快）
+        if (isGmpEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeModPow(base, exp, mod);
             } catch (Exception e) {
                 logger.warn("GMP native modPow failed, falling back to Java: {}", e.getMessage());
             }
         }
-        // 第三层：Java BigInteger
+        // 第二层：Java BigInteger
         return base.modPow(exp, mod);
     }
     
     public static BigInteger modInverse(BigInteger val, BigInteger mod) {
-        // 第一层：GPU加速
-        if (GPU_AVAILABLE.get() && backend != null) {
-            try {
-                return backend.modInverse(val, mod);
-            } catch (Exception e) {
-                logger.warn("GPU modInverse failed, falling back to Java: {}", e.getMessage());
-            }
-        }
-        // 第二层：GMP JNI加速
-        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
+        // 第一层：GMP加速（对于单个操作，GMP通常比GPU更快）
+        if (isGmpEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeModInverse(val, mod);
             } catch (Exception e) {
                 logger.warn("GMP native modInverse failed, falling back to Java: {}", e.getMessage());
             }
         }
-        // 第三层：Java BigInteger
+        // 第二层：Java BigInteger
         return val.modInverse(mod);
     }
     
     public static BigInteger multiply(BigInteger a, BigInteger b) {
-        // 第一层：GPU加速
-        if (GPU_AVAILABLE.get() && backend != null) {
-            try {
-                return backend.multiply(a, b);
-            } catch (Exception e) {
-                logger.warn("GPU multiply failed, falling back to Java: {}", e.getMessage());
-            }
-        }
-        // 第二层：GMP JNI加速
-        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
+        // 第一层：GMP加速（对于单个操作，GMP通常比GPU更快）
+        if (isGmpEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeMultiply(a, b);
             } catch (Exception e) {
                 logger.warn("GMP native multiply failed, falling back to Java: {}", e.getMessage());
             }
         }
-        // 第三层：Java BigInteger
+        // 第二层：Java BigInteger
         return a.multiply(b);
     }
     
     public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
-        // 第一层：GPU加速
-        if (GPU_AVAILABLE.get() && backend != null) {
+        // 第一层：GPU加速（仅当批量大小足够大时）
+        if (GPU_AVAILABLE.get() && backend != null && bases.length >= 16) {
             try {
                 return backend.batchModPow(bases, exp, mod);
             } catch (Exception e) {
                 logger.warn("GPU batchModPow failed, falling back to Java: {}", e.getMessage());
             }
         }
-        // 第二层：GMP JNI加速
-        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
+        // 第二层：GMP加速
+        if (isGmpEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeBatchModPow(bases, exp, mod);
             } catch (Exception e) {
@@ -258,16 +234,16 @@ public final class GpuBigInteger {
         if (bases.length != exps.length) {
             throw new IllegalArgumentException("bases and exps must have same length");
         }
-        // 第一层：GPU加速
-        if (GPU_AVAILABLE.get() && backend != null) {
+        // 第一层：GPU加速（仅当批量大小足够大时）
+        if (GPU_AVAILABLE.get() && backend != null && bases.length >= 16) {
             try {
                 return backend.batchModPowDifferentExp(bases, exps, mod);
             } catch (Exception e) {
                 logger.warn("GPU batchModPowDifferentExp failed, falling back to Java: {}", e.getMessage());
             }
         }
-        // 第二层：GMP JNI加速
-        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
+        // 第二层：GMP加速
+        if (isGmpEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 return NativeBigInteger.nativeBatchModPowDifferentExp(bases, exps, mod);
             } catch (Exception e) {
@@ -300,8 +276,8 @@ public final class GpuBigInteger {
             return new NativeBigInteger.AffGProofResult(Aj, Bj);
         }
         
-        // 第二层：GMP JNI加速
-        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
+        // 第二层：GMP加速
+        if (isGmpEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 BigInteger[] results = NativeBigInteger.nativeAffGProofTuple(C, onePlusN0, N0sq, onePlusN1, N1sq, alphas, betasForN0, betasForN1, rs, ss);
                 BigInteger[] Aj = new BigInteger[kappa];
@@ -351,8 +327,8 @@ public final class GpuBigInteger {
             return new DecProofResult(A);
         }
         
-        // 第二层：GMP JNI加速
-        if (isJniEnabled() && NativeBigInteger.isNativeAvailable()) {
+        // 第二层：GMP加速
+        if (isGmpEnabled() && NativeBigInteger.isNativeAvailable()) {
             try {
                 BigInteger[] results = NativeBigInteger.nativeDecProofTuple(K, N0, N0sq, alphas, betas, rs);
                 BigInteger[] A = new BigInteger[kappa];
