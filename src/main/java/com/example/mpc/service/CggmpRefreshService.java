@@ -23,6 +23,7 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -157,7 +158,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         }
         String indexMapJson = keyShare.getIndexMap();
         if (indexMapJson == null || indexMapJson.isBlank()) {
-            return new java.util.LinkedHashMap<>();
+            return new LinkedHashMap<>();
         }
         return com.example.mpc.common.util.DbMapUtils.parseIndexMap(indexMapJson);
     }

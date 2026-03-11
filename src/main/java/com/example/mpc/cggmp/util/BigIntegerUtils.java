@@ -4,7 +4,6 @@ import java.math.BigInteger;
 import java.security.SecureRandom;
 
 public final class BigIntegerUtils {
-    private static final boolean USE_NATIVE = NativeBigInteger.isNativeAvailable();
     
     private BigIntegerUtils() {
     }
@@ -18,7 +17,7 @@ public final class BigIntegerUtils {
     }
 
     public static BigInteger powSigned(BigInteger base, BigInteger exp, BigInteger mod) {
-        if (USE_NATIVE) {
+        if (isNativeAvailable()) {
             if (exp.signum() >= 0) {
                 return NativeBigInteger.modPow(base, exp, mod);
             }
@@ -32,9 +31,21 @@ public final class BigIntegerUtils {
         return inv.modPow(exp.negate(), mod);
     }
     
+    private static boolean isNativeAvailable() {
+        try {
+            return NativeBigInteger.isNativeAvailable();
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
     public static BigInteger powSigned(NativeBigInteger.NativeModPowContext ctx, BigInteger base, BigInteger exp) {
-        if (ctx != null && NativeBigInteger.isNativeAvailable()) {
-            return ctx.modPow(base, exp);
+        if (ctx != null && isNativeAvailable()) {
+            if (exp.signum() >= 0) {
+                return ctx.modPow(base, exp);
+            }
+            BigInteger inv = NativeBigInteger.modInverse(base, ctx.getMod());
+            return ctx.modPow(inv, exp.negate());
         }
         if (exp.signum() >= 0) {
             return base.modPow(exp, BigInteger.ONE);

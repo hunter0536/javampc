@@ -16,8 +16,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -65,8 +68,8 @@ public final class CggmpDkgMessageHandler {
             int nodesCount = (Integer) dataMap.get("nodesCount");
             int initiatorId = dataMap.get("initiatorId") instanceof Number n ? n.intValue() : senderId;
             Set<Integer> participants = null;
-            if (dataMap.get("participants") instanceof java.util.Collection<?> coll) {
-                java.util.LinkedHashSet<Integer> p = new java.util.LinkedHashSet<>();
+            if (dataMap.get("participants") instanceof Collection<?> coll) {
+                LinkedHashSet<Integer> p = new LinkedHashSet<>();
                 for (Object o : coll) {
                     if (o instanceof Number n) {
                         p.add(n.intValue());
@@ -488,8 +491,8 @@ public final class CggmpDkgMessageHandler {
         task.fail();
         task.errorMessage = "DKG excluded offender " + offenderId + ": " + (reason == null ? "" : reason);
         if (svc.nodeId != task.initiatorId && dataMap.get("newTaskId") instanceof String newTaskId
-                && dataMap.get("participants") instanceof java.util.Collection<?> coll) {
-            java.util.LinkedHashSet<Integer> participants = new java.util.LinkedHashSet<>();
+                && dataMap.get("participants") instanceof Collection<?> coll) {
+            LinkedHashSet<Integer> participants = new LinkedHashSet<>();
             for (Object o : coll) {
                 if (o instanceof Number n) {
                     participants.add(n.intValue());
@@ -759,7 +762,7 @@ public final class CggmpDkgMessageHandler {
         data.put("offenderId", offenderId);
         data.put("reason", reason);
         data.put("newTaskId", newTaskId);
-        data.put("participants", new java.util.ArrayList<>(newParticipants));
+        data.put("participants", new ArrayList<>(newParticipants));
         return RetryUtils.retryAsync(svc.dkgScheduler, logger,
                 () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_EXCLUDE, data)),
                 Constants.BROADCAST_RETRY_COUNT,
@@ -773,7 +776,7 @@ public final class CggmpDkgMessageHandler {
             task.errorMessage = "DKG complaint (offender not participant): " + reason;
             return;
         }
-        Set<Integer> newParticipants = new java.util.LinkedHashSet<>(task.participants);
+        Set<Integer> newParticipants = new LinkedHashSet<>(task.participants);
         newParticipants.remove(offenderId);
         if (newParticipants.isEmpty()) {
             task.fail();

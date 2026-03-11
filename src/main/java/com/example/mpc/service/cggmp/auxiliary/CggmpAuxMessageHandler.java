@@ -20,7 +20,11 @@ import java.math.BigInteger;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * CGGMP辅助密钥消息处理器
@@ -29,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class CggmpAuxMessageHandler {
     private static final Logger logger = LoggerFactory.getLogger(CggmpAuxMessageHandler.class);
     private final CggmpAuxService svc;
-    private final ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedQueue<PendingMsg>> pendingAuxMessages =
+    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<PendingMsg>> pendingAuxMessages =
             new ConcurrentHashMap<>();
 
     public CggmpAuxMessageHandler(CggmpAuxService svc) {
@@ -51,7 +55,7 @@ public final class CggmpAuxMessageHandler {
             return;
         }
         int initiatorId = initiatorValue instanceof Number n ? n.intValue() : senderId;
-        Set<Integer> participants = new java.util.LinkedHashSet<>();
+        Set<Integer> participants = new LinkedHashSet<>();
         for (Object o : list) {
             if (o instanceof Number n) {
                 participants.add(n.intValue());
@@ -219,7 +223,7 @@ public final class CggmpAuxMessageHandler {
         }
         String commit = task.commitHashes.get(senderIdVal);
         if (commit == null) {
-            Map<String, Object> pending = new java.util.HashMap<>();
+            Map<String, Object> pending = new HashMap<>();
             for (Map.Entry<?, ?> entry : dataMap.entrySet()) {
                 Object key = entry.getKey();
                 if (key instanceof String s) {
@@ -235,7 +239,7 @@ public final class CggmpAuxMessageHandler {
                     taskId, senderIdVal, pkObj == null ? null : pkObj.getClass().getName());
             return;
         }
-        Map<String, Object> pkMapCopy = new java.util.HashMap<>();
+        Map<String, Object> pkMapCopy = new HashMap<>();
         for (Map.Entry<?, ?> entry1 : pkMap.entrySet()) {
             Object key = entry1.getKey();
             if (key instanceof String s) {
@@ -254,7 +258,7 @@ public final class CggmpAuxMessageHandler {
         Map<?, ?> prmMap = prmObj instanceof Map<?, ?> map ? map : null;
         Map<String, Object> prmMapCopy = null;
         if (prmMap != null) {
-            prmMapCopy = new java.util.HashMap<>();
+            prmMapCopy = new HashMap<>();
             for (Map.Entry<?, ?> entry : prmMap.entrySet()) {
                 Object key = entry.getKey();
                 if (key instanceof String s) {
@@ -358,12 +362,12 @@ public final class CggmpAuxMessageHandler {
             return;
         }
         byte[] existingRho = task.rho.putIfAbsent(senderIdVal, rho);
-        if (existingRho != null && !java.util.Arrays.equals(existingRho, rho)) {
+        if (existingRho != null && !Arrays.equals(existingRho, rho)) {
             task.fail("Inconsistent rho in AUX R2 from node " + senderIdVal);
             return;
         }
         byte[] existingU = task.u.putIfAbsent(senderIdVal, u);
-        if (existingU != null && !java.util.Arrays.equals(existingU, u)) {
+        if (existingU != null && !Arrays.equals(existingU, u)) {
             task.fail("Inconsistent u in AUX R2 from node " + senderIdVal);
             return;
         }
@@ -477,14 +481,14 @@ public final class CggmpAuxMessageHandler {
      */
     void enqueuePending(String taskId, PendingMsg msg) {
         if (taskId == null) return;
-        pendingAuxMessages.computeIfAbsent(taskId, id -> new java.util.concurrent.ConcurrentLinkedQueue<>()).add(msg);
+        pendingAuxMessages.computeIfAbsent(taskId, id -> new ConcurrentLinkedQueue<>()).add(msg);
     }
 
     /**
      * 处理待处理的消息队列
      */
     public void drainPending(String taskId) {
-        java.util.concurrent.ConcurrentLinkedQueue<PendingMsg> q = pendingAuxMessages.get(taskId);
+        ConcurrentLinkedQueue<PendingMsg> q = pendingAuxMessages.get(taskId);
         if (q == null || q.isEmpty()) {
             return;
         }

@@ -13,8 +13,14 @@ import com.example.mpc.enums.TaskStatus;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
+import java.util.Map;
 import java.util.Set;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -28,14 +34,14 @@ public class CggmpDkgTask {
     public final Set<Integer> participants;
     public final int initiatorId;
     public final boolean nonThreshold;
-    public final java.util.Map<Integer, BigInteger> indexMap;
+    public final Map<Integer, BigInteger> indexMap;
 
     public final AtomicReference<TaskStatus> status = new AtomicReference<>(TaskStatus.PENDING);
     public volatile String errorMessage;
     public volatile long startedAtMs = 0L;
     public volatile String lastComplaintReason;
     public volatile Integer lastComplaintOffenderId;
-    public volatile java.util.Map<String, Object> lastComplaintEvidence;
+    public volatile Map<String, Object> lastComplaintEvidence;
 
     public final ConcurrentHashMap<Integer, CGGMP.DkgRound1Output> round1Outputs = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, CGGMP.DkgRound2Output> round2Outputs = new ConcurrentHashMap<>();

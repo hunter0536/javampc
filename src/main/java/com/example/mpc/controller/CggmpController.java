@@ -16,6 +16,7 @@ import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStartResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.util.JsonCodec;
+import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDiagnosticsService;
 import com.example.mpc.service.CggmpDkgService;
@@ -30,7 +31,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
@@ -345,11 +348,11 @@ public class CggmpController {
      * @return 投诉记录列表
      */
     @PostMapping("/complaints")
-    public CompletableFuture<ApiResponse<java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord>>> getComplaints(
+    public CompletableFuture<ApiResponse<List<ComplaintDao.ComplaintRecord>>> getComplaints(
             @RequestBody ComplaintsQueryRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> records =
+                List<ComplaintDao.ComplaintRecord> records =
                         cggmpSignatureService.getComplaints(
                                 request.getTaskId(), 
                                 request.getReason(), 
@@ -374,7 +377,7 @@ public class CggmpController {
     @PostMapping(value = "/complaints/export", produces = "application/x-ndjson")
     public CompletableFuture<String> exportComplaintsJsonl(@RequestBody ComplaintsQueryRequest request) {
         return CompletableFuture.supplyAsync(() -> {
-            java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> records =
+            List<ComplaintDao.ComplaintRecord> records =
                     cggmpSignatureService.getComplaints(
                             request.getTaskId(), 
                             request.getReason(), 
@@ -387,7 +390,7 @@ public class CggmpController {
                             request.getOffset() != null ? request.getOffset() : 0);
             StringBuilder sb = new StringBuilder();
             for (com.example.mpc.dao.ComplaintDao.ComplaintRecord r : records) {
-                java.util.Map<String, Object> line = new java.util.LinkedHashMap<>();
+                Map<String, Object> line = new LinkedHashMap<>();
                 line.put("ts", r.ts());
                 line.put("taskId", r.taskId());
                 line.put("senderId", r.senderId());
@@ -412,7 +415,7 @@ public class CggmpController {
     @PostMapping(value = "/complaints/export.csv", produces = "text/csv")
     public CompletableFuture<String> exportComplaintsCsv(@RequestBody ComplaintsQueryRequest request) {
         return CompletableFuture.supplyAsync(() -> {
-            java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> records =
+            List<ComplaintDao.ComplaintRecord> records =
                     cggmpSignatureService.getComplaints(
                             request.getTaskId(), 
                             request.getReason(), 

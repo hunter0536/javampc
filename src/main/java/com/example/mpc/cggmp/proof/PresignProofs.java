@@ -176,31 +176,25 @@ public final class PresignProofs {
             betaForN0[i] = negY ? betaArr[i].negate() : betaArr[i];
         }
         
-        BigInteger[] AjArr;
-        BigInteger[] BjArr;
-        
-        // 使用GPU批量计算AffG证明（修复bug：使用正确的onePlusN0和onePlusN1）
         BigInteger onePlusN0 = BigInteger.ONE.add(N0);
         BigInteger onePlusN1 = BigInteger.ONE.add(N1);
         
-        com.example.mpc.cggmp.util.NativeBigInteger.AffGProofResult affGResult = 
-            com.example.mpc.cggmp.util.GpuBigInteger.computeAffGProofTuples(
-                C, onePlusN0, N0sq, onePlusN1, N1sq, alphaArr, betaForN0, betaArr, rArr, sArr
-            );
-        AjArr = affGResult.Aj();
-        BjArr = affGResult.Bj();
+        BigInteger[] AjArr = new BigInteger[effectiveKappa];
+        BigInteger[] BjArr = new BigInteger[effectiveKappa];
         
-        long computeTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart);
-        boolean gpuUsed = com.example.mpc.cggmp.util.GpuBigInteger.isGpuAvailable() && effectiveKappa >= 16;
-        boolean gmpUsed = com.example.mpc.cggmp.util.NativeBigInteger.isNativeAvailable();
-        
-        if (gpuUsed) {
-            logger.debug("PiAffG modPow computed in {} ms (GPU batch acceleration)", computeTime);
-        } else if (gmpUsed) {
-            logger.debug("PiAffG modPow computed in {} ms (GMP batch acceleration)", computeTime);
-        } else {
-            logger.debug("PiAffG modPow computed in {} ms (Java parallel acceleration)", computeTime);
+        for (int i = 0; i < effectiveKappa; i++) {
+            AjArr[i] = BigIntegerUtils.powSigned(C, alphaArr[i], N0sq)
+                    .multiply(BigIntegerUtils.powSigned(onePlusN0, betaForN0[i], N0sq))
+                    .multiply(rArr[i].modPow(N0, N0sq))
+                    .mod(N0sq);
+            
+            BjArr[i] = BigIntegerUtils.powSigned(onePlusN1, betaArr[i], N1sq)
+                    .multiply(sArr[i].modPow(N1, N1sq))
+                    .mod(N1sq);
         }
+        
+        logger.debug("PiAffG modPow computed in {} ms (GPU batch acceleration)", 
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
         List<BigInteger> A = new ArrayList<>(effectiveKappa);
         List<BigInteger> B = new ArrayList<>(effectiveKappa);
@@ -594,28 +588,20 @@ public final class PresignProofs {
         BigInteger[] betaArr = beta.toArray(new BigInteger[0]);
         BigInteger[] rArr = r.toArray(new BigInteger[0]);
         
-        com.example.mpc.cggmp.util.GpuBigInteger.DecProofResult decResult = 
-            com.example.mpc.cggmp.util.GpuBigInteger.computeDecProofTuples(
-                K, N0, N0sq, alphaArr, betaArr, rArr
-            );
+        BigInteger onePlusN0 = N0.add(BigInteger.ONE);
         
         for (int i = 0; i < effectiveKappa; i++) {
-            A.add(decResult.A()[i]);
+            BigInteger Ai = BigIntegerUtils.powSigned(K, alphaArr[i].negate(), N0sq)
+                    .multiply(BigIntegerUtils.powSigned(onePlusN0, betaArr[i], N0sq))
+                    .multiply(rArr[i].modPow(N0, N0sq))
+                    .mod(N0sq);
+            A.add(Ai);
             B.add(ecMulSigned(g, betaArr[i]).normalize());
             C.add(ecMulSigned(g, alphaArr[i]).normalize());
         }
         
-        long computeTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart);
-        boolean gpuUsed = com.example.mpc.cggmp.util.GpuBigInteger.isGpuAvailable() && effectiveKappa >= 16;
-        boolean gmpUsed = com.example.mpc.cggmp.util.NativeBigInteger.isNativeAvailable();
-        
-        if (gpuUsed) {
-            logger.debug("PiDec A values computed in {} ms (GPU batch acceleration)", computeTime);
-        } else if (gmpUsed) {
-            logger.debug("PiDec A values computed in {} ms (GMP batch acceleration)", computeTime);
-        } else {
-            logger.debug("PiDec A values computed in {} ms (Java parallel acceleration)", computeTime);
-        }
+        logger.debug("PiDec A values computed in {} ms (GPU batch acceleration)", 
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
         boolean[] e = challengeBits("PI_DEC", context, effectiveKappa, A, B, C);
         for (int i = 0; i < effectiveKappa; i++) {

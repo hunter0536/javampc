@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -142,7 +143,7 @@ public final class CggmpAuxProtocolHandler {
                                     "senderId", svc.nodeId,
                                     "V", task.commitHashes.get(svc.nodeId)
                             ))), logger, "CGGMP_AUX_R1_RBC_RETRY");
-                            throw new java.util.concurrent.CompletionException(ex);
+                            throw new CompletionException(ex);
                         })
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
@@ -169,7 +170,7 @@ public final class CggmpAuxProtocolHandler {
                                     task.taskId, task.executionId, svc.nodeId, echo.length());
                             CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
                                     logger, "CGGMP_AUX_R1_ECHO_RETRY");
-                            throw new java.util.concurrent.CompletionException(ex);
+                            throw new CompletionException(ex);
                         })
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {

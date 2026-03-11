@@ -2,6 +2,7 @@ package com.example.mpc.service.cggmp.signature;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
+import com.example.mpc.cggmp.mta.MtAResult;
 import com.example.mpc.cggmp.mta.MtAProtocol;
 import com.example.mpc.cggmp.sign.CggmpIntegrityChecker;
 import com.example.mpc.cggmp.sign.EcChaumPedersenProof;
@@ -435,7 +436,7 @@ public final class CggmpSignatureOnlineHandler {
                 return;
             }
 
-            com.example.mpc.cggmp.mta.MtAResult result = protocol.computeCjWithY(publicKey, initiatorMessage.cA(), task.a_i, zkSetup, mtaContext);
+            MtAResult result = protocol.computeCjWithY(publicKey, initiatorMessage.cA(), task.a_i, zkSetup, mtaContext);
             BigInteger beta = protocol.computeBeta(result.y());
             task.kaBetas.put(initiatorId, beta);
             if (task.kaInitLatch.getCount() > 0) {
@@ -449,7 +450,7 @@ public final class CggmpSignatureOnlineHandler {
             resp.put("taskId", taskId);
             resp.put("initiatorId", initiatorId);
             resp.put("responderId", svc.nodeId);
-            com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
+            MtAResult publicResult = new MtAResult(result.c_j(), null, null, result.proof());
             resp.put("result", CggmpCodecUtils.encodeMtAResult(publicResult));
             CggmpProtocolUtils.fireAndForget(svc.nodeService.sendMessage(initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_MTA_KA_RESPONSE, resp)),
                     logger, "CGGMP_SIGN_MTA_KA_RESPONSE");
@@ -485,7 +486,7 @@ public final class CggmpSignatureOnlineHandler {
             if (resultMap == null) {
                 return;
             }
-            com.example.mpc.cggmp.mta.MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
+            MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
             MtAInitiatorMessage initiatorMessage = task.mtaKaInitiatorMessages.get(responderId);
             if (initiatorMessage == null) {
                 return;
@@ -717,7 +718,7 @@ public final class CggmpSignatureOnlineHandler {
                 return;
             }
 
-            com.example.mpc.cggmp.mta.MtAResult result = protocol.computeCjWithY(publicKey, initiatorMessage.cA(), task.t_i, zkSetup, mtaContext);
+            MtAResult result = protocol.computeCjWithY(publicKey, initiatorMessage.cA(), task.t_i, zkSetup, mtaContext);
             BigInteger beta = protocol.computeBeta(result.y());
             task.stBetas.put(initiatorId, beta);
             if (task.stInitLatch.getCount() > 0) {
@@ -731,7 +732,7 @@ public final class CggmpSignatureOnlineHandler {
             resp.put("taskId", taskId);
             resp.put("initiatorId", initiatorId);
             resp.put("responderId", svc.nodeId);
-            com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
+            MtAResult publicResult = new MtAResult(result.c_j(), null, null, result.proof());
             resp.put("result", CggmpCodecUtils.encodeMtAResult(publicResult));
             CggmpProtocolUtils.fireAndForget(svc.nodeService.sendMessage(initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_MTA_ST_RESPONSE, resp)),
                     logger, "CGGMP_SIGN_MTA_ST_RESPONSE");
@@ -767,7 +768,7 @@ public final class CggmpSignatureOnlineHandler {
             if (resultMap == null) {
                 return;
             }
-            com.example.mpc.cggmp.mta.MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
+            MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
             MtAInitiatorMessage initiatorMessage = task.mtaStInitiatorMessages.get(responderId);
             if (initiatorMessage == null) {
                 return;

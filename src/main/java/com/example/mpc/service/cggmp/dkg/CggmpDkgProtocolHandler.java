@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -170,11 +171,11 @@ public final class CggmpDkgProtocolHandler {
             for (int k = 0; k < svc.threshold; k++) {
                 S_i = S_i.put(k, g.multiply(coeffs[k]).normalize());
             }
-            task.Xjks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(S_i.toMap()));
+            task.Xjks.put(svc.nodeId, new ConcurrentHashMap<>(S_i.toMap()));
 
             BigInteger alpha = CggmpProtocolUtils.randomNonZero(q);
             ECPoint A_i = g.multiply(alpha).normalize();
-            task.Ajks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(Map.of(0, A_i)));
+            task.Ajks.put(svc.nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
             task.schAlphas.put(0, alpha);
 
             byte[] ridPart = CggmpProtocolUtils.randomBytes(32);
@@ -301,7 +302,7 @@ public final class CggmpDkgProtocolHandler {
                     for (int peerId : task.participants) {
                         BigInteger share = peerId == svc.nodeId
                                 ? CggmpDkgUtils.evaluatePolynomial(ctx.coeffs(), CggmpDkgUtils.getIndexValue(task, svc.nodeId), ctx.q())
-                                : task.xji.getOrDefault(peerId, new java.util.concurrent.ConcurrentHashMap<>()).get(svc.nodeId);
+                                : task.xji.getOrDefault(peerId, new ConcurrentHashMap<>()).get(svc.nodeId);
                         if (share == null) {
                             throw new RuntimeException("Missing share from peer " + peerId);
                         }
@@ -359,11 +360,11 @@ public final class CggmpDkgProtocolHandler {
                     BigInteger x_i = CggmpProtocolUtils.randomNonZero(q);
                     ECPoint X_i = g.multiply(x_i).normalize();
                     ECPointIndexMap S_i = ECPointIndexMap.empty().put(0, X_i);
-                    task.Xjks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(S_i.toMap()));
+                    task.Xjks.put(svc.nodeId, new ConcurrentHashMap<>(S_i.toMap()));
 
                     BigInteger alpha = CggmpProtocolUtils.randomNonZero(q);
                     ECPoint A_i = g.multiply(alpha).normalize();
-                    task.Ajks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(Map.of(0, A_i)));
+                    task.Ajks.put(svc.nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
                     task.schAlphas.put(0, alpha);
 
                     byte[] ridPart = CggmpProtocolUtils.randomBytes(32);

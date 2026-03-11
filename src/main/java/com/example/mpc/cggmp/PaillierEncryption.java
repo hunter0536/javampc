@@ -27,17 +27,12 @@ public class PaillierEncryption {
     }
 
     public PaillierEncryption(int keySize) {
-        int capped = Math.min(keySize, MAX_KEY_SIZE);
-        this.keySize = Math.max(512, capped);
+        this.keySize = Math.max(512, keySize);
         generateKeys();
     }
 
     public PaillierEncryption(BigInteger p, BigInteger q) {
-        int bits = p.bitLength() + q.bitLength();
-        if (bits > MAX_KEY_SIZE) {
-            throw new IllegalArgumentException("Paillier keySize exceeds max " + MAX_KEY_SIZE + ": " + bits);
-        }
-        this.keySize = Math.max(bits, KEY_SIZE);
+        this.keySize = Math.max(p.bitLength() + q.bitLength(), KEY_SIZE);
         this.p = p;
         this.q = q;
         initializeFromPQ();

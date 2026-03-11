@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
+import java.util.HashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ScheduledFuture;
@@ -40,7 +41,7 @@ public final class CggmpAuxUtils {
     }
 
     public static Map<String, Object> buildAuxEvidence(CggmpAuxTask task) {
-        Map<String, Object> ev = new java.util.HashMap<>();
+        Map<String, Object> ev = new HashMap<>();
         ev.put("taskId", task.taskId);
         ev.put("executionId", task.executionId);
         ev.put("participants", task.participants);

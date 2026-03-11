@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -475,7 +476,7 @@ public final class CggmpRefreshProtocolHandler {
                 }
                 refreshed.put(k, base.add(delta).normalize());
             }
-            Map<String, String> out = new java.util.LinkedHashMap<>();
+            Map<String, String> out = new LinkedHashMap<>();
             for (int k : task.participants) {
                 ECPoint point = refreshed.get(k);
                 if (point == null) {

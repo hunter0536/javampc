@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -605,7 +606,7 @@ public final class CggmpRefreshMessageHandler {
             if (dir != null) {
                 java.nio.file.Files.createDirectories(dir);
             }
-            java.util.Map<String, Object> line = new java.util.LinkedHashMap<>();
+            Map<String, Object> line = new LinkedHashMap<>();
             line.put("ts", System.currentTimeMillis());
             line.put("taskId", taskId);
             line.put("senderId", senderId);

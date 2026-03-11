@@ -36,19 +36,6 @@ dependencies {
     implementation 'com.google.guava:guava:32.0.0-jre'
     implementation 'io.netty:netty-all:4.1.97.Final'
     implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
-    
-    // GPU 加速库依赖配置
-    // JCuda (NVIDIA GPU):
-    // 核心库（注意：natives包不支持M芯片Mac，已手动下载到src/main/resources/native/）
-    implementation('org.jcuda:jcuda:11.8.0') {
-        exclude group: 'org.jcuda', module: 'jcuda-natives'
-    }
-    // JOCL (OpenCL，支持包括M芯片在内的多种GPU):
-    // 核心库
-    implementation('org.jocl:jocl:2.0.6') {
-        exclude group: 'org.jocl', module: 'jocl-natives'
-    }
-    // 注意：native库已手动下载到src/main/resources/native/
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
@@ -117,7 +104,6 @@ tasks.register('benchmarkGMP', JavaExec) {
     dependsOn 'compileJava'
 }
 
-// 编译前自动尝试编译原生库
 tasks.named('compileJava') {
     doFirst {
         if (file('src/main/resources/native/gmp/mpc_gmp.c').exists()) {

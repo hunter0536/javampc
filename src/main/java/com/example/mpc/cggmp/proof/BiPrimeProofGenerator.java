@@ -144,8 +144,8 @@ public final class BiPrimeProofGenerator {
         }
         
         // Step 2: Use GPU-accelerated batch modPow
-        BigInteger[] zps = com.example.mpc.cggmp.util.GpuBigInteger.batchModPow(basesP, eP, p);
-        BigInteger[] zqs = com.example.mpc.cggmp.util.GpuBigInteger.batchModPow(basesQ, eQ, q);
+        BigInteger[] zps = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(basesP, eP, p);
+        BigInteger[] zqs = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(basesQ, eQ, q);
         
         BigInteger[] zValues = new BigInteger[blumRounds];
         BigInteger[] rhsValues = new BigInteger[blumRounds];
@@ -197,8 +197,8 @@ public final class BiPrimeProofGenerator {
             rhsQ[i] = rhsValues[i].mod(q);
         }
         
-        BigInteger[] xps = com.example.mpc.cggmp.util.GpuBigInteger.batchModPow(rhsP, inv4p, p);
-        BigInteger[] xqs = com.example.mpc.cggmp.util.GpuBigInteger.batchModPow(rhsQ, inv4q, q);
+        BigInteger[] xps = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(rhsP, inv4p, p);
+        BigInteger[] xqs = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(rhsQ, inv4q, q);
         
         // Step 5: Create rounds
         for (int i = 0; i < blumRounds; i++) {

@@ -4,7 +4,6 @@ import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
 import com.example.mpc.cggmp.proof.NoSmallFactorProof;
 import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
-import com.example.mpc.cggmp.util.GpuBigInteger;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.SecureRandomUtils;
 import org.bouncycastle.math.ec.ECPoint;
@@ -228,11 +227,10 @@ public class CGGMP {
     private ECPoint computeExpectedShare(List<ECPoint> commitments, BigInteger x) {
         ECPoint result = pedersen.getEcSpec().getCurve().getInfinity();
         BigInteger xPower = BigInteger.ONE;
-        BigInteger curveOrder = pedersen.getCurveOrder();
 
         for (ECPoint commitment : commitments) {
             result = result.add(commitment.multiply(xPower)).normalize();
-            xPower = GpuBigInteger.multiply(xPower, x).mod(curveOrder);
+            xPower = xPower.multiply(x).mod(pedersen.getCurveOrder());
         }
 
         return result;

@@ -1,7 +1,6 @@
 package com.example.mpc.service.cggmp.dkg;
 
 import com.example.mpc.cggmp.proof.PiSchProof;
-import com.example.mpc.cggmp.util.GpuBigInteger;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.enums.MessageType;
@@ -98,9 +97,8 @@ public final class CggmpDkgUtils {
         BigInteger result = BigInteger.ZERO;
         BigInteger xPower = BigInteger.ONE;
         for (BigInteger coeff : coefficients) {
-            BigInteger term = GpuBigInteger.multiply(coeff, xPower).mod(mod);
-            result = result.add(term).mod(mod);
-            xPower = GpuBigInteger.multiply(xPower, x).mod(mod);
+            result = result.add(coeff.multiply(xPower)).mod(mod);
+            xPower = xPower.multiply(x).mod(mod);
         }
         return result;
     }
@@ -114,7 +112,7 @@ public final class CggmpDkgUtils {
         BigInteger xPower = BigInteger.ONE;
         for (int k = 0; k < threshold; k++) {
             powers[k] = xPower;
-            xPower = GpuBigInteger.multiply(xPower, x).mod(q);
+            xPower = xPower.multiply(x).mod(q);
         }
         return powers;
     }
@@ -124,17 +122,13 @@ public final class CggmpDkgUtils {
         if (evalPowers == null) {
             throw new IllegalStateException("Missing precomputed DKG evaluation powers");
         }
-        // 获取所有键并排序，确保按照正确的顺序处理
-        List<Integer> keys = new ArrayList<>(Xjk.keySet());
-        Collections.sort(keys);
-        int limit = Math.min(keys.size(), evalPowers.length);
-        for (int i = 0; i < limit; i++) {
-            int k = keys.get(i);
+        int limit = Math.min(Xjk.size(), evalPowers.length);
+        for (int k = 0; k < limit; k++) {
             ECPoint X = Xjk.get(k);
             if (X == null) {
                 continue;
             }
-            sum = sum.add(X.multiply(evalPowers[i])).normalize();
+            sum = sum.add(X.multiply(evalPowers[k])).normalize();
         }
         return sum;
     }

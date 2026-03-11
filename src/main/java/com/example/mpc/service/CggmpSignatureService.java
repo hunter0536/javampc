@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.Security;
 import java.util.ArrayList;
@@ -35,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Map.Entry;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -192,10 +194,10 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     private void initTaskPaillierAndZkSetup(CggmpSignatureTask task, AuxInfo auxInfo) {
-        java.math.BigInteger p = new java.math.BigInteger(auxInfo.getPaillierP(), 16);
-        java.math.BigInteger q = new java.math.BigInteger(auxInfo.getPaillierQ(), 16);
-        java.math.BigInteger n = new java.math.BigInteger(auxInfo.getPaillierN(), 16);
-        java.math.BigInteger g = new java.math.BigInteger(auxInfo.getPaillierG(), 16);
+        BigInteger p = new BigInteger(auxInfo.getPaillierP(), 16);
+        BigInteger q = new BigInteger(auxInfo.getPaillierQ(), 16);
+        BigInteger n = new BigInteger(auxInfo.getPaillierN(), 16);
+        BigInteger g = new BigInteger(auxInfo.getPaillierG(), 16);
         task.paillier = new PaillierEncryption(p, q);
         if (!task.paillier.getPublicKeyInfo().n().equals(n)) {
             throw new RuntimeException("AUX Paillier n mismatch");
@@ -203,9 +205,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (!task.paillier.getPublicKeyInfo().g().equals(g)) {
             throw new RuntimeException("AUX Paillier g mismatch");
         }
-        java.math.BigInteger hatN = new java.math.BigInteger(auxInfo.getPedersenHatN(), 16);
-        java.math.BigInteger s = new java.math.BigInteger(auxInfo.getPedersenS(), 16);
-        java.math.BigInteger t = new java.math.BigInteger(auxInfo.getPedersenT(), 16);
+        BigInteger hatN = new BigInteger(auxInfo.getPedersenHatN(), 16);
+        BigInteger s = new BigInteger(auxInfo.getPedersenS(), 16);
+        BigInteger t = new BigInteger(auxInfo.getPedersenT(), 16);
         task.zkSetup = new ZKSetup(hatN, s, t);
     }
 
@@ -267,13 +269,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (info == null) {
             String msg = "Missing auxiliary info on local node " + nodeId;
             if (task != null) {
-                broadcastComplaint(task, null, msg, java.util.Map.of("nodeId", nodeId));
+                broadcastComplaint(task, null, msg, Map.of("nodeId", nodeId));
                 failSignatureTask(task, msg);
             }
             throw new RuntimeException(msg);
         }
         try {
-            java.util.Map<String, String> auxParams = com.example.mpc.common.util.DbMapUtils.buildAuxParams(info);
+            Map<String, String> auxParams = com.example.mpc.common.util.DbMapUtils.buildAuxParams(info);
             String auxHash = hashJsonMap(auxParams);
             String taskId = task == null ? "null" : task.taskId;
             logger.debug("Loaded local AUX for signature task {} (nodeId={}, auxHash={})", taskId, nodeId, auxHash);
@@ -283,11 +285,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return info;
     }
 
-    public boolean ensurePeerAuxConsistency(CggmpSignatureTask task, int peerId, java.util.Map<String, String> auxParams) {
+    public boolean ensurePeerAuxConsistency(CggmpSignatureTask task, int peerId, Map<String, String> auxParams) {
         if (task == null || auxParams == null) {
             return true;
         }
-        java.util.Map<String, String> existing = task.peerAuxParams.putIfAbsent(peerId, new java.util.HashMap<>(auxParams));
+        Map<String, String> existing = task.peerAuxParams.putIfAbsent(peerId, new HashMap<>(auxParams));
         if (existing == null) {
             String auxHash = hashJsonMap(auxParams);
             logger.debug("Recorded peer AUX params (taskId={}, peerId={}, auxHash={})", task.taskId, peerId, auxHash);

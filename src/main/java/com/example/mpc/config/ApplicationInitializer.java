@@ -2,7 +2,6 @@ package com.example.mpc.config;
 
 import com.example.mpc.constant.Constants;
 import com.example.mpc.cggmp.util.NativeBigInteger;
-import com.example.mpc.cggmp.util.GpuBigInteger;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
@@ -51,41 +50,24 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Value("${app.init.legacy.enabled:true}")
     private boolean enableLegacy;
 
-    @Value("${app.cggmp.gpu.enabled:true}")
-    private boolean gpuEnabled;
-
     @Value("${app.cggmp.gmp.enabled:true}")
     private boolean gmpEnabled;
 
-    static {
-        logger.info("============================================================");
-        logger.info("ApplicationInitializer static initialization started");
-        try {
-            Class.forName("com.example.mpc.cggmp.util.NativeBigInteger");
-            logger.info("NativeBigInteger class loaded successfully");
-        } catch (ClassNotFoundException e) {
-            logger.error("Failed to load NativeBigInteger class: {}", e.getMessage());
-        }
-        logger.info("ApplicationInitializer static initialization completed");
-        logger.info("============================================================");
-    }
-
     @Override
     public void run(String... args) throws Exception {
-        // 设置GPU启用状态为系统属性，供GpuBigInteger使用
-        System.setProperty("app.cggmp.gpu.enabled", String.valueOf(gpuEnabled));
-        logger.info("Set system property app.cggmp.gpu.enabled={}", gpuEnabled);
-        
-        // 设置GMP启用状态为系统属性，供GpuBigInteger使用
         System.setProperty("app.cggmp.gmp.enabled", String.valueOf(gmpEnabled));
         logger.info("Set system property app.cggmp.gmp.enabled={}", gmpEnabled);
         
-        // 延迟加载GpuBigInteger，确保系统属性已设置
-        try {
-            Class.forName("com.example.mpc.cggmp.util.GpuBigInteger");
-            logger.info("GpuBigInteger class loaded successfully");
-        } catch (ClassNotFoundException e) {
-            logger.error("Failed to load GpuBigInteger class: {}", e.getMessage());
+        if (gmpEnabled) {
+            logger.info("GMP is enabled, loading NativeBigInteger...");
+            try {
+                Class.forName("com.example.mpc.cggmp.util.NativeBigInteger");
+                logger.info("NativeBigInteger loaded successfully");
+            } catch (ClassNotFoundException e) {
+                logger.error("Failed to load NativeBigInteger: {}", e.getMessage());
+            }
+        } else {
+            logger.info("GMP is disabled by configuration, using Java BigInteger");
         }
         
         logger.info("=".repeat(60));

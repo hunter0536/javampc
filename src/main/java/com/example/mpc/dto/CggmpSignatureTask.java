@@ -9,6 +9,7 @@ import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
 import java.util.Set;
+import java.util.LinkedHashSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
@@ -179,7 +180,7 @@ public class CggmpSignatureTask {
 
     private static Set<Integer> selectParticipants(int initiatorId, int nodesCount, int threshold) {
         int actualThreshold = Math.min(Math.max(1, threshold), nodesCount);
-        java.util.LinkedHashSet<Integer> result = new java.util.LinkedHashSet<>();
+        LinkedHashSet<Integer> result = new LinkedHashSet<>();
         if (initiatorId >= 1 && initiatorId <= nodesCount) {
             result.add(initiatorId);
         }
