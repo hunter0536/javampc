@@ -90,7 +90,11 @@ public final class CggmpDkgMessageHandler {
             if (executionId == null || executionId.isBlank()) {
                 throw new RuntimeException("Missing executionId");
             }
-            CggmpDkgTask task = svc.createDkgTaskInternal(taskId, executionId, nodesCount, svc.threshold, participants, initiatorId);
+
+            Object isHotWalletObj = dataMap.get("isHotWallet");
+            boolean isHotWallet = isHotWalletObj != null && (boolean) isHotWalletObj;
+
+            CggmpDkgTask task = svc.createDkgTaskInternal(taskId, executionId, nodesCount, svc.threshold, participants, initiatorId, isHotWallet);
             CggmpDkgTask existingTask = svc.dkgTasks.putIfAbsent(taskId, task);
 
             if (existingTask != null) {
@@ -500,7 +504,7 @@ public final class CggmpDkgMessageHandler {
             }
             if (!participants.isEmpty()) {
                 String newExecutionId = dataMap.get("executionId") instanceof String v ? v : UUID.randomUUID().toString();
-                CggmpDkgTask newTask = svc.createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, participants, senderId);
+                CggmpDkgTask newTask = svc.createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, participants, senderId, task.isHotWallet);
                 svc.dkgTasks.putIfAbsent(newTaskId, newTask);
                 drainPendingRound1(newTask);
                 svc.dkgProtocolHandler.startDkgProcessInternal(newTaskId, false);
@@ -785,7 +789,7 @@ public final class CggmpDkgMessageHandler {
         }
         String newTaskId = UUID.randomUUID().toString();
         String newExecutionId = UUID.randomUUID().toString();
-        CggmpDkgTask newTask = svc.createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, newParticipants, task.initiatorId);
+        CggmpDkgTask newTask = svc.createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, newParticipants, task.initiatorId, task.isHotWallet);
         svc.dkgTasks.putIfAbsent(newTaskId, newTask);
         drainPendingRound1(newTask);
         logger.warn("DKG exclusion: offender {} removed, restarting DKG task {}", offenderId, newTaskId);

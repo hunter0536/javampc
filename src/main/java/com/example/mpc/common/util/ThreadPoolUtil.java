@@ -14,11 +14,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ThreadPoolUtil {
+
     private static final int CORE_POOL_SIZE = Math.max(2, Runtime.getRuntime().availableProcessors());
     private static final int MAX_POOL_SIZE = Math.max(4, CORE_POOL_SIZE * 2);
     private static final long KEEP_ALIVE_TIME = 60L;
     private static final TimeUnit KEEP_ALIVE_TIME_UNIT = TimeUnit.SECONDS;
     private static final BlockingQueue<Runnable> WORK_QUEUE = new LinkedBlockingQueue<>(1000);
+    private static final int IO_MAX_POOL_SIZE = Math.max(64, CORE_POOL_SIZE * 4);
+
     private static final ThreadFactory THREAD_FACTORY = new ThreadFactory() {
         private final ThreadFactory defaultFactory = Executors.defaultThreadFactory();
         private final AtomicInteger threadNumber = new AtomicInteger(1);
@@ -30,6 +33,7 @@ public class ThreadPoolUtil {
             return t;
         }
     };
+
     private static final RejectedExecutionHandler REJECTED_HANDLER = new ThreadPoolExecutor.CallerRunsPolicy();
 
     private static final ExecutorService computationThreadPool = new ThreadPoolExecutor(
@@ -42,7 +46,6 @@ public class ThreadPoolUtil {
             REJECTED_HANDLER
     );
 
-    private static final int IO_MAX_POOL_SIZE = Math.max(64, CORE_POOL_SIZE * 4);
     private static final ExecutorService ioThreadPool = new ThreadPoolExecutor(
             CORE_POOL_SIZE,
             IO_MAX_POOL_SIZE,
@@ -60,6 +63,16 @@ public class ThreadPoolUtil {
 
     private static final ExecutorService singleThreadPool = Executors.newSingleThreadExecutor();
 
+    private static final ExecutorService presignThreadPool = new ThreadPoolExecutor(
+            CORE_POOL_SIZE,
+            MAX_POOL_SIZE,
+            KEEP_ALIVE_TIME,
+            KEEP_ALIVE_TIME_UNIT,
+            WORK_QUEUE,
+            THREAD_FACTORY,
+            REJECTED_HANDLER
+    );
+
     public static ExecutorService getComputationThreadPool() {
         return computationThreadPool;
     }
@@ -74,6 +87,10 @@ public class ThreadPoolUtil {
 
     public static ExecutorService getAuxThreadPool() {
         return auxThreadPool;
+    }
+
+    public static ExecutorService getPresignThreadPool() {
+        return presignThreadPool;
     }
 
     public static CompletableFuture<Void> submitToComputationThreadPool(Runnable task) {
@@ -93,5 +110,6 @@ public class ThreadPoolUtil {
         ioThreadPool.shutdown();
         auxThreadPool.shutdown();
         singleThreadPool.shutdown();
+        presignThreadPool.shutdown();
     }
 }

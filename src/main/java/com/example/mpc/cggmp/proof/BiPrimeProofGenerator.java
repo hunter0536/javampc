@@ -131,7 +131,7 @@ public final class BiPrimeProofGenerator {
     ) {
         List<Round> rounds = new ArrayList<>(blumRounds);
         
-        // GPU optimization: collect all y values for batch processing
+        // Batch optimization: collect all y values for batch processing
         BigInteger[] yValues = new BigInteger[blumRounds];
         BigInteger[] basesP = new BigInteger[blumRounds];
         BigInteger[] basesQ = new BigInteger[blumRounds];
@@ -143,7 +143,7 @@ public final class BiPrimeProofGenerator {
             basesQ[i] = yValues[i].mod(q);
         }
         
-        // Step 2: Use GPU-accelerated batch modPow
+        // Step 2: Use native GMP batch modPow for better performance
         BigInteger[] zps = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(basesP, eP, p);
         BigInteger[] zqs = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(basesQ, eQ, q);
         

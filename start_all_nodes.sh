@@ -1,6 +1,17 @@
 #!/bin/bash
 
-# 启动所有五个节点（后台运行）
+# 关闭已存在的节点并等待完全关闭
+echo "Stopping existing nodes..."
+pkill -f "java.*javampc" 2>/dev/null
+
+# 等待所有 Java 进程退出
+while pgrep -f "java.*javampc" > /dev/null; do
+    echo "Waiting for nodes to stop..."
+    sleep 1
+done
+
+echo "All nodes stopped. Starting new nodes..."
+sleep 2
 
 mkdir -p logs
 

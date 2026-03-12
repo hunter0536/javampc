@@ -660,6 +660,22 @@ public class NodeService {
         return nodes.size() >= nodesCount - 1;
     }
 
+    public boolean areAllPeerConnectionsActive() {
+        if (nettyService == null) {
+            return false;
+        }
+        for (NodeInfo nodeInfo : nodes.values()) {
+            if (nodeInfo.id == nodeId) {
+                continue;
+            }
+            var channel = nettyService.getNodeChannel(nodeInfo.id);
+            if (channel == null || !channel.isActive()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * 获取线程池状态
      *

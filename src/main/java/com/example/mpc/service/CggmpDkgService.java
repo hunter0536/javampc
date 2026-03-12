@@ -11,6 +11,8 @@ import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.AuxInfo;
 import com.example.mpc.dto.CggmpDkgTask;
 import com.example.mpc.dto.KeyShare;
+import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.service.cggmp.dkg.CggmpDkgMessageDispatcher;
 import com.example.mpc.service.cggmp.dkg.CggmpDkgMessageHandler;
 import com.example.mpc.service.cggmp.dkg.CggmpDkgProtocolHandler;
@@ -27,6 +29,7 @@ import java.math.BigInteger;
 import java.security.Security;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -54,6 +57,9 @@ public class CggmpDkgService implements NodeService.MessageHandler {
 
     @Autowired
     public KeyShareDao keyShareDao;
+
+    @Autowired
+    public AuxInfoDao auxInfoDao;
 
     @Value("${node.id}")
     public int nodeId;
@@ -99,14 +105,30 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                 });
     }
 
-    public String createDkgTask() {
+    public String createDkgTask(boolean isHotWallet) {
+        if (isHotWallet) {
+                int hotWalletCount = keyShareDao.countHotWalletSync(nodeId);
+                if (hotWalletCount >= 1) {
+                    throw new RuntimeException("Already have 1 hot wallet key share, cannot create new hot wallet DKG task");
+                }
+            }
+        
+        int auxCount = auxInfoDao.countAuxSync(nodeId);
+        if (auxCount == 0) {
+            throw new RuntimeException("No AUX data available. Please run AUX provisioning first.");
+        }
+        
         String taskId = UUID.randomUUID().toString();
         String executionId = UUID.randomUUID().toString();
-        CggmpDkgTask task = createDkgTaskInternal(taskId, executionId, nodesCount, threshold, null, nodeId);
+        CggmpDkgTask task = createDkgTaskInternal(taskId, executionId, nodesCount, threshold, null, nodeId, isHotWallet);
         dkgTasks.put(taskId, task);
         dkgMessageHandler.drainPendingRound1(task);
-        logger.info("Created CGGMP DKG task: {}", taskId);
+        logger.info("Created CGGMP DKG task: {}, isHotWallet: {}", taskId, isHotWallet);
         return taskId;
+    }
+
+    public String createDkgTask() {
+        return createDkgTask(false);
     }
 
     public CompletableFuture<Void> startDkgProcess(String taskId) {
@@ -148,9 +170,26 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                                               int nodesCount,
                                               int threshold,
                                               Set<Integer> participants,
-                                              int initiatorId) {
-        CggmpDkgTask task = new CggmpDkgTask(taskId, executionId, nodesCount, threshold, participants, initiatorId);
+                                              int initiatorId,
+                                              boolean isHotWallet) {
+        AuxInfo auxInfo = auxInfoDao.loadLatestSync(nodeId);
+        if (auxInfo == null) {
+            throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before DKG.");
+        }
+
+        CggmpDkgTask task = new CggmpDkgTask(taskId, executionId, nodesCount, threshold, participants, initiatorId, isHotWallet);
+        
+        BigInteger p = new BigInteger(auxInfo.getPaillierP(), 16);
+        BigInteger q = new BigInteger(auxInfo.getPaillierQ(), 16);
+        BigInteger hatN = new BigInteger(auxInfo.getPedersenHatN(), 16);
+        BigInteger s = new BigInteger(auxInfo.getPedersenS(), 16);
+        BigInteger t = new BigInteger(auxInfo.getPedersenT(), 16);
+        
+        task.paillier = new PaillierEncryption(p, q);
+        task.zkSetup = new ZKSetup(hatN, s, t);
+        
         task.evalPowers = CggmpDkgUtils.precomputeEvalPowers(CggmpDkgUtils.getIndexValue(task, nodeId), threshold);
+        logger.info("Loaded AUX data for DKG task: {}, paillier bits: {}", taskId, task.paillier.getBitLength());
         return task;
     }
 
@@ -169,9 +208,9 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             String publicSharesJson = encodeStringMapAsJson(publicShares);
             String indexMapJson = buildIndexMapJson(task);
             String chainCodeHex = task.chainCode == null || task.chainCode.length == 0 ? null : HexUtils.bytesToHex(task.chainCode);
-            KeyShare keyShare = new KeyShare(nodeId, shareHex, task.groupPublicKeyHex, task.taskId, publicSharesJson, indexMapJson, chainCodeHex);
+            KeyShare keyShare = new KeyShare(nodeId, shareHex, task.groupPublicKeyHex, task.taskId, publicSharesJson, indexMapJson, chainCodeHex, task.isHotWallet);
             keyShareDao.save(keyShare);
-            logger.info("Saved CGGMP key share to database for task: {}", task.taskId);
+            logger.info("Saved CGGMP key share to database for task: {}, isHotWallet: {}", task.taskId, task.isHotWallet);
         } catch (Exception e) {
             logger.error("Failed to save CGGMP key share to database", e);
         }

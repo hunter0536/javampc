@@ -1,5 +1,9 @@
 # 基础配置
 
+spring:
+  main:
+    allow-circular-references: true
+
 # 服务器配置
 server:
   port: 8080 # HTTP 端口（默认注释，由 application-nodeX.yml 覆盖）
@@ -67,6 +71,16 @@ app:
       autoCheckIntervalSeconds: 60 # 自动 AUX 轮询间隔（秒）
     gmp:
       enabled: true # 启用 GMP 加速
+
+# 热钱包配置
+hotwallet:
+  presign-pool:
+    enabled: true              # 是否启用预签名池
+    min-size: 1               # 预签名池最小数量
+    max-size: 2               # 预签名池最大数量
+    max-age-minutes: 30        # 预签名过期时间（分钟）
+    refresh-interval-ms: 1000 # 预签名池刷新间隔（毫秒）
+    generation-threads: 2     # 预签名生成线程数
 
 # MPC 全局参数
 mpc:

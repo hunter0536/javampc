@@ -34,6 +34,7 @@ public class CggmpDkgTask {
     public final Set<Integer> participants;
     public final int initiatorId;
     public final boolean nonThreshold;
+    public final boolean isHotWallet;
     public final Map<Integer, BigInteger> indexMap;
 
     public final AtomicReference<TaskStatus> status = new AtomicReference<>(TaskStatus.PENDING);
@@ -109,6 +110,7 @@ public class CggmpDkgTask {
 
     public CGGMP cggmpInstance;
     public PaillierEncryption paillier;
+    public ZKSetup zkSetup;
     public BigInteger secretShare;
     public ECPoint groupPublicKey;
     public String groupPublicKeyHex;
@@ -116,15 +118,20 @@ public class CggmpDkgTask {
     public final ConcurrentHashMap<Integer, String> round1PayloadHashes = new ConcurrentHashMap<>();
 
     public CggmpDkgTask(String taskId, String executionId, int nodesCount, int threshold) {
-        this(taskId, executionId, nodesCount, threshold, null, 0);
+        this(taskId, executionId, nodesCount, threshold, null, 0, false);
     }
 
     public CggmpDkgTask(String taskId, String executionId, int nodesCount, int threshold, Set<Integer> participantsOverride, int initiatorId) {
+        this(taskId, executionId, nodesCount, threshold, participantsOverride, initiatorId, false);
+    }
+
+    public CggmpDkgTask(String taskId, String executionId, int nodesCount, int threshold, Set<Integer> participantsOverride, int initiatorId, boolean isHotWallet) {
         this.taskId = taskId;
         this.executionId = executionId;
         this.nodesCount = nodesCount;
         this.threshold = threshold;
         this.initiatorId = initiatorId;
+        this.isHotWallet = isHotWallet;
         this.participants = participantsOverride != null && !participantsOverride.isEmpty()
                 ? java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(participantsOverride))
                 : defaultParticipants(nodesCount);

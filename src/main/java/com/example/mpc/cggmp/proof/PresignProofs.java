@@ -193,7 +193,7 @@ public final class PresignProofs {
                     .mod(N1sq);
         }
         
-        logger.debug("PiAffG modPow computed in {} ms (GPU batch acceleration)", 
+        logger.debug("PiAffG modPow computed in {} ms", 
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
         List<BigInteger> A = new ArrayList<>(effectiveKappa);
@@ -582,7 +582,7 @@ public final class PresignProofs {
             r.add(ri);
         }
 
-        // 使用GPU批量计算A值
+        // 批量计算A值
         long batchStart = System.nanoTime();
         BigInteger[] alphaArr = alpha.toArray(new BigInteger[0]);
         BigInteger[] betaArr = beta.toArray(new BigInteger[0]);
@@ -600,7 +600,7 @@ public final class PresignProofs {
             C.add(ecMulSigned(g, alphaArr[i]).normalize());
         }
         
-        logger.debug("PiDec A values computed in {} ms (GPU batch acceleration)", 
+        logger.debug("PiDec A values computed in {} ms", 
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
         boolean[] e = challengeBits("PI_DEC", context, effectiveKappa, A, B, C);

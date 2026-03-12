@@ -28,6 +28,7 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -178,6 +179,11 @@ public final class CggmpSignatureOfflineHandler {
 
                         long r2StartNs = System.nanoTime();
                         logger.debug("Presign R2 starting proof generation for task {} (peers={})", task.taskId, task.participants.size() - 1);
+                        synchronized (task) {
+                            if (task.r2VerifyLatch == null) {
+                                task.r2VerifyLatch = new CountDownLatch(task.participants.size() - 1);
+                            }
+                        }
                         List<CompletableFuture<CggmpPresignPeerR2Result>> r2Futures = new ArrayList<>();
                         for (int peerId : task.participants) {
                             if (peerId == svc.nodeId) continue;
@@ -594,9 +600,10 @@ public final class CggmpSignatureOfflineHandler {
                 if (!svc.signatureTasks.containsKey(signatureTaskId)) {
                     int resolvedInitiatorId = initiatorId != null ? initiatorId : senderId;
                     Set<Integer> participantsSet = participants == null ? null : new LinkedHashSet<>(participants);
-                    svc.createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg, resolvedInitiatorId, participantsSet, auxTaskId);
-                    logger.debug("Created CGGMP signature task from OFFLINE_INIT: {} (initiator={}, participants={}, auxTaskId={})",
-                            signatureTaskId, resolvedInitiatorId, participantsSet, auxTaskId);
+                    boolean isPresignTask = signatureTaskId.startsWith("presign-offline-");
+                    svc.createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, msg, resolvedInitiatorId, participantsSet, auxTaskId, isPresignTask);
+                    logger.debug("Created CGGMP signature task from OFFLINE_INIT: {} (initiator={}, participants={}, auxTaskId={}, isPresign={})",
+                            signatureTaskId, resolvedInitiatorId, participantsSet, auxTaskId, isPresignTask);
                     CompletableFuture.runAsync(() -> {
                         CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
                         if (task == null) {
@@ -667,6 +674,7 @@ public final class CggmpSignatureOfflineHandler {
             return CompletableFuture.failedFuture(new RuntimeException("Missing presign R2 bundle"));
         }
         CggmpPresignR2Context ctx = bundle.ctx();
+        svc.presignHandler.waitForR2VerifyAndUpdateState(ctx.task());
         return svc.waitForLatchAsync(ctx.task().presignR2Latch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presign R2")
                 .thenCompose(v -> CompletableFuture.supplyAsync(() -> {
                     try {
@@ -832,15 +840,19 @@ public final class CggmpSignatureOfflineHandler {
         ECPoint GammaFinal = r3ctx.Gamma().normalize();
         BigInteger kTilde = ctx.task().k_i.multiply(deltaInv).mod(ctx.curveOrder());
         BigInteger chiTilde = r3ctx.chi_i().multiply(deltaInv).mod(ctx.curveOrder());
-        ctx.task().presignature = new Presignature(GammaFinal, kTilde, chiTilde);
-        ctx.task().presignatureLatch.countDown();
-
+        
         for (Map.Entry<Integer, ECPoint> e : ctx.task().presignDeltaPoint.entrySet()) {
             ctx.task().presignDeltaTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
         }
         for (Map.Entry<Integer, ECPoint> e : ctx.task().presignSPoint.entrySet()) {
             ctx.task().presignSTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
         }
+        
+        String presignId = ctx.task().taskId;
+        ctx.task().presignature = new Presignature(presignId, GammaFinal, kTilde, chiTilde, 
+            new java.util.HashMap<>(ctx.task().presignDeltaTilde), 
+            new java.util.HashMap<>(ctx.task().presignSTilde));
+        ctx.task().presignatureLatch.countDown();
 
         if (svc.nodeId == ctx.task().initiatorId) {
             markOfflineReady(ctx.task(), svc.nodeId);

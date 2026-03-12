@@ -57,7 +57,7 @@ public final class Constants {
     // ==================== 签名协议超时参数 ====================
 
     /** 签名承诺接收超时时间（秒） */
-    public static final long SIGNATURE_COMMITMENT_TIMEOUT_SECONDS = 60;
+    public static final long SIGNATURE_COMMITMENT_TIMEOUT_SECONDS = 180;
 
     /** 签名份额接收超时时间（秒） */
     public static final long SIGNATURE_SHARE_TIMEOUT_SECONDS = 30;

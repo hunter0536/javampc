@@ -89,7 +89,8 @@ public class DatabaseService {
                         dkg_task_id TEXT NOT NULL,
                         public_shares TEXT,
                         index_map TEXT,
-                        chain_code TEXT
+                        chain_code TEXT,
+                        is_hot_wallet INTEGER DEFAULT 0
                     )
                     """;
             String createAuxTableSql = """

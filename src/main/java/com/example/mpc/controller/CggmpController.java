@@ -18,10 +18,13 @@ import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.service.CggmpAuxService;
+import com.example.mpc.service.CggmpSignatureService;
+import com.example.mpc.service.PresignPoolService;
 import com.example.mpc.service.CggmpDiagnosticsService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.CggmpSignatureService;
+import com.example.mpc.service.PresignPoolService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,11 +32,13 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
@@ -51,6 +56,8 @@ public class CggmpController {
     private CggmpAuxService cggmpAuxService;
     @Autowired
     private CggmpRefreshService cggmpRefreshService;
+    @Autowired
+    private PresignPoolService presignPoolService;
 
     // ==================== AUX 接口 ====================
 
@@ -109,11 +116,12 @@ public class CggmpController {
      * @return 任务ID
      */
     @GetMapping("/dkg/start")
-    public CompletableFuture<ApiResponse<DkgTaskStartResponse>> generateKey() {
+    public CompletableFuture<ApiResponse<DkgTaskStartResponse>> generateKey(
+            @RequestParam(required = false, defaultValue = "false") boolean isHotWallet) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                String taskId = cggmpDkgService.createDkgTask();
-                logger.info("Created CGGMP DKG task {}", taskId);
+                String taskId = cggmpDkgService.createDkgTask(isHotWallet);
+                logger.info("Created CGGMP DKG task {} with isHotWallet={}", taskId, isHotWallet);
 
                 cggmpDkgService.startDkgProcess(taskId)
                         .thenAccept(result -> logger.info("DKG process completed for task {}", taskId))
@@ -194,6 +202,8 @@ public class CggmpController {
             try {
                 String groupPublicKey = request.getGroupPublicKey();
                 String message = request.getMessage();
+                boolean isHotWallet = request.isHotWallet();
+                logger.info("Sign request received: isHotWallet={}, groupPublicKey={}", isHotWallet, groupPublicKey);
                 
                 if (groupPublicKey == null || groupPublicKey.isEmpty()) {
                     return ApiResponse.badRequest("groupPublicKey cannot be null or empty");
@@ -202,7 +212,24 @@ public class CggmpController {
                     return ApiResponse.badRequest("message cannot be null or empty");
                 }
 
-                String signatureTaskId = cggmpSignatureService.createSignatureTaskWithGroupKey(groupPublicKey, message);
+                if (isHotWallet && presignPoolService.isEnabled()) {
+                    logger.info("Hot wallet sign request, presign pool enabled, trying to consume presign");
+                    var presigned = waitAndConsumePresign(groupPublicKey, isHotWallet, 60000);
+                    if (presigned.isPresent()) {
+                        String signature = presignPoolService.signWithPresignData(groupPublicKey, message, presigned.get());
+                        logger.info("Using presigned signature from pool for groupKey: {}", groupPublicKey);
+                        SignatureTaskStartResponse data = new SignatureTaskStartResponse(
+                            "presign-" + System.currentTimeMillis(),
+                            groupPublicKey,
+                            message,
+                            "Hot wallet signature from presign pool"
+                        );
+                        data.setSignature(signature);
+                        return ApiResponse.success(data);
+                    }
+                }
+
+                String signatureTaskId = cggmpSignatureService.createSignatureTaskWithGroupKey(groupPublicKey, message, isHotWallet);
 
                 cggmpSignatureService.startSignatureTask(signatureTaskId)
                         .exceptionally(ex -> {
@@ -449,5 +476,28 @@ public class CggmpController {
             return "\"" + v + "\"";
         }
         return v;
+    }
+    
+    private Optional<com.example.mpc.dto.PresignData> waitAndConsumePresign(String groupPublicKey, boolean isHotWallet, long timeoutMs) {
+        long startTime = System.currentTimeMillis();
+        long intervalMs = 1000;
+        
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+            var presigned = presignPoolService.tryConsume(groupPublicKey, isHotWallet);
+            if (presigned.isPresent()) {
+                return presigned;
+            }
+            
+            logger.info("No presign available for groupKey: {}, waiting {}ms...", groupPublicKey, intervalMs);
+            try {
+                Thread.sleep(intervalMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        
+        logger.warn("Timeout waiting for presign for groupKey: {}, timeout: {}ms", groupPublicKey, timeoutMs);
+        return Optional.empty();
     }
 }
