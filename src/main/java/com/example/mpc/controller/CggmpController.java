@@ -214,7 +214,7 @@ public class CggmpController {
 
                 if (isHotWallet && presignPoolService.isEnabled()) {
                     logger.info("Hot wallet sign request, presign pool enabled, trying to consume presign");
-                    var presigned = waitAndConsumePresign(groupPublicKey, isHotWallet, 60000);
+                    var presigned = presignPoolService.tryConsume(groupPublicKey, isHotWallet);
                     if (presigned.isPresent()) {
                         String signature = presignPoolService.signWithPresignData(groupPublicKey, message, presigned.get());
                         logger.info("Using presigned signature from pool for groupKey: {}", groupPublicKey);
@@ -226,6 +226,9 @@ public class CggmpController {
                         );
                         data.setSignature(signature);
                         return ApiResponse.success(data);
+                    } else {
+                        logger.warn("No presign available for hot wallet signature, groupKey: {}", groupPublicKey);
+                        return ApiResponse.error("No presign available for hot wallet signature");
                     }
                 }
 

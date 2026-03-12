@@ -166,6 +166,9 @@ public final class CggmpSignatureOnlineHandler {
                     }
                     return CompletableFuture.runAsync(() -> {
                         CggmpProtocolUtils.fireAndForget(sendSShare(ctx.task(), ctx.sigma_i()), logger, "CGGMP_SIGN_S_SHARE");
+                        if (ctx.task().isHotWallet && ctx.task().presignature != null && ctx.task().presignature.presignId() != null) {
+                            svc.presignPoolService.removePresignById(ctx.task().groupPublicKey, ctx.task().presignature.presignId());
+                        }
                         ctx.task().complete();
                         svc.signatureInProgress.set(false);
                         svc.clearPresignLocal(ctx.task());
@@ -300,7 +303,7 @@ public final class CggmpSignatureOnlineHandler {
         
         if (task.presignature != null && task.presignature.presignId() != null) {
             data.put("presignId", task.presignature.presignId());
-            logger.debug("Including presignId {} in CGGMP_SIGN_ONLINE_INIT for task {}", task.presignature.presignId(), task.taskId);
+            logger.info("Including presignId {} in CGGMP_SIGN_ONLINE_INIT for task {}", task.presignature.presignId(), task.taskId);
         }
         
         return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
@@ -980,6 +983,10 @@ public final class CggmpSignatureOnlineHandler {
         ctx.task().verified = verified;
         ctx.task().complete();
         svc.signatureInProgress.set(false);
+        
+        if (ctx.task().isHotWallet && ctx.task().presignature != null && ctx.task().presignature.presignId() != null) {
+            svc.presignPoolService.removePresignById(ctx.task().groupPublicKey, ctx.task().presignature.presignId());
+        }
         
         if (ctx.task().isHotWallet) {
             AtomicInteger lock = svc.hotWalletSignatureLocks.get(ctx.task().groupPublicKey);

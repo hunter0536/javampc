@@ -854,6 +854,11 @@ public final class CggmpSignatureOfflineHandler {
             new java.util.HashMap<>(ctx.task().presignSTilde));
         ctx.task().presignatureLatch.countDown();
 
+        if (ctx.task().taskId.startsWith("presign-offline-") && ctx.task().presignature != null) {
+            svc.presignPoolService.addPresignToPool(ctx.task().groupPublicKey, ctx.task().presignature);
+            logger.info("Added presignature to pool for task {} (nodeId={})", ctx.task().taskId, svc.nodeId);
+        }
+
         if (svc.nodeId == ctx.task().initiatorId) {
             markOfflineReady(ctx.task(), svc.nodeId);
         } else {

@@ -221,16 +221,44 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
 
         AuxInfo auxInfo;
-        if (auxTaskId != null && !auxTaskId.isEmpty()) {
-            auxInfo = auxInfoDao.loadByTaskId(nodeId, auxTaskId);
-        } else {
+        boolean isInitiator = (initiatorId == nodeId);
+        
+        if (isInitiator) {
             auxInfo = auxInfoDao.loadLatestSync(nodeId);
-        }
-        if (auxInfo == null) {
-            if (!isHotWallet) {
-                signatureInProgress.set(false);
+            if (auxInfo == null) {
+                if (!isHotWallet) {
+                    signatureInProgress.set(false);
+                }
+                throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
             }
-            throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
+            logger.info("Initiator loaded latest aux info: auxTaskId={}", auxInfo.getTaskId());
+        } else {
+            if (auxTaskId == null || auxTaskId.isEmpty()) {
+                logger.error("Participant received task without auxTaskId, terminating task {}", signatureTaskId);
+                if (!isHotWallet) {
+                    signatureInProgress.set(false);
+                }
+                throw new RuntimeException("Missing auxTaskId from initiator. Task terminated for security.");
+            }
+            
+            auxInfo = auxInfoDao.loadLatestSync(nodeId);
+            if (auxInfo == null) {
+                if (!isHotWallet) {
+                    signatureInProgress.set(false);
+                }
+                throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
+            }
+            
+            if (!auxTaskId.equals(auxInfo.getTaskId())) {
+                logger.error("Aux task ID mismatch! Received={}, Local latest={}, terminating task {}", 
+                    auxTaskId, auxInfo.getTaskId(), signatureTaskId);
+                if (!isHotWallet) {
+                    signatureInProgress.set(false);
+                }
+                throw new RuntimeException("Aux task ID mismatch. Expected: " + auxTaskId + 
+                    ", Local latest: " + auxInfo.getTaskId() + ". Task terminated for security.");
+            }
+            logger.info("Participant verified aux task ID: received={}, local latest={}", auxTaskId, auxInfo.getTaskId());
         }
 
         String fixedGroupPublicKey;
@@ -252,6 +280,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             signatureInProgress.set(false);
             throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
         }
+        logger.info("Initiator loaded latest aux info for presign task: auxTaskId={}", auxInfo.getTaskId());
 
         String fixedGroupPublicKey;
         fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
@@ -640,10 +669,6 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 throw new RuntimeException("Presignature not generated");
             }
 
-            if (presignPoolService != null) {
-                presignPoolService.addPresignToPool(groupPublicKey, presignature);
-            }
-
             logger.info("Presign offline completed for task: {}", taskId);
             return presignature;
         } catch (Exception e) {
@@ -664,6 +689,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     public String signWithPresignature(String groupPublicKey, String message, Presignature presignature) {
         logger.info("signWithPresignature called: groupPublicKey={}, message={}, presignature={}", 
             groupPublicKey, message, presignature != null ? "present" : "null");
+        
+        if (!nodeService.areAllPeerConnectionsActive()) {
+            throw new RuntimeException("Network not ready: not all peer connections are active");
+        }
+        
         AtomicInteger lock = hotWalletSignatureLocks.computeIfAbsent(groupPublicKey, k -> new AtomicInteger(0));
         int maxConcurrent = 10;
         if (lock.incrementAndGet() > maxConcurrent) {

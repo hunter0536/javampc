@@ -143,6 +143,25 @@ public class PresignPoolService {
         return Optional.empty();
     }
 
+    public boolean removePresignById(String groupPublicKey, String presignId) {
+        if (!enabled || presignId == null) {
+            return false;
+        }
+
+        BlockingQueue<PresignData> pool = hotWalletPools.get(groupPublicKey);
+        if (pool == null) {
+            return false;
+        }
+
+        boolean removed = pool.removeIf(presignData -> presignId.equals(presignData.getPresignId()));
+        if (removed) {
+            LOGGER.info("Removed presign {} from pool (groupPublicKey={}), remaining: {}", presignId, groupPublicKey, pool.size());
+        } else {
+            LOGGER.warn("Failed to remove presign {} from pool (groupPublicKey={}), not found", presignId, groupPublicKey);
+        }
+        return removed;
+    }
+
     public String signWithPresignData(String groupPublicKey, String message, PresignData presignData) {
         Presignature presignature = presignData.toPresignature();
         return signatureService.signWithPresignature(groupPublicKey, message, presignature);
