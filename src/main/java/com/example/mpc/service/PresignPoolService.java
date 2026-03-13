@@ -32,19 +32,19 @@ public class PresignPoolService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(PresignPoolService.class);
 
-    @Value("${hotwallet.presign-pool.enabled:false}")
+    @Value("${cggmp.presign.pool.enabled:false}")
     private boolean enabled;
 
-    @Value("${hotwallet.presign-pool.min-size:5}")
+    @Value("${cggmp.presign.pool.minSize:5}")
     private int minSize;
 
-    @Value("${hotwallet.presign-pool.max-size:15}")
+    @Value("${cggmp.presign.pool.maxSize:15}")
     private int maxSize;
 
-    @Value("${hotwallet.presign-pool.max-age-minutes:20}")
+    @Value("${cggmp.presign.pool.maxAgeMinutes:20}")
     private int maxAgeMinutes;
 
-    @Value("${hotwallet.presign-pool.generation-threads:1}")
+    @Value("${cggmp.presign.pool.generationThreads:1}")
     private int generationThreads;
 
     @Value("${node.id}")
@@ -181,7 +181,7 @@ public class PresignPoolService {
         LOGGER.info("Added presign to pool (groupPublicKey={}), pool size: {}", groupPublicKey, pool.size());
     }
 
-    @Scheduled(fixedDelayString = "${hotwallet.presign-pool.refresh-interval-ms:30000}")
+    @Scheduled(fixedDelayString = "${cggmp.presign.pool.refreshIntervalMs:30000}")
     public void generateAndRefreshPresigs() {
         if (!enabled) {
             return;

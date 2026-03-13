@@ -64,13 +64,13 @@ public class CggmpDkgService implements NodeService.MessageHandler {
     @Value("${node.id}")
     public int nodeId;
 
-    @Value("${app.cggmp.hdEnabled:false}")
+    @Value("${cggmp.hdEnabled:false}")
     public boolean hdEnabled;
 
-    @Value("${mpc.dkg.echoEnabled:true}")
+    @Value("${cggmp.dkg.echoEnabled:true}")
     public boolean dkgEchoEnabled;
 
-    @Value("${mpc.dkg.useRbc:true}")
+    @Value("${cggmp.dkg.rbcEnabled:true}")
     public boolean dkgUseRbc;
 
     public final int nodesCount = Constants.NODES_COUNT;

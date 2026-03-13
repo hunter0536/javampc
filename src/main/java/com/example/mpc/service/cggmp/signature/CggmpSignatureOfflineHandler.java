@@ -704,17 +704,9 @@ public final class CggmpSignatureOfflineHandler {
                             BigInteger oldChi = chi_i;
                             delta_i = delta_i.add(alpha).add(beta).mod(ctx.curveOrder());
                             chi_i = chi_i.add(alphaHat).add(betaHat).mod(ctx.curveOrder());
-                            logger.info("Presign R3 accumulate task {} peer {}: alpha={}, beta={}, alphaHat={}, betaHat={}, delta_i: {} -> {}, chi_i: {} -> {}",
+                            logger.info("Presign R3 accumulate task {} peer {}: updated delta_i/chi_i (values redacted)",
                                     ctx.task().taskId,
-                                    peerId,
-                                    alpha.toString(16),
-                                    beta.toString(16),
-                                    alphaHat.toString(16),
-                                    betaHat.toString(16),
-                                    oldDelta.toString(16),
-                                    delta_i.toString(16),
-                                    oldChi.toString(16),
-                                    chi_i.toString(16));
+                                    peerId);
                         }
                         if (!missingR3Peers.isEmpty()) {
                             throw new RuntimeException("Presign R3 missing inputs from peers: " + missingR3Peers);
@@ -764,11 +756,10 @@ public final class CggmpSignatureOfflineHandler {
         ECPoint left = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), delta);
         ECPoint right = Secp256k1CurveUtils.sumPoints(ctx.task().presignDeltaPoint);
         if (!left.equals(right)) {
-            logger.warn("Presign delta verification mismatch for task {}: left={}, right={}, delta={}, participants={}",
+            logger.warn("Presign delta verification mismatch for task {}: left={}, right={}, delta=<redacted>, participants={}",
                     ctx.task().taskId,
                     HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(left)),
                     HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(right)),
-                    delta.toString(16),
                     ctx.task().participants);
             Map<String, Object> evidence = svc.evidenceHandler.buildDecEvidenceDelta(ctx.task(), ctx.gamma_i(), r3ctx.delta_i());
             CggmpProtocolUtils.fireAndForget(svc.broadcastComplaint(ctx.task(), null, "Presign delta verification failed", evidence),
@@ -780,11 +771,10 @@ public final class CggmpSignatureOfflineHandler {
         ECPoint leftS = X.multiply(delta).normalize();
         ECPoint rightS = Secp256k1CurveUtils.sumPoints(ctx.task().presignSPoint);
         if (!leftS.equals(rightS)) {
-            logger.warn("Presign chi verification mismatch for task {}: leftS={}, rightS={}, delta={}, participants={}",
+            logger.warn("Presign chi verification mismatch for task {}: leftS={}, rightS={}, delta=<redacted>, participants={}",
                     ctx.task().taskId,
                     HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(leftS)),
                     HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(rightS)),
-                    delta.toString(16),
                     ctx.task().participants);
             logger.warn("Presign chi mismatch summary task {}: presignDelta.size={}, presignSPoint.size={}, presignDeltaPoint.size={}",
                     ctx.task().taskId,
@@ -797,11 +787,9 @@ public final class CggmpSignatureOfflineHandler {
                 if (sPoint == null && deltaShare == null) {
                     continue;
                 }
-                logger.warn("Presign chi mismatch details task {} peer {}: S_i={}, delta_i={}",
+                logger.warn("Presign chi mismatch details task {} peer {}: S_i=<redacted>, delta_i=<redacted>",
                         ctx.task().taskId,
-                        peerId,
-                        sPoint == null ? null : HexUtils.bytesToHex(Secp256k1CurveUtils.encodePoint(sPoint)),
-                        deltaShare == null ? null : deltaShare.toString(16));
+                        peerId);
             }
             // Identify which peer contribution breaks the chi check by excluding it.
             for (int peerId : ctx.task().participants) {

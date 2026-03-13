@@ -21,23 +21,27 @@ discovery:
 
 # 节点通信共享密钥（HMAC）
 nodes:
-  sharedSecret: "dev-shared-secret" # 节点间共享密钥（用于 HMAC 认证）
-  ssl:
-    enabled: true # 是否启用 TLS（私密信道）
-    cert: "scripts/config/node.crt" # 本节点证书
-    key: "scripts/config/node.key" # 本节点私钥
-    trustCert: "scripts/config/ca.crt" # 信任根证书
-  reliableBroadcast:
-    enabled: true # 是否启用可靠广播 (RBC)
+  hmacSecret: "dev-shared-secret" # 节点间共享密钥（用于 HMAC 认证，必填，否则启动失败）
+  tls:
+    enabled: true # 是否启用 TLS（必需，未启用将启动失败）
+    cert: "src/main/resources/tls/config/node.crt" # 本节点证书
+    key: "src/main/resources/tls/config/node.key" # 本节点私钥
+    trustCert: "src/main/resources/tls/config/ca.crt" # 信任根证书
+  replay:
+    windowMs: 300000 # 重放窗口（毫秒）
+    maxSkewMs: 30000 # 允许的时钟偏差（毫秒）
+    maxCacheSize: 200000 # 重放缓存上限
+  rbc:
+    enabled: true # 是否启用可靠广播 (RBC)，仅在支持 RBC 的协议阶段生效
     retryCount: 3 # RBC 重试次数
     retryIntervalMs: 200 # RBC 重试间隔（毫秒）
     quorum: 0 # RBC 法定人数（0 表示使用默认规则）
   chaos:
-    enabled: false # 是否启用消息乱序/延迟/重放
+    enabled: false # 是否启用消息乱序/延迟/重复投递（仅测试）
     minDelayMs: 0 # 乱序最小延迟（毫秒）
     maxDelayMs: 0 # 乱序最大延迟（毫秒）
     duplicateChance: 0 # 重放概率（0-1）
-    types: "" # 仅对这些消息类型生效（逗号分隔，空表示全部）
+    messageTypes: "" # 仅对这些消息类型生效（逗号分隔，空表示全部）
 
 # 日志配置
 logging:
@@ -51,39 +55,37 @@ app:
   init:
     cggmp:
       enabled: true  # 是否启用 CGGMP 服务
-    legacy:
-      enabled: true  # 是否启用旧的 DKG 服务
-  cggmp:
-    hdEnabled: false # HD 开关：同时控制 DKG 生成 chain code 与签名使用 shift
-    complaint:
-      logPath: logs/complaints.jsonl # 投诉记录日志文件路径
-    proof:
-      kappa: 128  # Πdec/Πaff-g* 的挑战位长度（生产环境推荐值：128，提供 2^-128 可靠性）
-      epsBits: 16 # Πdec/Πaff-g* 取值范围扩展位数（标准值：16）
-    presign:
-      retentionDays: 30 # 预签名使用记录保留天数
-      usagePath: databases/node-{nodeId}/presign-usage.jsonl # 预签名使用记录路径（支持 {nodeId} 占位）
-      echoEnabled: false # 是否启用 presign R1 echo
-      useRbc: false # 是否对 presign R1 echo 使用 RBC
-    aux:
-      paillierBits: 3072 # Paillier 密钥位数（生产环境推荐值：≥3072；工程上限 4096）
-      minPaillierBitsForProof: 3071 # =paillierBits-1 允许的最小 Paillier 模数位数（工程上限 4096）
-      autoCheckIntervalSeconds: 60 # 自动 AUX 轮询间隔（秒）
-    gmp:
-      enabled: true # 启用 GMP 加速
+    gennaro:
+      enabled: false  # 是否启用 Gennaro DKG（legacy）
 
-# 热钱包配置
-hotwallet:
-  presign-pool:
-    enabled: true              # 是否启用预签名池
-    min-size: 1               # 预签名池最小数量
-    max-size: 2               # 预签名池最大数量
-    max-age-minutes: 30        # 预签名过期时间（分钟）
-    refresh-interval-ms: 1000 # 预签名池刷新间隔（毫秒）
-    generation-threads: 2     # 预签名生成线程数
+# CGGMP 配置
+cggmp:
+  hdEnabled: false # HD 开关：同时控制 DKG 生成 chain code 与签名使用 shift
+  dkg:
+    echoEnabled: true # CGGMP DKG 是否启用 echo 可靠性检查（仅 CGGMP DKG）
+    rbcEnabled: true # CGGMP DKG 是否对广播通道使用 RBC（仅 CGGMP DKG）
+  complaint:
+    logPath: logs/complaints.jsonl # 投诉记录日志文件路径
+  proof:
+    kappa: 128  # Πdec/Πaff-g* 的挑战位长度（生产环境推荐值：128，提供 2^-128 可靠性）
+    epsBits: 16 # Πdec/Πaff-g* 取值范围扩展位数（标准值：16）
+  presign:
+    retentionDays: 30 # 预签名使用记录保留天数
+    usagePath: databases/node-{nodeId}/presign-usage.jsonl # 预签名使用记录路径（支持 {nodeId} 占位）
+    echoEnabled: true # 是否启用 presign R1 echo（仅 R1）
+    rbcEnabled: true # 是否对 presign R1 echo 使用 RBC（仅 R1）
+    pool:
+      enabled: true              # 是否启用预签名池（仅热钱包场景）
+      minSize: 1               # 预签名池最小数量
+      maxSize: 2               # 预签名池最大数量
+      maxAgeMinutes: 30        # 预签名过期时间（分钟）
+      refreshIntervalMs: 1000 # 预签名池刷新间隔（毫秒）
+      generationThreads: 2     # 预签名生成线程数
+  aux:
+    paillierBits: 3072 # Paillier 密钥位数（生产环境推荐值：≥3072；工程上限 4096）
+    minPaillierBitsForProof: 3071 # =paillierBits-1 允许的最小 Paillier 模数位数（工程上限 4096）
+    autoCheckIntervalSeconds: 60 # 自动 AUX 轮询间隔（秒）
+  gmp:
+    enabled: true # 启用 GMP 加速
 
 # MPC 全局参数
-mpc:
-  dkg:
-    echoEnabled: false # DKG 是否启用 echo 可靠性检查
-    useRbc: false # DKG 是否对广播通道使用 RBC

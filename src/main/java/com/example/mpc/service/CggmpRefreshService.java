@@ -59,11 +59,11 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     @Value("${node.id}")
     public int nodeId;
 
-    @Value("${app.cggmp.hdEnabled:false}")
+    @Value("${cggmp.hdEnabled:false}")
     public boolean hdEnabled;
 
 
-    @Value("${app.cggmp.complaint.logPath:logs/complaints.jsonl}")
+    @Value("${cggmp.complaint.logPath:logs/complaints.jsonl}")
     public String complaintLogPath;
 
     public final Map<String, CggmpRefreshTask> refreshTasks = new ConcurrentHashMap<>();

@@ -29,6 +29,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -45,6 +46,9 @@ public class NettyService {
     private final String certPath;
     private final String keyPath;
     private final String trustCertPath;
+    private final long replayWindowMs;
+    private final long replayMaxSkewMs;
+    private final int replayMaxCacheSize;
 
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -60,6 +64,9 @@ public class NettyService {
                         String certPath,
                         String keyPath,
                         String trustCertPath,
+                        long replayWindowMs,
+                        long replayMaxSkewMs,
+                        int replayMaxCacheSize,
                         java.util.function.BiConsumer<Integer, String> ackHandler,
                         java.util.function.BiFunction<Integer, NodeService.Message, CompletableFuture<Void>> inboundHandler) {
         this.nodeId = nodeId;
@@ -69,6 +76,9 @@ public class NettyService {
         this.certPath = certPath;
         this.keyPath = keyPath;
         this.trustCertPath = trustCertPath;
+        this.replayWindowMs = replayWindowMs;
+        this.replayMaxSkewMs = replayMaxSkewMs;
+        this.replayMaxCacheSize = replayMaxCacheSize;
         this.ackHandler = ackHandler;
         this.inboundHandler = inboundHandler;
         int cpuCores = Runtime.getRuntime().availableProcessors();
@@ -96,7 +106,8 @@ public class NettyService {
                             }
                             pipeline.addLast(new ObjectEncoder());
                             pipeline.addLast(new ObjectDecoder(10 * 1024 * 1024, ClassResolvers.weakCachingConcurrentResolver(null)));
-                            pipeline.addLast(new ServerHandler(NettyService.this, sharedSecret, sslEnabled));
+                            pipeline.addLast(new ServerHandler(NettyService.this, sharedSecret, sslEnabled,
+                                    replayWindowMs, replayMaxSkewMs, replayMaxCacheSize));
                         }
                     })
                     .option(ChannelOption.SO_BACKLOG, 128)
@@ -309,12 +320,29 @@ public class NettyService {
     }
 
     private Object wrapSigned(NodeService.Message message) {
-        if (sslEnabled || sharedSecret == null || sharedSecret.isBlank()) {
-            return message;
+        if (!sslEnabled) {
+            throw new RuntimeException("TLS is required for node-to-node communication.");
         }
-        String payload = MessageSigner.canonicalPayload(message);
+        if (sharedSecret == null || sharedSecret.isBlank()) {
+            throw new RuntimeException("HMAC shared secret is required for node-to-node communication.");
+        }
+        NodeService.Message signedMessage = message;
+        if (message.messageId() == null || message.messageId().isBlank()) {
+            String newId = java.util.UUID.randomUUID().toString();
+            signedMessage = new NodeService.Message(
+                    message.senderId(),
+                    message.type(),
+                    message.data(),
+                    newId,
+                    message.requireAck(),
+                    message.ackForId(),
+                    message.rbc(),
+                    message.rbcHash()
+            );
+        }
+        String payload = MessageSigner.canonicalPayload(signedMessage);
         String sig = MessageSigner.sign(payload, sharedSecret);
-        return new SignedMessage(message, sig, System.currentTimeMillis());
+        return new SignedMessage(signedMessage, sig, System.currentTimeMillis());
     }
 
     private SslContext serverSslContext() throws SSLException {

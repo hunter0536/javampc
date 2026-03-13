@@ -18,10 +18,10 @@ import java.util.Map;
 
 @Service
 public class CggmpDiagnosticsService {
-    @Value("${app.cggmp.proof.kappa:128}")
+    @Value("${cggmp.proof.kappa:128}")
     int proofKappa;
 
-    @Value("${app.cggmp.proof.epsBits:16}")
+    @Value("${cggmp.proof.epsBits:16}")
     int proofEpsBits;
 
     public Map<String, Object> runProofSelfCheck() {

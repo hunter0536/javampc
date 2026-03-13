@@ -47,16 +47,16 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Value("${app.init.cggmp.enabled:true}")
     private boolean enableCggmp;
 
-    @Value("${app.init.legacy.enabled:true}")
+    @Value("${app.init.gennaro.enabled:true}")
     private boolean enableLegacy;
 
-    @Value("${app.cggmp.gmp.enabled:true}")
+    @Value("${cggmp.gmp.enabled:true}")
     private boolean gmpEnabled;
 
     @Override
     public void run(String... args) throws Exception {
-        System.setProperty("app.cggmp.gmp.enabled", String.valueOf(gmpEnabled));
-        logger.info("Set system property app.cggmp.gmp.enabled={}", gmpEnabled);
+        System.setProperty("cggmp.gmp.enabled", String.valueOf(gmpEnabled));
+        logger.info("Set system property cggmp.gmp.enabled={}", gmpEnabled);
         
         if (gmpEnabled) {
             logger.info("GMP is enabled, loading NativeBigInteger...");

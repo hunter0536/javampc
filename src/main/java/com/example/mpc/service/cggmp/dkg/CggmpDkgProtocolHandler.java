@@ -57,7 +57,7 @@ public final class CggmpDkgProtocolHandler {
         try {
             task = svc.getDkgTask(taskId);
             if (!svc.nodeService.isTlsEnabled()) {
-                throw new RuntimeException("DKG requires TLS-enabled private channels (nodes.ssl.enabled=true).");
+                throw new RuntimeException("DKG requires TLS-enabled private channels (nodes.tls.enabled=true).");
             }
             if (!validateFullParticipation(task)) {
                 throw new RuntimeException("DKG requires full participation");

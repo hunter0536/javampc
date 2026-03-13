@@ -130,10 +130,12 @@ mpc/
 │                   └── mpc/
 │                       └── cggmp/
 │                           └── CGGMPTest.java
-├── scripts/                                # 脚本文件
-│   ├── config/                             # 配置文件
-│   ├── build_native.sh                     # 构建本地库脚本
-│   └── generate_dev_tls.sh                 # 生成开发 TLS 证书脚本
+├── src/
+│   ├── main/
+│   │   └── resources/
+│   │       └── tls/                        # TLS 证书与脚本
+│   │           ├── config/                 # TLS 配置文件
+│   │           └── generate_dev_tls.sh     # 生成开发 TLS 证书脚本
 ├── .trae/                                  # Trae IDE 配置
 │   └── documents/
 │       └── mpc_wallet_3of5_plan.md
@@ -205,7 +207,7 @@ mpc/
 
 3. **（可选）构建本地库**
    ```bash
-   ./scripts/build_native.sh
+   ./src/main/resources/native/gmp/build_native.sh
    ```
 
 4. **运行 5 个节点**
@@ -926,14 +928,15 @@ app:
   init:
     cggmp:
       enabled: true
-    legacy:
+    gennaro:
       enabled: true
-  cggmp:
-    aux:
-      gpu:
-        enabled: true  # 启用 GPU 加速
-      gmp:
-        enabled: true  # 启用 GMP 加速
+
+cggmp:
+  aux:
+    gpu:
+      enabled: true  # 启用 GPU 加速
+  gmp:
+    enabled: true  # 启用 GMP 加速
 ```
 
 ## 扩展和定制

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUT_DIR=${OUT_DIR:-config}
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+OUT_DIR=${OUT_DIR:-"$SCRIPT_DIR/config"}
 mkdir -p "$OUT_DIR"
 
 CERT="$OUT_DIR/node.crt"

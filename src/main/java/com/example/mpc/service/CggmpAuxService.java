@@ -59,13 +59,13 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     @Value("${node.id}")
     public int nodeId;
 
-    @Value("${app.cggmp.aux.paillierBits:3072}")
+    @Value("${cggmp.aux.paillierBits:3072}")
     public int auxPaillierBits;
 
-    @Value("${app.cggmp.aux.minPaillierBitsForProof:2048}")
+    @Value("${cggmp.aux.minPaillierBitsForProof:2048}")
     public int auxMinPaillierBitsForProof;
 
-    @Value("${app.cggmp.aux.autoCheckIntervalSeconds:60}")
+    @Value("${cggmp.aux.autoCheckIntervalSeconds:60}")
     public long auxAutoCheckIntervalSeconds;
 
     public final Map<String, CggmpAuxTask> auxTasks = new ConcurrentHashMap<>();
@@ -89,15 +89,15 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     public void validateAuxParams() {
         int max = PaillierEncryption.MAX_KEY_SIZE;
         if (auxPaillierBits > max) {
-            logger.warn("app.cggmp.aux.paillierBits={} exceeds max {}, clamping to {}", auxPaillierBits, max, max);
+            logger.warn("cggmp.aux.paillierBits={} exceeds max {}, clamping to {}", auxPaillierBits, max, max);
             auxPaillierBits = max;
         }
         if (auxMinPaillierBitsForProof > max) {
-            logger.warn("app.cggmp.aux.minPaillierBitsForProof={} exceeds max {}, clamping to {}", auxMinPaillierBitsForProof, max, max);
+            logger.warn("cggmp.aux.minPaillierBitsForProof={} exceeds max {}, clamping to {}", auxMinPaillierBitsForProof, max, max);
             auxMinPaillierBitsForProof = max;
         }
         if (auxMinPaillierBitsForProof > auxPaillierBits) {
-            logger.warn("app.cggmp.aux.minPaillierBitsForProof={} exceeds app.cggmp.aux.paillierBits={}, clamping to {}",
+            logger.warn("cggmp.aux.minPaillierBitsForProof={} exceeds cggmp.aux.paillierBits={}, clamping to {}",
                     auxMinPaillierBitsForProof, auxPaillierBits, auxPaillierBits);
             auxMinPaillierBitsForProof = auxPaillierBits;
         }

@@ -73,23 +73,23 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     @Value("${node.id}")
     public int nodeId;
 
-    @Value("${app.cggmp.proof.kappa:128}")
+    @Value("${cggmp.proof.kappa:128}")
     public int proofKappa;
 
-    @Value("${app.cggmp.proof.epsBits:16}")
+    @Value("${cggmp.proof.epsBits:16}")
     public int proofEpsBits;
 
-    @Value("${app.cggmp.presign.retentionDays:30}")
+    @Value("${cggmp.presign.retentionDays:30}")
     public long presignRetentionDays;
-    @Value("${app.cggmp.presign.usagePath:databases/node-{nodeId}/presign-usage.jsonl}")
+    @Value("${cggmp.presign.usagePath:databases/node-{nodeId}/presign-usage.jsonl}")
     public String presignUsagePath;
-    @Value("${app.cggmp.presign.echoEnabled:true}")
+    @Value("${cggmp.presign.echoEnabled:true}")
     public boolean presignEchoEnabled;
-    @Value("${app.cggmp.presign.useRbc:false}")
+    @Value("${cggmp.presign.rbcEnabled:false}")
     public boolean presignUseRbc;
-    @Value("${app.cggmp.hdEnabled:false}")
+    @Value("${cggmp.hdEnabled:false}")
     public boolean hdEnabled;
-    @Value("${app.cggmp.complaint.logPath:logs/complaints.jsonl}")
+    @Value("${cggmp.complaint.logPath:logs/complaints.jsonl}")
     public String complaintLogPath;
     public final Map<String, CggmpSignatureTask> signatureTasks = new ConcurrentHashMap<>();
     public static final ExecutorService signatureExecutorService = ThreadPoolUtil.getComputationThreadPool();
@@ -728,7 +728,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 com.example.mpc.common.util.HexUtils.hexToBytes(fixedGroupPublicKey));
             
             task.messageHash = CggmpProtocolUtils.hashMessage(task.message);
-            logger.info("Computed messageHash for presign signature: {}", com.example.mpc.common.util.HexUtils.bytesToHex(task.messageHash));
+            logger.info("Computed messageHash for presign signature (redacted)");
             
             signatureTasks.put(taskId, task);
 
@@ -760,7 +760,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                     signature = task.signature;
                     logger.warn("getSignatureString returned null, using task.signature directly");
                 }
-                logger.info("Signature with presign completed for task: {}, signature={}", taskId, signature);
+                logger.info("Signature with presign completed for task: {} (signature redacted)", taskId);
             } finally {
                 if (taskId != null) {
                     signatureTasks.remove(taskId);

@@ -105,9 +105,8 @@ public final class CggmpSignatureOnlineHandler {
                             throw new RuntimeException("Missing message hash for online phase");
                         }
                         if (logger.isDebugEnabled()) {
-                            logger.debug("Online phase inputs: taskId={}, messageHash={}, presignatureReady={}, offlineDoneLatch={}",
+                            logger.debug("Online phase inputs: taskId={}, messageHash=<redacted>, presignatureReady={}, offlineDoneLatch={}",
                                     task.taskId,
-                                    HexUtils.bytesToHex(task.messageHash),
                                     task.presignature != null,
                                     task.offlineDoneLatch.getCount());
                         }
