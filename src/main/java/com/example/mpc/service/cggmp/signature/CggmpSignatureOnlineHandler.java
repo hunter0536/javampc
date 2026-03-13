@@ -2,8 +2,8 @@ package com.example.mpc.service.cggmp.signature;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
-import com.example.mpc.cggmp.mta.MtAResult;
 import com.example.mpc.cggmp.mta.MtAProtocol;
+import com.example.mpc.cggmp.mta.MtAResult;
 import com.example.mpc.cggmp.sign.CggmpIntegrityChecker;
 import com.example.mpc.cggmp.sign.EcChaumPedersenProof;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
@@ -13,10 +13,10 @@ import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.AuxInfo;
 import com.example.mpc.dto.CggmpSignatureTask;
 import com.example.mpc.dto.PresignData;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -42,7 +42,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**

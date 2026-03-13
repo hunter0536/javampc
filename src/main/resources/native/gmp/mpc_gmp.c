@@ -515,7 +515,6 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
         bytes_to_mpz(env, sBytes, s);
         
         // Aj = C^alpha * (1+N0)^betaForN0 * r^N0 mod N0sq
-        // 参照Java代码中的公式：GpuBigInteger.java:302-305
         if (!mpz_powm_signed(env, tmp1, C, alpha, N0sq)) {
             mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, N0, N1, alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
             return NULL;
@@ -530,7 +529,6 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
         mpz_mod(Aj, Aj, N0sq);
         
         // Bj = (1+N1)^betaForN1 * s^N1 mod N1sq
-        // 参照Java代码中的公式：GpuBigInteger.java:307-309
         if (!mpz_powm_signed(env, tmp1, onePlusN1, betaForN1, N1sq)) {
             mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, N0, N1, alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
             return NULL;

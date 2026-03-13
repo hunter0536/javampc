@@ -2,12 +2,11 @@ package com.example.mpc.service.cggmp;
 
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.SecureRandomUtils;
 import com.example.mpc.dto.CggmpAuxTask;
 import com.example.mpc.dto.CggmpSignatureTask;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
-
-import com.example.mpc.common.util.SecureRandomUtils;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;

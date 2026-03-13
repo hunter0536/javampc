@@ -3,8 +3,8 @@ package com.example.mpc.service.cggmp.dkg;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpDkgTask;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.cggmp.CggmpHashUtils;
 import org.bouncycastle.math.ec.ECPoint;
 

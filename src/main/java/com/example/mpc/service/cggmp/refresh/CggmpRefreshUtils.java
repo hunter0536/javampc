@@ -2,8 +2,8 @@ package com.example.mpc.service.cggmp.refresh;
 
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpRefreshTask;
+import com.example.mpc.enums.MessageType;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;

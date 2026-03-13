@@ -2,7 +2,6 @@ package com.example.mpc.cggmp.proof;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
-import com.example.mpc.cggmp.util.NativeBigInteger;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.SecureRandomUtils;

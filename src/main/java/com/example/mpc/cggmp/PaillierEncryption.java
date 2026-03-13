@@ -1,14 +1,12 @@
 package com.example.mpc.cggmp;
 
-import com.example.mpc.cggmp.util.NativeBigInteger;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.common.util.SecureRandomUtils;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
 
 public class PaillierEncryption {
-    private static final boolean USE_NATIVE = NativeBigInteger.isNativeAvailable();
-    
     private BigInteger n;
     private BigInteger nSquared;
     private BigInteger g;
@@ -68,13 +66,8 @@ public class PaillierEncryption {
     }
 
     public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
-        if (USE_NATIVE) {
-            BigInteger gm = NativeBigInteger.modPow(g, m, nSquared);
-            BigInteger rn = NativeBigInteger.modPow(r, n, nSquared);
-            return gm.multiply(rn).mod(nSquared);
-        }
-        BigInteger gm = g.modPow(m, nSquared);
-        BigInteger rn = r.modPow(n, nSquared);
+        BigInteger gm = BigIntegerUtils.modPow(g, m, nSquared);
+        BigInteger rn = BigIntegerUtils.modPow(r, n, nSquared);
         return gm.multiply(rn).mod(nSquared);
     }
 
@@ -92,29 +85,17 @@ public class PaillierEncryption {
     }
 
     public BigInteger decrypt(BigInteger c) {
-        if (USE_NATIVE) {
-            BigInteger cLambda = NativeBigInteger.modPow(c, lambda, nSquared);
-            BigInteger l = cLambda.subtract(BigInteger.ONE).divide(n);
-            return l.multiply(mu).mod(n);
-        }
-        BigInteger cLambda = c.modPow(lambda, nSquared);
+        BigInteger cLambda = BigIntegerUtils.modPow(c, lambda, nSquared);
         BigInteger l = cLambda.subtract(BigInteger.ONE).divide(n);
         return l.multiply(mu).mod(n);
     }
 
     public BigInteger recoverRandomizer(BigInteger c, BigInteger m) {
-        if (USE_NATIVE) {
-            BigInteger gm = NativeBigInteger.modPow(g, m, nSquared);
-            BigInteger gmInv = NativeBigInteger.modInverse(gm, nSquared);
-            BigInteger cOver = c.multiply(gmInv).mod(nSquared);
-            BigInteger nInv = NativeBigInteger.modInverse(n, lambda);
-            return NativeBigInteger.modPow(cOver, nInv, nSquared).mod(n);
-        }
-        BigInteger gm = g.modPow(m, nSquared);
-        BigInteger gmInv = gm.modInverse(nSquared);
+        BigInteger gm = BigIntegerUtils.modPow(g, m, nSquared);
+        BigInteger gmInv = BigIntegerUtils.modInverse(gm, nSquared);
         BigInteger cOver = c.multiply(gmInv).mod(nSquared);
-        BigInteger nInv = n.modInverse(lambda);
-        return cOver.modPow(nInv, nSquared).mod(n);
+        BigInteger nInv = BigIntegerUtils.modInverse(n, lambda);
+        return BigIntegerUtils.modPow(cOver, nInv, nSquared).mod(n);
     }
 
     public BigInteger add(BigInteger c1, BigInteger c2) {
@@ -122,10 +103,7 @@ public class PaillierEncryption {
     }
 
     public BigInteger multiply(BigInteger c, BigInteger k) {
-        if (USE_NATIVE) {
-            return NativeBigInteger.modPow(c, k, nSquared);
-        }
-        return c.modPow(k, nSquared);
+        return BigIntegerUtils.modPow(c, k, nSquared);
     }
 
     public BigInteger getPublicKey() {
@@ -167,13 +145,8 @@ public class PaillierEncryption {
         }
 
         public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
-            if (USE_NATIVE) {
-                BigInteger gm = NativeBigInteger.modPow(g, m, nSquared);
-                BigInteger rn = NativeBigInteger.modPow(r, n, nSquared);
-                return gm.multiply(rn).mod(nSquared);
-            }
-            BigInteger gm = g.modPow(m, nSquared);
-            BigInteger rn = r.modPow(n, nSquared);
+            BigInteger gm = BigIntegerUtils.modPow(g, m, nSquared);
+            BigInteger rn = BigIntegerUtils.modPow(r, n, nSquared);
             return gm.multiply(rn).mod(nSquared);
         }
 
@@ -195,10 +168,7 @@ public class PaillierEncryption {
         }
 
         public BigInteger multiply(BigInteger c, BigInteger k) {
-            if (USE_NATIVE) {
-                return NativeBigInteger.modPow(c, k, nSquared);
-            }
-            return c.modPow(k, nSquared);
+            return BigIntegerUtils.modPow(c, k, nSquared);
         }
     }
 

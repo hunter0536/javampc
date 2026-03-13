@@ -1,6 +1,5 @@
 package com.example.mpc.dao;
 
-import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.dto.AuxInfo;
 import com.example.mpc.service.DatabaseService;
 import org.slf4j.Logger;
@@ -11,7 +10,6 @@ import org.springframework.stereotype.Repository;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.util.concurrent.CompletableFuture;
 
 @Repository
 public class AuxInfoDao {

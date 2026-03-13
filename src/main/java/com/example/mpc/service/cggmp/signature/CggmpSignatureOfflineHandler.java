@@ -7,15 +7,14 @@ import com.example.mpc.cggmp.proof.PiEncElgProof;
 import com.example.mpc.cggmp.proof.PiLogProof;
 import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
-import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.DbMapUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpSignatureTask;
 import com.example.mpc.dto.KeyShare;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -28,7 +27,6 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
-import java.util.concurrent.CountDownLatch;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -37,6 +35,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**

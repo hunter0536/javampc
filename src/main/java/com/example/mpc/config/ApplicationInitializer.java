@@ -1,7 +1,6 @@
 package com.example.mpc.config;
 
 import com.example.mpc.constant.Constants;
-import com.example.mpc.cggmp.util.NativeBigInteger;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
@@ -9,12 +8,13 @@ import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.DatabaseService;
 import com.example.mpc.service.GennaroDkgService;
 import com.example.mpc.service.NodeService;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
-import org.springframework.beans.factory.annotation.Value;
 
 @Component
 public class ApplicationInitializer implements CommandLineRunner {
@@ -53,25 +53,17 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Value("${cggmp.gmp.enabled:true}")
     private boolean gmpEnabled;
 
-    @Override
-    public void run(String... args) throws Exception {
+    @PostConstruct
+    public void init() {
         System.setProperty("cggmp.gmp.enabled", String.valueOf(gmpEnabled));
         logger.info("Set system property cggmp.gmp.enabled={}", gmpEnabled);
-        
-        if (gmpEnabled) {
-            logger.info("GMP is enabled, loading NativeBigInteger...");
-            try {
-                Class.forName("com.example.mpc.cggmp.util.NativeBigInteger");
-                logger.info("NativeBigInteger loaded successfully");
-            } catch (ClassNotFoundException e) {
-                logger.error("Failed to load NativeBigInteger: {}", e.getMessage());
-            }
-        } else {
-            logger.info("GMP is disabled by configuration, using Java BigInteger");
-        }
-        
+    }
+
+    @Override
+    public void run(String... args) throws Exception {
         logger.info("=".repeat(60));
         logger.info("Initializing application for node {}", nodeId);
+        logger.info("GMP enabled: {}", gmpEnabled);
         logger.info("=".repeat(60));
 
         initializeDatabase();

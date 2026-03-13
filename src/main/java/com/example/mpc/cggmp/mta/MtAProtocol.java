@@ -18,14 +18,13 @@ import com.example.mpc.cggmp.proof.PaillierRespondentProofContext;
 import com.example.mpc.cggmp.proof.PaillierRespondentProofGenerator;
 import com.example.mpc.cggmp.proof.PaillierRespondentProofValidator;
 import com.example.mpc.cggmp.zk.RangeProofGenerator;
-import com.example.mpc.common.util.SecureRandomUtils;
 import com.example.mpc.cggmp.zk.RangeProofValidator;
 import com.example.mpc.cggmp.zk.RespondentProofGenerator;
 import com.example.mpc.cggmp.zk.RespondentProofValidator;
 import com.example.mpc.cggmp.zk.ZKSetup;
+import com.example.mpc.common.util.SecureRandomUtils;
 
 import java.math.BigInteger;
-import java.security.SecureRandom;
 import java.util.Objects;
 
 public class MtAProtocol {

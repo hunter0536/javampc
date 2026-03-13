@@ -1,11 +1,62 @@
 package com.example.mpc.cggmp.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.math.BigInteger;
 import java.security.SecureRandom;
 
 public final class BigIntegerUtils {
+    private static final Logger logger = LoggerFactory.getLogger(BigIntegerUtils.class);
+    
+    private static final BigIntegerBackend BACKEND;
+    
+    static {
+        boolean gmpEnabled = Boolean.parseBoolean(System.getProperty("cggmp.gmp.enabled", "true"));
+        boolean nativeAvailable = false;
+        
+        try {
+            nativeAvailable = NativeBigInteger.isNativeAvailable();
+        } catch (Throwable e) {
+            logger.warn("NativeBigInteger not available: {}", e.getMessage());
+        }
+        
+        boolean useGmp = gmpEnabled && nativeAvailable;
+        BACKEND = useGmp ? GmpBackend.getInstance() : JavaBackend.getInstance();
+        
+        logger.info("BigIntegerUtils initialized: gmpEnabled={}, nativeAvailable={}, useGmp={}", 
+                    gmpEnabled, nativeAvailable, useGmp);
+    }
     
     private BigIntegerUtils() {
+    }
+
+    public static BigIntegerBackend getBackend() {
+        return BACKEND;
+    }
+    
+    public static boolean isNativeAvailable() {
+        return BACKEND.isNative();
+    }
+
+    public static BigInteger modPow(BigInteger base, BigInteger exp, BigInteger mod) {
+        return BACKEND.modPow(base, exp, mod);
+    }
+
+    public static BigInteger modInverse(BigInteger val, BigInteger mod) {
+        return BACKEND.modInverse(val, mod);
+    }
+
+    public static BigInteger multiply(BigInteger a, BigInteger b) {
+        return BACKEND.multiply(a, b);
+    }
+
+    public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
+        return BACKEND.batchModPow(bases, exp, mod);
+    }
+
+    public static BigInteger[] batchModPowDifferentExp(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
+        return BACKEND.batchModPowDifferentExp(bases, exps, mod);
     }
 
     public static BigInteger randomZnStar(BigInteger n, SecureRandom rnd) {
@@ -17,41 +68,11 @@ public final class BigIntegerUtils {
     }
 
     public static BigInteger powSigned(BigInteger base, BigInteger exp, BigInteger mod) {
-        if (isNativeAvailable()) {
-            if (exp.signum() >= 0) {
-                return NativeBigInteger.modPow(base, exp, mod);
-            }
-            BigInteger inv = NativeBigInteger.modInverse(base, mod);
-            return NativeBigInteger.modPow(inv, exp.negate(), mod);
-        }
         if (exp.signum() >= 0) {
-            return base.modPow(exp, mod);
+            return BACKEND.modPow(base, exp, mod);
         }
-        BigInteger inv = base.modInverse(mod);
-        return inv.modPow(exp.negate(), mod);
-    }
-    
-    private static boolean isNativeAvailable() {
-        try {
-            return NativeBigInteger.isNativeAvailable();
-        } catch (Throwable e) {
-            return false;
-        }
-    }
-
-    public static BigInteger powSigned(NativeBigInteger.NativeModPowContext ctx, BigInteger base, BigInteger exp) {
-        if (ctx != null && isNativeAvailable()) {
-            if (exp.signum() >= 0) {
-                return ctx.modPow(base, exp);
-            }
-            BigInteger inv = NativeBigInteger.modInverse(base, ctx.getMod());
-            return ctx.modPow(inv, exp.negate());
-        }
-        if (exp.signum() >= 0) {
-            return base.modPow(exp, BigInteger.ONE);
-        }
-        BigInteger inv = base.modInverse(BigInteger.ONE);
-        return inv.modPow(exp.negate(), BigInteger.ONE);
+        BigInteger inv = BACKEND.modInverse(base, mod);
+        return BACKEND.modPow(inv, exp.negate(), mod);
     }
 
     public static int jacobi(BigInteger a, BigInteger n) {

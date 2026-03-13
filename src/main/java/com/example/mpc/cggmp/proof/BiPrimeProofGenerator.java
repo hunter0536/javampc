@@ -143,9 +143,9 @@ public final class BiPrimeProofGenerator {
             basesQ[i] = yValues[i].mod(q);
         }
         
-        // Step 2: Use native GMP batch modPow for better performance
-        BigInteger[] zps = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(basesP, eP, p);
-        BigInteger[] zqs = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(basesQ, eQ, q);
+        // Step 2: Use BigIntegerUtils batch modPow for better performance
+        BigInteger[] zps = BigIntegerUtils.batchModPow(basesP, eP, p);
+        BigInteger[] zqs = BigIntegerUtils.batchModPow(basesQ, eQ, q);
         
         BigInteger[] zValues = new BigInteger[blumRounds];
         BigInteger[] rhsValues = new BigInteger[blumRounds];
@@ -197,8 +197,8 @@ public final class BiPrimeProofGenerator {
             rhsQ[i] = rhsValues[i].mod(q);
         }
         
-        BigInteger[] xps = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(rhsP, inv4p, p);
-        BigInteger[] xqs = com.example.mpc.cggmp.util.NativeBigInteger.batchModPow(rhsQ, inv4q, q);
+        BigInteger[] xps = BigIntegerUtils.batchModPow(rhsP, inv4p, p);
+        BigInteger[] xqs = BigIntegerUtils.batchModPow(rhsQ, inv4q, q);
         
         // Step 5: Create rounds
         for (int i = 0; i < blumRounds; i++) {
