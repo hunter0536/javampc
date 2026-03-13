@@ -714,6 +714,7 @@ public class NodeService {
         if (completedTaskCount.get() > 0) {
             status.put("averageTaskTime", totalTaskTime.get() / completedTaskCount.get() + "ms");
         }
+        status.put("threadPools", ThreadPoolUtil.getThreadPoolStats());
         return status;
     }
 

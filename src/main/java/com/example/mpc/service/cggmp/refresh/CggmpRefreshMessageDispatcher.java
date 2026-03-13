@@ -33,7 +33,7 @@ public final class CggmpRefreshMessageDispatcher {
         }
         logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
                 senderId, message.type(), logTaskId);
-        Executor executor = ThreadPoolUtil.getSingleThreadPool();
+        Executor executor = ThreadPoolUtil.getRefreshDispatchThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
                 Object data = message.data();

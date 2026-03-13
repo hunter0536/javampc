@@ -19,12 +19,10 @@ import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpSignatureService;
-import com.example.mpc.service.PresignPoolService;
+import com.example.mpc.service.HotWalletPresignPoolService;
 import com.example.mpc.service.CggmpDiagnosticsService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
-import com.example.mpc.service.CggmpSignatureService;
-import com.example.mpc.service.PresignPoolService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,7 +55,7 @@ public class CggmpController {
     @Autowired
     private CggmpRefreshService cggmpRefreshService;
     @Autowired
-    private PresignPoolService presignPoolService;
+    private HotWalletPresignPoolService presignPoolService;
 
     // ==================== AUX 接口 ====================
 

@@ -31,7 +31,7 @@ public final class CggmpDkgMessageDispatcher {
         }
         logger.info("=== CGGMP DKG handleMessage: senderId={}, type={}, taskId={} ===",
                 senderId, message.type(), logTaskId);
-        Executor executor = ThreadPoolUtil.getComputationThreadPool();
+        Executor executor = ThreadPoolUtil.getDkgThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
                 Object data = message.data();

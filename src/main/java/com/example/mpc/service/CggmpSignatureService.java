@@ -2,6 +2,7 @@ package com.example.mpc.service;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.presign.Presignature;
+import com.example.mpc.service.HotWalletPresignPoolService;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.response.SignatureResultResponse;
@@ -68,7 +69,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     @Autowired
     public AuxInfoDao auxInfoDao;
     @Autowired
-    public PresignPoolService presignPoolService;
+    public HotWalletPresignPoolService presignPoolService;
 
     @Value("${node.id}")
     public int nodeId;
@@ -92,7 +93,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     @Value("${cggmp.complaint.logPath:logs/complaints.jsonl}")
     public String complaintLogPath;
     public final Map<String, CggmpSignatureTask> signatureTasks = new ConcurrentHashMap<>();
-    public static final ExecutorService signatureExecutorService = ThreadPoolUtil.getComputationThreadPool();
+    public static final ExecutorService signatureExecutorService = ThreadPoolUtil.getSignatureThreadPool();
 
     public final AtomicBoolean signatureInProgress = new AtomicBoolean(false);
     public final Map<String, AtomicInteger> hotWalletSignatureLocks = new ConcurrentHashMap<>();

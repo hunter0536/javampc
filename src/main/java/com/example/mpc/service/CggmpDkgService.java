@@ -46,7 +46,7 @@ import java.util.concurrent.ScheduledExecutorService;
 @Service
 public class CggmpDkgService implements NodeService.MessageHandler {
     public static final Logger logger = LoggerFactory.getLogger(CggmpDkgService.class);
-    public static final ExecutorService dkgExecutorService = ThreadPoolUtil.getComputationThreadPool();
+    public static final ExecutorService dkgExecutorService = ThreadPoolUtil.getDkgThreadPool();
 
     public final CggmpDkgProtocolHandler dkgProtocolHandler = new CggmpDkgProtocolHandler(this);
     public final CggmpDkgMessageHandler dkgMessageHandler = new CggmpDkgMessageHandler(this);

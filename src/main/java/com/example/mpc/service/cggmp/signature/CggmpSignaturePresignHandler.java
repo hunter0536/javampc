@@ -424,7 +424,7 @@ public final class CggmpSignaturePresignHandler {
             affGMap, affGhatMap, logProofMap, xHex, D, Dhat, F, Fhat, Gamma
         );
         
-        com.example.mpc.common.util.ThreadPoolUtil.getComputationThreadPool().execute(() -> {
+        com.example.mpc.common.util.ThreadPoolUtil.getPresignThreadPool().execute(() -> {
             try {
                 R2VerifyResult result = verifyR2Proofs(task, ctx);
                 task.r2VerifyResults.put(senderId, result);

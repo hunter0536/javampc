@@ -10,13 +10,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -26,11 +27,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
-public class PresignPoolService {
+public class HotWalletPresignPoolService {
 
-    public static final ExecutorService PRESIGN_EXECUTOR_SERVICE = ThreadPoolUtil.getPresignThreadPool();
+    public static final ExecutorService PRESIGN_EXECUTOR_SERVICE = ThreadPoolUtil.getHotWalletPresignThreadPool();
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(PresignPoolService.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(HotWalletPresignPoolService.class);
 
     @Value("${cggmp.presign.pool.enabled:false}")
     private boolean enabled;
@@ -46,6 +47,9 @@ public class PresignPoolService {
 
     @Value("${cggmp.presign.pool.generationThreads:1}")
     private int generationThreads;
+
+    @Value("${cggmp.presign.pool.maxTaskHistory:1000}")
+    private int maxTaskHistory;
 
     @Value("${node.id}")
     private int nodeId;
@@ -66,11 +70,12 @@ public class PresignPoolService {
     private final Map<String, AtomicInteger> runningTaskCounts = new ConcurrentHashMap<>();
     private final Map<String, List<Future<?>>> runningTasks = new ConcurrentHashMap<>();
     private final Map<String, Object> poolLocks = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> taskHistory = new ConcurrentHashMap<>();
     private final AtomicBoolean globalLock = new AtomicBoolean(false);
 
     @PostConstruct
     public void init() {
-        LOGGER.info("PresignPoolService initialized with generationThreads={}", generationThreads);
+        LOGGER.info("HotWalletPresignPoolService initialized with generationThreads={}", generationThreads);
     }
 
     public boolean isEnabled() {
@@ -181,8 +186,7 @@ public class PresignPoolService {
         LOGGER.info("Added presign to pool (groupPublicKey={}), pool size: {}", groupPublicKey, pool.size());
     }
 
-    @Scheduled(fixedDelayString = "${cggmp.presign.pool.refreshIntervalMs:30000}")
-    public void generateAndRefreshPresigs() {
+    public void scheduledRefresh() {
         if (!enabled) {
             return;
         }
@@ -193,23 +197,24 @@ public class PresignPoolService {
         }
 
         try {
-            doGenerateAndRefreshPresigs();
-        } finally {
+            ThreadPoolUtil.getHotWalletPresignThreadPool().execute(() -> {
+                try {
+                    doRefreshHotWalletPresignPool();
+                } finally {
+                    globalLock.set(false);
+                }
+            });
+        } catch (RuntimeException e) {
             globalLock.set(false);
+            throw e;
         }
     }
 
-    private void doGenerateAndRefreshPresigs() {
-        LOGGER.info("PresignPoolService doGenerateAndRefreshPresigs called, nodeId={}", nodeId);
+    private void doRefreshHotWalletPresignPool() {
+        LOGGER.info("HotWalletPresignPoolService scheduledRefresh called, nodeId={}", nodeId);
 
         if (nodeId != 1) {
             LOGGER.debug("Only node 1 can initiate presign generation, skipping");
-            return;
-        }
-
-        int networkSize = nodeService.getNodes().size() + 1;
-        if (networkSize < 5) {
-            LOGGER.warn("Network not ready: only {} nodes connected, skipping presign generation", networkSize);
             return;
         }
 
@@ -221,12 +226,7 @@ public class PresignPoolService {
         Map<String, KeyShare> hotWalletKeyShares = keyShareService.getAllActiveHotWalletKeyShares(nodeId);
         if (hotWalletKeyShares == null || hotWalletKeyShares.isEmpty()) {
             LOGGER.warn("No active hot wallet key shares for presign generation");
-            return;
-        }
-
-        KeyShare latestHotWallet = keyShareService.getActiveHotWalletKeyShare(nodeId);
-        if (latestHotWallet == null) {
-            LOGGER.warn("No hot wallet key share found");
+            cleanupUnusedPools(Set.of());
             return;
         }
 
@@ -236,66 +236,78 @@ public class PresignPoolService {
             return;
         }
 
-        String groupPublicKey = latestHotWallet.getGroupPublicKey();
+        Set<String> activeGroups = new HashSet<>(hotWalletKeyShares.keySet());
 
-        BlockingQueue<PresignData> pool = hotWalletPools.computeIfAbsent(
-            groupPublicKey, k -> new LinkedBlockingQueue<>());
-
-        int currentSize = pool.size();
-        int expiredCount = countExpiredPresigns(pool);
-
-        LOGGER.debug("Processing pool for groupPublicKey={}, size={}, expired={}",
-            groupPublicKey, currentSize, expiredCount);
-
-        if (expiredCount > 0) {
-            removeExpiredPresigns(pool, expiredCount);
-            LOGGER.info("Removed expired presigns for groupPublicKey={}", groupPublicKey);
-        }
-
-        int availableSize = currentSize - expiredCount;
-
-        if (availableSize >= maxSize) {
-            LOGGER.debug("Presign pool for {} is full (available={}), skip generation", groupPublicKey, availableSize);
-            return;
-        }
-
-        int neededPresigs;
-        if (availableSize < minSize) {
-            neededPresigs = Math.max(maxSize - availableSize, generationThreads);
-            LOGGER.info("Presign pool below min-size (available={}, min={}),紧急生成预签名", availableSize, minSize);
-        } else {
-            neededPresigs = Math.min(maxSize - availableSize, generationThreads);
-        }
-
-        AtomicInteger runningCount = runningTaskCounts.computeIfAbsent(groupPublicKey, k -> new AtomicInteger(0));
-
-        int toSubmit;
-        synchronized (runningCount) {
-            int currentRunning = runningCount.get();
-
-            if (currentRunning >= generationThreads) {
-                LOGGER.debug("Max tasks running for {}, skip", groupPublicKey);
-                return;
+        for (Map.Entry<String, KeyShare> entry : hotWalletKeyShares.entrySet()) {
+            String groupPublicKey = entry.getKey();
+            KeyShare keyShare = entry.getValue();
+            if (groupPublicKey == null || keyShare == null) {
+                continue;
             }
 
-            int slotsAvailable = generationThreads - currentRunning;
-            toSubmit = Math.min(neededPresigs, slotsAvailable);
+            BlockingQueue<PresignData> pool = hotWalletPools.computeIfAbsent(
+                groupPublicKey, k -> new LinkedBlockingQueue<>(maxSize));
 
-            runningCount.addAndGet(toSubmit);
-        }
+            int currentSize = pool.size();
+            int expiredCount = countExpiredPresigns(pool);
 
-        for (int i = 0; i < toSubmit; i++) {
-            final int index = i;
-            Future<?> future = PRESIGN_EXECUTOR_SERVICE.submit(() -> {
-                try {
-                    generatePresignForKeyShare(groupPublicKey, latestHotWallet, pool, index, runningCount);
-                } catch (Exception e) {
-                    LOGGER.error("Failed to generate presign for {}: {}", groupPublicKey, e.getMessage());
+            LOGGER.debug("Processing pool for groupPublicKey={}, size={}, expired={}",
+                groupPublicKey, currentSize, expiredCount);
+
+            if (expiredCount > 0) {
+                removeExpiredPresigns(pool, expiredCount);
+                LOGGER.info("Removed expired presigns for groupPublicKey={}", groupPublicKey);
+            }
+
+            cleanupCompletedTasks(groupPublicKey);
+
+            int availableSize = currentSize - expiredCount;
+
+            if (availableSize >= maxSize) {
+                LOGGER.debug("Presign pool for {} is full (available={}), skip generation", groupPublicKey, availableSize);
+                continue;
+            }
+
+            int neededPresigs;
+            if (availableSize < minSize) {
+                neededPresigs = Math.max(maxSize - availableSize, generationThreads);
+                LOGGER.info("Presign pool below minSize (available={}, min={}), generating presigns", availableSize, minSize);
+            } else {
+                neededPresigs = Math.min(maxSize - availableSize, generationThreads);
+            }
+
+            AtomicInteger runningCount = runningTaskCounts.computeIfAbsent(groupPublicKey, k -> new AtomicInteger(0));
+
+            int toSubmit;
+            synchronized (runningCount) {
+                int currentRunning = runningCount.get();
+
+                if (currentRunning >= generationThreads) {
+                    LOGGER.debug("Max tasks running for {}, skip", groupPublicKey);
+                    continue;
                 }
-            });
 
-            runningTasks.computeIfAbsent(groupPublicKey, k -> new ArrayList<>()).add(future);
+                int slotsAvailable = generationThreads - currentRunning;
+                toSubmit = Math.min(neededPresigs, slotsAvailable);
+
+                runningCount.addAndGet(toSubmit);
+            }
+
+            for (int i = 0; i < toSubmit; i++) {
+                final int index = i;
+                Future<?> future = PRESIGN_EXECUTOR_SERVICE.submit(() -> {
+                    try {
+                        generatePresignForKeyShare(groupPublicKey, keyShare, pool, index, runningCount);
+                    } catch (Exception e) {
+                        LOGGER.error("Failed to generate presign for {}: {}", groupPublicKey, e.getMessage());
+                    }
+                });
+
+                runningTasks.computeIfAbsent(groupPublicKey, k -> new ArrayList<>()).add(future);
+            }
         }
+
+        cleanupUnusedPools(activeGroups);
     }
 
     private boolean areAllPeerConnectionsActive() {
@@ -360,13 +372,69 @@ public class PresignPoolService {
             LOGGER.info("Starting presign generation for groupPublicKey={}, index={}", groupPublicKey, index);
 
             String taskId = signatureService.createPresignTaskOnly(groupPublicKey);
-
+            recordTaskHistory(groupPublicKey, taskId);
             signatureService.executePresignOffline(taskId);
         } catch (Exception e) {
             LOGGER.error("Failed to generate presign for groupPublicKey={}: {}", groupPublicKey, e.getMessage());
         } finally {
             if (runningCount != null) {
                 runningCount.decrementAndGet();
+            }
+        }
+    }
+
+    private void cleanupCompletedTasks(String groupPublicKey) {
+        List<Future<?>> tasks = runningTasks.get(groupPublicKey);
+        if (tasks == null) {
+            return;
+        }
+        tasks.removeIf(task -> task.isDone() || task.isCancelled());
+        if (tasks.isEmpty()) {
+            runningTasks.remove(groupPublicKey);
+        }
+    }
+
+    private void cleanupUnusedPools(Set<String> activeGroups) {
+        for (String groupPublicKey : new ArrayList<>(hotWalletPools.keySet())) {
+            if (activeGroups.contains(groupPublicKey)) {
+                continue;
+            }
+            if (!canCleanupGroup(groupPublicKey)) {
+                continue;
+            }
+            hotWalletPools.remove(groupPublicKey);
+            runningTaskCounts.remove(groupPublicKey);
+            runningTasks.remove(groupPublicKey);
+            poolLocks.remove(groupPublicKey);
+            taskHistory.remove(groupPublicKey);
+            LOGGER.info("Removed presign pool state for inactive groupPublicKey={}", groupPublicKey);
+        }
+    }
+
+    private boolean canCleanupGroup(String groupPublicKey) {
+        BlockingQueue<PresignData> pool = hotWalletPools.get(groupPublicKey);
+        if (pool != null && !pool.isEmpty()) {
+            return false;
+        }
+        AtomicInteger runningCount = runningTaskCounts.get(groupPublicKey);
+        if (runningCount != null && runningCount.get() > 0) {
+            return false;
+        }
+        cleanupCompletedTasks(groupPublicKey);
+        List<Future<?>> tasks = runningTasks.get(groupPublicKey);
+        return tasks == null || tasks.isEmpty();
+    }
+
+    private void recordTaskHistory(String groupPublicKey, String taskId) {
+        if (taskId == null) {
+            return;
+        }
+        List<String> history = taskHistory.computeIfAbsent(groupPublicKey, k -> new ArrayList<>());
+        synchronized (history) {
+            history.add(taskId);
+            if (history.size() > maxTaskHistory) {
+                int overflow = history.size() - maxTaskHistory;
+                history.subList(0, overflow).clear();
             }
         }
     }

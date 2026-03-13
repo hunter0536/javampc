@@ -81,6 +81,7 @@ cggmp:
       maxAgeMinutes: 30        # 预签名过期时间（分钟）
       refreshIntervalMs: 1000 # 预签名池刷新间隔（毫秒）
       generationThreads: 2     # 预签名生成线程数
+      maxTaskHistory: 1000     # 预签名任务历史上限（防止任务列表无限增长）
   aux:
     paillierBits: 3072 # Paillier 密钥位数（生产环境推荐值：≥3072；工程上限 4096）
     minPaillierBitsForProof: 3071 # =paillierBits-1 允许的最小 Paillier 模数位数（工程上限 4096）

@@ -212,7 +212,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                         throw new RuntimeException("Single node mode is not allowed");
                     }
                     return task;
-                }, ThreadPoolUtil.getComputationThreadPool())
+                }, ThreadPoolUtil.getGennaroDkgThreadPool())
                 .thenCompose(task -> waitForNetworkReadyWithRetry(60, 5).thenApply(v -> task))
                 .thenCompose(task -> {
                     int networkSize = nodeService.getNodes().size() + 1;
@@ -245,7 +245,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     commitmentData.put("verificationPoints", encodedVerificationPoints);
                     commitmentData.put("maskingVerificationPoints", encodedMaskingVerificationPoints);
                     return new CommitmentContext(task, commitmentData);
-                }, ThreadPoolUtil.getComputationThreadPool()))
+                }, ThreadPoolUtil.getGennaroDkgThreadPool()))
                 .thenCompose(ctx -> RetryUtils.retryAsync(scheduler, logger, () -> nodeService.broadcastRbc(new NodeService.Message(nodeId, MessageType.GENNARO_COMMITMENT, ctx.commitmentData)),
                                 Constants.BROADCAST_RETRY_COUNT,
                                 Constants.BROADCAST_RETRY_INTERVAL_MS,
@@ -266,7 +266,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
-                }, ThreadPoolUtil.getComputationThreadPool()).thenApply(v -> ctx))
+                }, ThreadPoolUtil.getGennaroDkgThreadPool()).thenApply(v -> ctx))
                 .thenCompose(ctx -> {
                     List<CompletableFuture<Void>> sendFutures = new ArrayList<>();
                     for (NodeService.NodeInfo nodeInfo : nodeService.getNodes()) {
@@ -312,7 +312,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
-                }, ThreadPoolUtil.getComputationThreadPool()).thenApply(v -> ctx))
+                }, ThreadPoolUtil.getGennaroDkgThreadPool()).thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
                     try {
                         BigInteger curveOrder = getCurveOrder();
@@ -327,7 +327,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
-                }, ThreadPoolUtil.getComputationThreadPool()).thenApply(v -> ctx))
+                }, ThreadPoolUtil.getGennaroDkgThreadPool()).thenApply(v -> ctx))
                 .thenCompose(ctx -> generateAndBroadcastPublicKeyPart(taskId).thenApply(v -> ctx))
                 .thenCompose(ctx -> waitForConditionAsync(() -> ctx.task.groupPublicKey != null,
                         TimeUnit.SECONDS.toMillis(60), "group public key", 200)
@@ -344,7 +344,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
-                }, ThreadPoolUtil.getComputationThreadPool()))
+                }, ThreadPoolUtil.getGennaroDkgThreadPool()))
                 .exceptionally(ex -> {
                     GennaroDkgTask task = dkgTasks.get(taskId);
                     if (task != null) {

@@ -31,7 +31,7 @@ public final class CggmpAuxMessageDispatcher {
         }
         logger.info("=== CGGMP AUX handleMessage: senderId={}, type={}, taskId={} ===",
                 senderId, message.type(), logTaskId);
-        Executor executor = ThreadPoolUtil.getSingleThreadPool();
+        Executor executor = ThreadPoolUtil.getAuxDispatchThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
                 Object data = message.data();

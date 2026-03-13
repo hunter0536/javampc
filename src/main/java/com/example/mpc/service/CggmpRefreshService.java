@@ -41,7 +41,7 @@ import java.util.concurrent.ScheduledExecutorService;
 @Service
 public class CggmpRefreshService implements NodeService.MessageHandler {
     public static final Logger logger = LoggerFactory.getLogger(CggmpRefreshService.class);
-    public static final ExecutorService refreshExecutorService = ThreadPoolUtil.getComputationThreadPool();
+    public static final ExecutorService refreshExecutorService = ThreadPoolUtil.getRefreshThreadPool();
 
     public final CggmpRefreshProtocolHandler refreshProtocolHandler = new CggmpRefreshProtocolHandler(this);
     public final CggmpRefreshMessageHandler refreshMessageHandler = new CggmpRefreshMessageHandler(this);
