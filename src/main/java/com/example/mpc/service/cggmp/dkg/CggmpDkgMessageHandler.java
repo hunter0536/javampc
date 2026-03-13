@@ -59,6 +59,21 @@ public final class CggmpDkgMessageHandler {
     }
 
     /**
+     * 广播DKG提交确认消息
+     */
+    CompletableFuture<Void> sendDkgCommit(CggmpDkgTask task) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("executionId", task.executionId);
+        data.put("senderId", svc.nodeId);
+        return RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_COMMIT, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_DKG_COMMIT");
+    }
+
+    /**
      * 处理DKG初始化消息
      */
     void onDkgInit(int senderId, Object data) {
@@ -510,6 +525,32 @@ public final class CggmpDkgMessageHandler {
                 svc.dkgProtocolHandler.startDkgProcessInternal(newTaskId, false);
             }
         }
+    }
+
+    /**
+     * 处理DKG提交确认消息
+     */
+    void onDkgCommit(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
+        }
+        String taskId = (String) dataMap.get("taskId");
+        String executionId = (String) dataMap.get("executionId");
+        if (taskId == null || executionId == null) {
+            return;
+        }
+        CggmpDkgTask task = svc.dkgTasks.get(taskId);
+        if (task == null || !task.executionId.equals(executionId)) {
+            return;
+        }
+        if (!task.participants.contains(senderId)) {
+            return;
+        }
+        if (task.commitAcks.putIfAbsent(senderId, Boolean.TRUE) == null && task.commitLatch.getCount() > 0) {
+            task.commitLatch.countDown();
+        }
+        logger.debug("DKG COMMIT received (taskId={}, senderId={}, commitLatch={})",
+                taskId, senderId, task.commitLatch.getCount());
     }
 
     /**

@@ -11,6 +11,7 @@ import java.security.SecureRandom;
 import java.util.Objects;
 
 public class PaillierRangeProofGenerator implements RangeProofGenerator {
+    @Override
     public PaillierRangeProof createProof(PaillierRangeEncryptionWitness witness, byte[] context) {
         Objects.requireNonNull(witness, "witness");
 

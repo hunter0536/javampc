@@ -101,12 +101,14 @@ public class CggmpDkgTask {
     public final ConcurrentHashMap<Integer, com.example.mpc.cggmp.proof.PiSchProof> pendingRound3Proofs = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> round2Processing = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> modFacVerified = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, Boolean> commitAcks = new ConcurrentHashMap<>();
 
     public final CountDownLatch round1ReceivedLatch;
     public final CountDownLatch round1EchoReceivedLatch;
     public final CountDownLatch round2ReceivedLatch;
     public final CountDownLatch round2OpenReceivedLatch;
     public final CountDownLatch round3ReceivedLatch;
+    public final CountDownLatch commitLatch;
 
     public CGGMP cggmpInstance;
     public PaillierEncryption paillier;
@@ -143,6 +145,7 @@ public class CggmpDkgTask {
         this.round2ReceivedLatch = new CountDownLatch(waitCount);
         this.round2OpenReceivedLatch = new CountDownLatch(waitCount);
         this.round3ReceivedLatch = new CountDownLatch(waitCount);
+        this.commitLatch = new CountDownLatch(waitCount);
     }
 
     private static Set<Integer> defaultParticipants(int nodesCount) {

@@ -24,12 +24,11 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -162,6 +161,20 @@ public final class CggmpRefreshMessageHandler {
                 Constants.BROADCAST_RETRY_COUNT,
                 Constants.BROADCAST_RETRY_INTERVAL_MS,
                 "CGGMP_REFRESH_R3");
+    }
+
+    /**
+     * 广播刷新提交确认消息
+     */
+    CompletableFuture<Void> sendRefreshCommit(CggmpRefreshTask task) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("senderId", svc.nodeId);
+        return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_REFRESH_COMMIT, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_REFRESH_COMMIT");
     }
 
     /**
@@ -374,6 +387,28 @@ public final class CggmpRefreshMessageHandler {
     }
 
     /**
+     * 处理刷新提交确认消息
+     */
+    void onRefreshCommit(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
+        }
+        String taskId = (String) dataMap.get("taskId");
+        if (taskId == null) {
+            return;
+        }
+        CggmpRefreshTask task = svc.refreshTasks.get(taskId);
+        if (task == null || !task.participants.contains(senderId)) {
+            return;
+        }
+        if (task.commitAcks.putIfAbsent(senderId, Boolean.TRUE) == null && task.commitLatch.getCount() > 0) {
+            task.commitLatch.countDown();
+        }
+        logger.debug("Refresh COMMIT received (taskId={}, senderId={}, commitLatch={})",
+                taskId, senderId, task.commitLatch.getCount());
+    }
+
+    /**
      * 处理刷新投诉消息
      */
     void onRefreshComplaint(int senderId, Object data) {
@@ -395,14 +430,6 @@ public final class CggmpRefreshMessageHandler {
         logComplaintToFile(taskId, senderId, offenderId, reason == null ? "refresh complaint" : reason, evidenceObj);
         Map<?, ?> evidence = evidenceObj instanceof Map<?, ?> m ? m : null;
         boolean evidenceOk = validateRefreshComplaintEvidence(task, offenderId, reason, evidence);
-        if (task.initiatorId == svc.nodeId) {
-            if (!evidenceOk) {
-                attemptExcludeAndRestartRefresh(task, senderId, "Invalid refresh complaint evidence");
-                return;
-            }
-            attemptExcludeAndRestartRefresh(task, offenderId, reason);
-            return;
-        }
         if (!evidenceOk) {
             task.fail("Refresh complaint invalid: " + (reason == null ? "unknown" : reason));
             return;
@@ -439,17 +466,8 @@ public final class CggmpRefreshMessageHandler {
         if (task != null) {
             task.fail("Refresh excluded offender " + offenderId + ": " + (reason == null ? "" : reason));
         }
-        if (!participants.isEmpty()) {
-            if (!svc.refreshTasks.containsKey(newTaskId)) {
-                svc.createRefreshTaskInternal(newTaskId, groupPublicKey, participants, senderId);
-            }
-            if (participants.contains(svc.nodeId)) {
-                svc.startRefreshTaskFromMessage(newTaskId, senderId).exceptionally(ex -> {
-                    logger.error("Failed to start new refresh task {}: {}", newTaskId, ex.getMessage());
-                    return null;
-                });
-            }
-        }
+        logger.info("Refresh exclude received but ignored (taskId={}, offenderId={}, reason={})",
+                taskId, offenderId, reason);
     }
 
     Map<String, Object> refreshEvidence(CggmpRefreshTask task, int offenderId, String reason, Map<String, Object> extra) {
@@ -622,27 +640,4 @@ public final class CggmpRefreshMessageHandler {
         }
     }
 
-    private void attemptExcludeAndRestartRefresh(CggmpRefreshTask task, int offenderId, String reason) {
-        if (!task.participants.contains(offenderId)) {
-            task.fail("Refresh complaint (offender not participant): " + reason);
-            return;
-        }
-        int required = Math.min(Math.max(1, svc.threshold), task.nodesCount);
-        LinkedHashSet<Integer> newParticipants = new LinkedHashSet<>(task.participants);
-        newParticipants.remove(offenderId);
-        if (newParticipants.size() < required) {
-            task.fail("Not enough participants after refresh exclusion");
-            return;
-        }
-        String newTaskId = UUID.randomUUID().toString();
-        svc.createRefreshTaskInternal(newTaskId, task.groupPublicKey, newParticipants, task.initiatorId);
-        logger.warn("Refresh exclusion: offender {} removed, restarting refresh task {}", offenderId, newTaskId);
-        CggmpProtocolUtils.fireAndForget(broadcastRefreshExclude(task, offenderId, reason, newTaskId, newParticipants),
-                logger, "CGGMP_REFRESH_EXCLUDE");
-        svc.startRefreshTask(newTaskId).exceptionally(ex -> {
-            logger.error("Failed to restart refresh task {}: {}", newTaskId, ex.getMessage());
-            return null;
-        });
-        task.fail("Refresh restart after excluding offender " + offenderId);
-    }
 }

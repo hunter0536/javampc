@@ -1,5 +1,7 @@
 package com.example.mpc.service;
 
+import com.example.mpc.common.exception.ErrorCode;
+import com.example.mpc.common.exception.MpcException;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonCodec;
@@ -94,6 +96,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
                             MessageType.CGGMP_DKG_ROUND2_BROAD,
                             MessageType.CGGMP_DKG_ROUND2_BATCH,
                             MessageType.CGGMP_DKG_ROUND3,
+                            MessageType.CGGMP_DKG_COMMIT,
                             MessageType.CGGMP_DKG_COMPLAINT,
                             MessageType.CGGMP_DKG_EXCLUDE
                     ), this);
@@ -115,7 +118,8 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         
         int auxCount = auxInfoDao.countAuxSync(nodeId);
         if (auxCount == 0) {
-            throw new RuntimeException("No AUX data available. Please run AUX provisioning first.");
+            logger.warn("No AUX data available. Please run AUX provisioning first.");
+            throw new MpcException(ErrorCode.NO_AUX_DATA_AVAILABLE);
         }
         
         String taskId = UUID.randomUUID().toString();
@@ -201,7 +205,7 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         return task;
     }
 
-    public void saveKeyShareToDatabase(CggmpDkgTask task) {
+    public boolean saveKeyShareToDatabase(CggmpDkgTask task) {
         try {
             String shareHex = task.secretShare.toString(16);
             Map<String, String> publicShares = buildPublicShares(task);
@@ -211,8 +215,10 @@ public class CggmpDkgService implements NodeService.MessageHandler {
             KeyShare keyShare = new KeyShare(nodeId, shareHex, task.groupPublicKeyHex, task.taskId, publicSharesJson, indexMapJson, chainCodeHex, task.isHotWallet);
             keyShareDao.save(keyShare);
             logger.info("Saved CGGMP key share to database for task: {}, isHotWallet: {}", task.taskId, task.isHotWallet);
+            return true;
         } catch (Exception e) {
             logger.error("Failed to save CGGMP key share to database", e);
+            return false;
         }
     }
 

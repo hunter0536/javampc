@@ -349,7 +349,7 @@ public final class CggmpDkgProtocolHandler {
                 }, dkgExecutorService).thenApply(v -> ctx))
                 .thenCompose(ctx -> waitForDkgLatch(task, task.round3ReceivedLatch, "DKG Round 3 messages")
                         .thenApply(v -> ctx))
-                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                .thenCompose(ctx -> CompletableFuture.supplyAsync(() -> {
                     ECPoint groupPublicKey = ctx.g().getCurve().getInfinity();
                     for (int peerId : task.participants) {
                         Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
@@ -361,10 +361,21 @@ public final class CggmpDkgProtocolHandler {
                     task.groupPublicKey = groupPublicKey;
                     task.groupPublicKeyHex = HexUtils.bytesToHex(groupPublicKey.getEncoded(false));
 
-                    svc.saveKeyShareToDatabase(task);
-                    task.complete();
-                    logger.info("CGGMP24 DKG completed! Group public key: {}", task.groupPublicKeyHex);
-                }, dkgExecutorService))
+                    return svc.saveKeyShareToDatabase(task);
+                }, dkgExecutorService).thenCompose(saved -> {
+                    if (!Boolean.TRUE.equals(saved)) {
+                        task.fail();
+                        task.errorMessage = "Failed to persist DKG key share";
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    task.commitAcks.put(svc.nodeId, Boolean.TRUE);
+                    return svc.dkgMessageHandler.sendDkgCommit(task)
+                            .thenCompose(x -> waitForDkgLatch(task, task.commitLatch, "DKG commit confirmations"))
+                            .thenRun(() -> {
+                                task.complete();
+                                logger.info("CGGMP24 DKG completed! Group public key: {}", task.groupPublicKeyHex);
+                            });
+                }))
                 .whenComplete((v, ex) -> logger.debug("DKG executeDkgRounds total took {} ms",
                         (System.nanoTime() - roundsStart) / 1_000_000));
     }
@@ -492,7 +503,7 @@ public final class CggmpDkgProtocolHandler {
                 }, dkgExecutorService).thenApply(v -> ctx))
                 .thenCompose(ctx -> waitForDkgLatch(task, task.round3ReceivedLatch, "DKG Round 3 messages")
                         .thenApply(v -> ctx))
-                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                .thenCompose(ctx -> CompletableFuture.supplyAsync(() -> {
                     ECPoint groupPublicKey = ctx.g().getCurve().getInfinity();
                     for (int peerId : task.participants) {
                         Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
@@ -504,10 +515,21 @@ public final class CggmpDkgProtocolHandler {
                     task.groupPublicKey = groupPublicKey;
                     task.groupPublicKeyHex = HexUtils.bytesToHex(groupPublicKey.getEncoded(false));
 
-                    svc.saveKeyShareToDatabase(task);
-                    task.complete();
-                    logger.info("CGGMP24 DKG (n-of-n) completed! Group public key: {}", task.groupPublicKeyHex);
-                }, dkgExecutorService));
+                    return svc.saveKeyShareToDatabase(task);
+                }, dkgExecutorService).thenCompose(saved -> {
+                    if (!Boolean.TRUE.equals(saved)) {
+                        task.fail();
+                        task.errorMessage = "Failed to persist DKG key share";
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    task.commitAcks.put(svc.nodeId, Boolean.TRUE);
+                    return svc.dkgMessageHandler.sendDkgCommit(task)
+                            .thenCompose(x -> waitForDkgLatch(task, task.commitLatch, "DKG commit confirmations"))
+                            .thenRun(() -> {
+                                task.complete();
+                                logger.info("CGGMP24 DKG (n-of-n) completed! Group public key: {}", task.groupPublicKeyHex);
+                            });
+                }));
     }
 
     /**

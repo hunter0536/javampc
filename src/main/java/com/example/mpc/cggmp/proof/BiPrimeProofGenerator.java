@@ -209,6 +209,7 @@ public final class BiPrimeProofGenerator {
         return rounds;
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public static BigInteger genY(BigInteger N, BigInteger w, byte[] ctx, int i) {
         var rnd = new DeterministicRandom(N, w, "blum", i, ctx);
         BigInteger y;
@@ -218,6 +219,7 @@ public final class BiPrimeProofGenerator {
         return y;
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public static BigInteger hashToZNStarDet(BigInteger N, byte[] ctx, String label, int i) {
         var rnd = new DeterministicRandom(N, null, label, i, ctx);
         BigInteger y;

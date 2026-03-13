@@ -78,6 +78,7 @@ public class PaillierEncryption {
         return gm.multiply(rn).mod(nSquared);
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public Encryption encryptWithRandomness(BigInteger m) {
         SecureRandom random = SecureRandomUtils.getInstance();
         BigInteger r;
@@ -160,6 +161,7 @@ public class PaillierEncryption {
             this(n, n.multiply(n), n.add(BigInteger.ONE), n.bitLength());
         }
 
+        @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
         public BigInteger encrypt(BigInteger m) {
             return encryptWithRandomness(m).c;
         }
@@ -175,6 +177,7 @@ public class PaillierEncryption {
             return gm.multiply(rn).mod(nSquared);
         }
 
+        @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
         public Encryption encryptWithRandomness(BigInteger m) {
             SecureRandom random = SecureRandomUtils.getInstance();
             BigInteger r;

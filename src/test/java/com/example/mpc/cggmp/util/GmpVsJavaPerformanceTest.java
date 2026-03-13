@@ -18,7 +18,7 @@ import static com.example.mpc.cggmp.util.Secp256k1CurveUtils.*;
 
 @DisplayName("GMP vs Java BigInteger Real-World Performance Test")
 @Disabled("Temporarily disabled for build verification")
-public class GmpVsJavaPerformanceTest {
+class GmpVsJavaPerformanceTest {
     private static final Logger logger = LoggerFactory.getLogger(GmpVsJavaPerformanceTest.class);
 
     private static final int WARMUP_ROUNDS = 2;
@@ -34,7 +34,9 @@ public class GmpVsJavaPerformanceTest {
         if ("true".equalsIgnoreCase(quickMode)) {
             KAPPA = 16;
             PAILLIER_BITS = 512;
-            logger.info("Quick test mode enabled: kappa={}, paillierBits={}", KAPPA, PAILLIER_BITS);
+            if (logger.isInfoEnabled()) {
+                logger.info("Quick test mode enabled: kappa={}, paillierBits={}", KAPPA, PAILLIER_BITS);
+            }
         } else {
             KAPPA = 128;
             PAILLIER_BITS = 3072;
@@ -44,28 +46,33 @@ public class GmpVsJavaPerformanceTest {
     @BeforeAll
     static void setup() {
         gmpAvailable = NativeBigInteger.isNativeAvailable();
-        logger.info("=".repeat(80));
-        logger.info("GMP vs Java BigInteger Real-World Performance Test");
-        logger.info("GMP Available: {}", gmpAvailable);
-        logger.info("CGGMP Parameters: kappa={}, paillierBits={}", KAPPA, PAILLIER_BITS);
-        logger.info("=".repeat(80));
+        if (logger.isInfoEnabled()) {
+            logger.info("=".repeat(80));
+            logger.info("GMP vs Java BigInteger Real-World Performance Test");
+            logger.info("GMP Available: {}", gmpAvailable);
+            logger.info("CGGMP Parameters: kappa={}, paillierBits={}", KAPPA, PAILLIER_BITS);
+            logger.info("=".repeat(80));
+        }
     }
 
     @Test
     @DisplayName("1. Modular Exponentiation (Real Paillier Key Size)")
     void testModPowPerformance() {
-        logger.info("");
-        logger.info("-".repeat(80));
-        logger.info("Test 1: Modular Exponentiation (a^b mod n) @ {} bits", PAILLIER_BITS);
-        logger.info("-".repeat(80));
-
+        if (logger.isInfoEnabled()) {
+            logger.info("");
+            logger.info("-".repeat(80));
+            logger.info("Test 1: Modular Exponentiation (a^b mod n) @ {} bits", PAILLIER_BITS);
+            logger.info("-".repeat(80));
+        }
         BigInteger modulus = generatePaillierModulus(PAILLIER_BITS);
         BigInteger base = new BigInteger(PAILLIER_BITS, RANDOM).mod(modulus);
         BigInteger exponent = new BigInteger(PAILLIER_BITS / 2, RANDOM);
 
-        logger.info("  Modulus bits: {}", modulus.bitLength());
-        logger.info("  Base bits: {}", base.bitLength());
-        logger.info("  Exponent bits: {}", exponent.bitLength());
+        if (logger.isInfoEnabled()) {
+            logger.info("  Modulus bits: {}", modulus.bitLength());
+            logger.info("  Base bits: {}", base.bitLength());
+            logger.info("  Exponent bits: {}", exponent.bitLength());
+        }
 
         BigInteger javaResult = base.modPow(exponent, modulus);
         double javaAvg = benchmarkOperation("Java", () -> base.modPow(exponent, modulus));
@@ -73,8 +80,9 @@ public class GmpVsJavaPerformanceTest {
         if (gmpAvailable) {
             BigInteger gmpResult = NativeBigInteger.modPow(base, exponent, modulus);
             boolean match = javaResult.equals(gmpResult);
-            logger.info("  Result Match: {}", match);
-
+            if (logger.isInfoEnabled()) {
+                logger.info("  Result Match: {}", match);
+            }
             double gmpAvg = benchmarkOperation("GMP", () -> NativeBigInteger.modPow(base, exponent, modulus));
             logComparison("modPow", javaAvg, gmpAvg, match);
         }

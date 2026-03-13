@@ -11,6 +11,7 @@ import java.security.SecureRandom;
 import java.util.Objects;
 
 public class PaillierRespondentProofGenerator implements RespondentProofGenerator {
+    @Override
     public PaillierRespondentProof createProof(PaillierRespondentEncryptionWitness witness, byte[] context) {
         Objects.requireNonNull(witness, "witness");
 

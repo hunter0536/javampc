@@ -90,6 +90,7 @@ public final class NoSmallFactorProofGenerator {
         return BigInteger.ONE.shiftLeft((bl + 1) >>> 1);
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     private static BigInteger randomSigned(BigInteger bound, SecureRandom rnd) {
         BigInteger x;
         do {

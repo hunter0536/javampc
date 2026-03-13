@@ -57,6 +57,9 @@ public final class CggmpRefreshMessageDispatcher {
                     case CGGMP_REFRESH_R3:
                         svc.refreshMessageHandler.onRefreshR3(senderId, data);
                         break;
+                    case CGGMP_REFRESH_COMMIT:
+                        svc.refreshMessageHandler.onRefreshCommit(senderId, data);
+                        break;
                     case CGGMP_REFRESH_COMPLAINT:
                         svc.refreshMessageHandler.onRefreshComplaint(senderId, data);
                         break;

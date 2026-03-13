@@ -7,6 +7,7 @@ import com.example.mpc.cggmp.zk.RangeProofValidator;
 import java.math.BigInteger;
 
 public class PaillierRangeProofValidator implements RangeProofValidator {
+    @Override
     public boolean verifyProof(PaillierRangeProof proof, com.example.mpc.cggmp.PaillierEncryption.PublicKey pubKey, PaillierRangeProofContext ctx) {
         var g = pubKey.g();
         var n = pubKey.n();

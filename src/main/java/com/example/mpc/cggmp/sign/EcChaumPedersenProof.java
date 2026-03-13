@@ -10,6 +10,7 @@ import java.security.SecureRandom;
 
 public record EcChaumPedersenProof(ECPoint A, BigInteger r, BigInteger s) {
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public static EcChaumPedersenProof create(BigInteger value, BigInteger blinding, ECPoint commitment, byte[] context) {
         BigInteger q = EcPedersen.n();
         SecureRandom rnd = SecureRandomUtils.getInstance();

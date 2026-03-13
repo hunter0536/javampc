@@ -121,6 +121,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                             MessageType.CGGMP_REFRESH_R1,
                             MessageType.CGGMP_REFRESH_R2,
                             MessageType.CGGMP_REFRESH_R3,
+                            MessageType.CGGMP_REFRESH_COMMIT,
                             MessageType.CGGMP_REFRESH_COMPLAINT,
                             MessageType.CGGMP_REFRESH_EXCLUDE
                     ), this);

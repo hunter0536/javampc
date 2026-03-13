@@ -25,10 +25,12 @@ public class CggmpRefreshTask {
     public final CountDownLatch round1Latch;
     public final CountDownLatch round2Latch;
     public final CountDownLatch round3Latch;
+    public final CountDownLatch commitLatch;
 
     public final ConcurrentHashMap<Integer, String> round1Commit = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, RefreshRound2Data> round2Data = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, RefreshRound3Data> round3Data = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, Boolean> commitAcks = new ConcurrentHashMap<>();
 
     public final ConcurrentHashMap<Integer, BigInteger> yShares = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> yPoints = new ConcurrentHashMap<>();
@@ -48,6 +50,7 @@ public class CggmpRefreshTask {
         this.round1Latch = new CountDownLatch(waitCount);
         this.round2Latch = new CountDownLatch(waitCount);
         this.round3Latch = new CountDownLatch(waitCount);
+        this.commitLatch = new CountDownLatch(waitCount);
     }
 
     public boolean start() {

@@ -32,6 +32,8 @@ public enum MessageType {
     CGGMP_DKG_ROUND2_BATCH,
     /** CGGMP DKG第3轮 */
     CGGMP_DKG_ROUND3,
+    /** CGGMP DKG提交确认 */
+    CGGMP_DKG_COMMIT,
     /** CGGMP DKG投诉 */
     CGGMP_DKG_COMPLAINT,
     /** CGGMP DKG排除 */
@@ -112,6 +114,8 @@ public enum MessageType {
     CGGMP_REFRESH_R2,
     /** CGGMP刷新第3轮 */
     CGGMP_REFRESH_R3,
+    /** CGGMP刷新提交确认 */
+    CGGMP_REFRESH_COMMIT,
     /** CGGMP刷新投诉 */
     CGGMP_REFRESH_COMPLAINT,
     /** CGGMP刷新排除 */

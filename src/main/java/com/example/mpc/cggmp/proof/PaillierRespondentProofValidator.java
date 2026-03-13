@@ -7,6 +7,7 @@ import com.example.mpc.cggmp.zk.RespondentProofValidator;
 import java.math.BigInteger;
 
 public class PaillierRespondentProofValidator implements RespondentProofValidator {
+    @Override
     public boolean verifyProof(PaillierRespondentProof proof, com.example.mpc.cggmp.PaillierEncryption.PublicKey pubKey, PaillierRespondentProofContext ctx) {
         var g = pubKey.g();
         var n = pubKey.n();

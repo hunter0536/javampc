@@ -64,6 +64,9 @@ public final class CggmpDkgMessageDispatcher {
                     case CGGMP_DKG_ROUND3:
                         svc.dkgMessageHandler.onDkgRound3(senderId, data);
                         break;
+                    case CGGMP_DKG_COMMIT:
+                        svc.dkgMessageHandler.onDkgCommit(senderId, data);
+                        break;
                     case CGGMP_DKG_COMPLAINT:
                         svc.dkgMessageHandler.onDkgComplaint(senderId, data);
                         break;

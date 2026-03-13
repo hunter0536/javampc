@@ -206,6 +206,18 @@ public final class CggmpRefreshProtocolHandler {
                             .thenRunAsync(() -> {
                                 if (!finalizeRefresh(task)) {
                                     task.fail("Refresh verification failed");
+                                }
+                            }, refreshExecutorService)
+                            .thenCompose(v -> {
+                                if (task.status.get() == com.example.mpc.enums.TaskStatus.FAILED) {
+                                    return CompletableFuture.completedFuture(null);
+                                }
+                                task.commitAcks.put(svc.nodeId, Boolean.TRUE);
+                                return svc.refreshMessageHandler.sendRefreshCommit(task)
+                                        .thenCompose(x -> waitForLatchAsync(task.commitLatch, "refresh commit"));
+                            })
+                            .thenRunAsync(() -> {
+                                if (task.status.get() == com.example.mpc.enums.TaskStatus.FAILED) {
                                     return;
                                 }
                                 task.complete();

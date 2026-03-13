@@ -46,7 +46,7 @@ public final class BiPrimeProofValidator {
         return true;
     }
 
-    private static boolean verifyBlumRounds(BiPrimeBlumProof pr, BigInteger N, BigInteger w, byte[] ctx, boolean[] A, boolean[] B) {
+    private static boolean verifyBlumRounds(BiPrimeBlumProof pr, BigInteger N, BigInteger w, byte[] ctx, boolean[] A, boolean... B) {
         int blum = pr.blumRounds();
         for (int i = 0; i < blum; i++) {
             if (!verifyBlumRound(pr, N, w, ctx, A[i], B[i], i)) {

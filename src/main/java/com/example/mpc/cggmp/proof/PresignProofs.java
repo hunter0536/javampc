@@ -144,8 +144,10 @@ public final class PresignProofs {
         BigInteger N1sq = N1.multiply(N1);
         long t0 = System.nanoTime();
         SecureRandom rnd = SecureRandomUtils.getInstance();
-        logger.info("PiAffG start: kappa={}, epsBits={}, negY={}, N0Bits={}, N1Bits={}",
-                effectiveKappa, effectiveEps, negY, N0.bitLength(), N1.bitLength());
+        if (logger.isInfoEnabled()) {
+            logger.info("PiAffG start: kappa={}, epsBits={}, negY={}, N0Bits={}, N1Bits={}",
+                    effectiveKappa, effectiveEps, negY, N0.bitLength(), N1.bitLength());
+        }
 
         List<ECPoint> R = new ArrayList<>(effectiveKappa);
         List<BigInteger> z = new ArrayList<>(effectiveKappa);
@@ -167,7 +169,7 @@ public final class PresignProofs {
             rArr[i] = randomZnStar(N0, rnd);
             sArr[i] = randomZnStar(N1, rnd);
         }
-        logger.debug("PiAffG random values generated in {} ms", 
+        logger.debug("PiAffG random values generated in {} ms",
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - loop1Start));
 
         long batchStart = System.nanoTime();
@@ -193,7 +195,7 @@ public final class PresignProofs {
                     .mod(N1sq);
         }
         
-        logger.debug("PiAffG modPow computed in {} ms", 
+        logger.debug("PiAffG modPow computed in {} ms",
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
         List<BigInteger> A = new ArrayList<>(effectiveKappa);
@@ -204,7 +206,7 @@ public final class PresignProofs {
             ECPoint Rj = ecMulSigned(g, alphaArr[i]).normalize();
             R.add(Rj);
         }
-        logger.debug("PiAffG tuples built in {} ms", 
+        logger.debug("PiAffG tuples built in {} ms",
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - loop1Start));
 
         long challengeStart = System.nanoTime();
@@ -350,6 +352,7 @@ public final class PresignProofs {
         return new AffGVerifyResult(true, -1, true, true, true, true, true);
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public static PiLogStarProof createLogStarProof(ECPoint base, ECPoint X, BigInteger secret, byte[] context) {
         BigInteger q = Secp256k1CurveUtils.n();
         SecureRandom rnd = SecureRandomUtils.getInstance();
@@ -600,7 +603,7 @@ public final class PresignProofs {
             C.add(ecMulSigned(g, alphaArr[i]).normalize());
         }
         
-        logger.debug("PiDec A values computed in {} ms", 
+        logger.debug("PiDec A values computed in {} ms",
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
         boolean[] e = challengeBits("PI_DEC", context, effectiveKappa, A, B, C);
@@ -778,6 +781,7 @@ public final class PresignProofs {
         }
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     private static BigInteger randomZnStar(BigInteger n, SecureRandom rnd) {
         BigInteger r;
         do {
@@ -786,6 +790,7 @@ public final class PresignProofs {
         return r;
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     private static BigInteger randomSigned(BigInteger bound, SecureRandom rnd) {
         BigInteger r;
         int bits = bound.bitLength();
