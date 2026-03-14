@@ -2,18 +2,37 @@
 #include <gmp.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <time.h>
 
-typedef struct {
-    mpz_t mod;
-    mpz_t r2;
-    mpz_t n_prime;
-    mp_limb_t n0_inv;
-    int bits;
-} MontgomeryContext;
+static jclass bigIntegerClass = NULL;
+static jmethodID bigIntegerConstructor = NULL;
+static jmethodID bigIntegerToByteArray = NULL;
+static mpz_t two_pow_table[2048];
+static int two_pow_table_initialized = 0;
+static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-typedef struct {
-    mpz_t value;
-} NativeBigInt;
+static void init_two_pow_table(void) {
+    pthread_mutex_lock(&init_mutex);
+    if (!two_pow_table_initialized) {
+        for (int i = 0; i < 2048; i++) {
+            mpz_init(two_pow_table[i]);
+            mpz_ui_pow_ui(two_pow_table[i], 2, i);
+        }
+        two_pow_table_initialized = 1;
+    }
+    pthread_mutex_unlock(&init_mutex);
+}
+
+static void cache_jni_ids(JNIEnv *env) {
+    if (bigIntegerClass == NULL) {
+        jclass cls = (*env)->FindClass(env, "java/math/BigInteger");
+        bigIntegerClass = (*env)->NewGlobalRef(env, cls);
+        bigIntegerConstructor = (*env)->GetMethodID(env, bigIntegerClass, "<init>", "([B)V");
+        bigIntegerToByteArray = (*env)->GetMethodID(env, bigIntegerClass, "toByteArray", "()[B");
+    }
+}
 
 static void bytes_to_mpz(JNIEnv *env, jbyteArray array, mpz_t result) {
     jsize len = (*env)->GetArrayLength(env, array);
@@ -23,12 +42,11 @@ static void bytes_to_mpz(JNIEnv *env, jbyteArray array, mpz_t result) {
     }
     jbyte *bytes = (*env)->GetByteArrayElements(env, array, NULL);
     
-    // Java BigInteger.toByteArray() 返回大端序二补码
-    // mpz_import 参数: order=1 表示大端序, endian=1 表示每个字内部大端序
     mpz_import(result, (size_t)len, 1, 1, 1, 0, bytes);
     
-    // 若最高位为1，按二补码转为负数：value -= 2^(8*len)
-    if ((bytes[0] & 0x80) != 0) {
+    if ((bytes[0] & 0x80) != 0 && len * 8 < 2048) {
+        mpz_sub(result, result, two_pow_table[len * 8]);
+    } else if ((bytes[0] & 0x80) != 0) {
         mpz_t two_pow;
         mpz_init(two_pow);
         mpz_ui_pow_ui(two_pow, 2, (unsigned long)(len * 8));
@@ -39,15 +57,32 @@ static void bytes_to_mpz(JNIEnv *env, jbyteArray array, mpz_t result) {
     (*env)->ReleaseByteArrayElements(env, array, bytes, JNI_ABORT);
 }
 
-static int mpz_powm_signed(JNIEnv *env, mpz_t result, const mpz_t base, const mpz_t exp, const mpz_t mod) {
+static void bytes_to_mpz_direct(jbyte *bytes, jsize len, mpz_t result) {
+    if (len <= 0) {
+        mpz_set_ui(result, 0);
+        return;
+    }
+    
+    mpz_import(result, (size_t)len, 1, 1, 1, 0, bytes);
+    
+    if ((bytes[0] & 0x80) != 0 && len * 8 < 2048) {
+        mpz_sub(result, result, two_pow_table[len * 8]);
+    } else if ((bytes[0] & 0x80) != 0) {
+        mpz_t two_pow;
+        mpz_init(two_pow);
+        mpz_ui_pow_ui(two_pow, 2, (unsigned long)(len * 8));
+        mpz_sub(result, result, two_pow);
+        mpz_clear(two_pow);
+    }
+}
+
+static int mpz_powm_signed(mpz_t result, const mpz_t base, const mpz_t exp, const mpz_t mod) {
     if (mpz_sgn(exp) < 0) {
         mpz_t inv;
         mpz_t exp_abs;
         mpz_inits(inv, exp_abs, NULL);
         if (mpz_invert(inv, base, mod) == 0) {
             mpz_clears(inv, exp_abs, NULL);
-            jclass exception = (*env)->FindClass(env, "java/lang/ArithmeticException");
-            (*env)->ThrowNew(env, exception, "BigInteger not invertible");
             return 0;
         }
         mpz_neg(exp_abs, exp);
@@ -59,46 +94,72 @@ static int mpz_powm_signed(JNIEnv *env, mpz_t result, const mpz_t base, const mp
     return 1;
 }
 
-static jbyteArray mpz_to_bytes(JNIEnv *env, mpz_t value) {
+static size_t mpz_to_bytes_buffer(mpz_t value, unsigned char *buffer, size_t buffer_size) {
+    int is_negative = mpz_sgn(value) < 0;
+    
+    mpz_t abs_val;
+    mpz_init(abs_val);
+    mpz_abs(abs_val, value);
+    
     size_t count;
-    // 使用大端序导出，与Java BigInteger.toByteArray()格式一致
-    mpz_export(NULL, &count, 1, 1, 1, 0, value);
+    mpz_export(NULL, &count, 1, 1, 1, 0, abs_val);
+    
+    if (count + 2 > buffer_size) {
+        mpz_clear(abs_val);
+        return 0;
+    }
     
     int needsSignByte = 0;
+    size_t result_len = 0;
+    
     if (count > 0) {
-        unsigned char *bytes = (unsigned char *)malloc(count);
-        mpz_export(bytes, &count, 1, 1, 1, 0, value);
+        mpz_export(buffer + 1, &count, 1, 1, 1, 0, abs_val);
+        buffer[0] = 0;
         
-        if (bytes[0] >= 0x80) {
+        if (buffer[1] >= 0x80) {
             needsSignByte = 1;
         }
         
-        jbyteArray result = (*env)->NewByteArray(env, (jsize)(count + needsSignByte));
-        jbyte *outBytes = (*env)->GetByteArrayElements(env, result, NULL);
-        
-        if (needsSignByte) {
-            outBytes[0] = 0;
-            memcpy(outBytes + 1, bytes, count);
-        } else {
-            memcpy(outBytes, bytes, count);
+        if (is_negative) {
+            for (size_t i = 0; i < count + 1; i++) {
+                buffer[i] = ~buffer[i];
+            }
+            int carry = 1;
+            for (int i = (int)count; i >= 0 && carry; i--) {
+                int sum = (unsigned char)buffer[i] + carry;
+                buffer[i] = (unsigned char)(sum & 0xFF);
+                carry = sum >> 8;
+            }
+            if (buffer[0] < 0x80) {
+                needsSignByte = 0;
+            }
         }
         
-        (*env)->ReleaseByteArrayElements(env, result, outBytes, 0);
-        free(bytes);
-        return result;
+        result_len = count + needsSignByte;
+        if (!needsSignByte) {
+            memmove(buffer, buffer + 1, count);
+        }
+    } else {
+        buffer[0] = 0;
+        result_len = 1;
     }
     
-    // Java BigInteger(byte[]) 不接受空数组，这里返回单字节 0
-    jbyteArray result = (*env)->NewByteArray(env, 1);
-    jbyte zero = 0;
-    (*env)->SetByteArrayRegion(env, result, 0, 1, &zero);
+    mpz_clear(abs_val);
+    return result_len;
+}
+
+static jbyteArray mpz_to_bytes(JNIEnv *env, mpz_t value) {
+    unsigned char temp[4096];
+    size_t len = mpz_to_bytes_buffer(value, temp, sizeof(temp));
+    
+    jbyteArray result = (*env)->NewByteArray(env, (jsize)len);
+    (*env)->SetByteArrayRegion(env, result, 0, (jsize)len, (jbyte*)temp);
     return result;
 }
 
 static jobject create_biginteger(JNIEnv *env, jbyteArray array) {
-    jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-    jmethodID constructor = (*env)->GetMethodID(env, bigIntegerClass, "<init>", "([B)V");
-    return (*env)->NewObject(env, bigIntegerClass, constructor, array);
+    cache_jni_ids(env);
+    return (*env)->NewObject(env, bigIntegerClass, bigIntegerConstructor, array);
 }
 
 static void throw_npe(JNIEnv *env, const char *message) {
@@ -112,9 +173,8 @@ static void throw_arith(JNIEnv *env, const char *message) {
 }
 
 static jbyteArray get_biginteger_bytes(JNIEnv *env, jobject obj) {
-    jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-    jmethodID toByteArray = (*env)->GetMethodID(env, bigIntegerClass, "toByteArray", "()[B");
-    return (jbyteArray)(*env)->CallObjectMethod(env, obj, toByteArray);
+    cache_jni_ids(env);
+    return (jbyteArray)(*env)->CallObjectMethod(env, obj, bigIntegerToByteArray);
 }
 
 JNIEXPORT jobject JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeModPow
@@ -123,6 +183,9 @@ JNIEXPORT jobject JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativ
         throw_npe(env, "Null parameter");
         return NULL;
     }
+    
+    init_two_pow_table();
+    
     mpz_t base, exp, mod, result;
     mpz_inits(base, exp, mod, result, NULL);
     
@@ -140,8 +203,10 @@ JNIEXPORT jobject JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativ
         return NULL;
     }
     
-    if (!mpz_powm_signed(env, result, base, exp, mod)) {
+    if (!mpz_powm_signed(result, base, exp, mod)) {
         mpz_clears(base, exp, mod, result, NULL);
+        jclass exception = (*env)->FindClass(env, "java/lang/ArithmeticException");
+        (*env)->ThrowNew(env, exception, "BigInteger not invertible");
         return NULL;
     }
     
@@ -158,6 +223,9 @@ JNIEXPORT jobject JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativ
         throw_npe(env, "Null parameter");
         return NULL;
     }
+    
+    init_two_pow_table();
+    
     mpz_t val, mod, result;
     mpz_inits(val, mod, result, NULL);
     
@@ -186,114 +254,113 @@ JNIEXPORT jobject JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativ
     return resultObj;
 }
 
-JNIEXPORT jobject JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeMultiply
-  (JNIEnv *env, jclass cls, jobject aObj, jobject bObj) {
-    if (aObj == NULL || bObj == NULL) {
+JNIEXPORT jobject JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeModMul
+  (JNIEnv *env, jclass cls, jobject aObj, jobject bObj, jobject modObj) {
+    if (aObj == NULL || bObj == NULL || modObj == NULL) {
         throw_npe(env, "Null parameter");
         return NULL;
     }
-    mpz_t a, b, result;
-    mpz_inits(a, b, result, NULL);
+    
+    init_two_pow_table();
+    
+    mpz_t a, b, mod, result;
+    mpz_inits(a, b, mod, result, NULL);
     
     jbyteArray aBytes = get_biginteger_bytes(env, aObj);
     jbyteArray bBytes = get_biginteger_bytes(env, bObj);
+    jbyteArray modBytes = get_biginteger_bytes(env, modObj);
     
     bytes_to_mpz(env, aBytes, a);
     bytes_to_mpz(env, bBytes, b);
+    bytes_to_mpz(env, modBytes, mod);
+
+    if (mpz_sgn(mod) <= 0) {
+        mpz_clears(a, b, mod, result, NULL);
+        throw_arith(env, "Modulus not positive");
+        return NULL;
+    }
     
     mpz_mul(result, a, b);
+    mpz_mod(result, result, mod);
     
     jbyteArray resultBytes = mpz_to_bytes(env, result);
     jobject resultObj = create_biginteger(env, resultBytes);
     
-    mpz_clears(a, b, result, NULL);
+    mpz_clears(a, b, mod, result, NULL);
     return resultObj;
 }
 
-JNIEXPORT jlong JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_00024NativeModPowContext_initMontgomeryContext
-  (JNIEnv *env, jobject thisObj, jobject modObj) {
-    if (modObj == NULL) {
-        throw_npe(env, "Null parameter");
-        return 0;
-    }
-    MontgomeryContext *ctx = (MontgomeryContext *)malloc(sizeof(MontgomeryContext));
-    mpz_init(ctx->mod);
-    
-    jbyteArray modBytes = get_biginteger_bytes(env, modObj);
-    bytes_to_mpz(env, modBytes, ctx->mod);
+typedef struct {
+    jbyte *base_data;
+    jsize base_len;
+    mpz_t *exp_ptr;
+    mpz_t *mod_ptr;
+    mpz_t base;
+    mpz_t result;
+    size_t result_offset;
+    size_t result_len;
+    int error;
+} BatchTask;
 
-    if (mpz_sgn(ctx->mod) <= 0) {
-        mpz_clear(ctx->mod);
-        free(ctx);
-        throw_arith(env, "Modulus not positive");
-        return 0;
+typedef struct {
+    BatchTask *tasks;
+    jsize start;
+    jsize end;
+    unsigned char *result_pool;
+    size_t max_result_size;
+} ThreadArg;
+
+static void* batch_modpow_worker(void *arg) {
+    ThreadArg *thread_arg = (ThreadArg *)arg;
+    BatchTask *tasks = thread_arg->tasks;
+    unsigned char *result_pool = thread_arg->result_pool;
+    size_t max_result_size = thread_arg->max_result_size;
+    
+    for (jsize i = thread_arg->start; i < thread_arg->end; i++) {
+        mpz_set_ui(tasks[i].base, 0);
+        bytes_to_mpz_direct(tasks[i].base_data, tasks[i].base_len, tasks[i].base);
+        
+        if (!mpz_powm_signed(tasks[i].result, tasks[i].base, *tasks[i].exp_ptr, *tasks[i].mod_ptr)) {
+            tasks[i].error = 1;
+            continue;
+        }
+        tasks[i].error = 0;
+        
+        unsigned char *result_ptr = result_pool + i * max_result_size;
+        tasks[i].result_len = mpz_to_bytes_buffer(tasks[i].result, result_ptr, max_result_size);
     }
     
-    ctx->bits = mpz_sizeinbase(ctx->mod, 2);
-    
-    return (jlong)ctx;
+    return NULL;
 }
 
-JNIEXPORT void JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_00024NativeModPowContext_freeMontgomeryContext
-  (JNIEnv *env, jobject thisObj, jlong ptr) {
-    MontgomeryContext *ctx = (MontgomeryContext *)ptr;
-    if (ctx) {
-        mpz_clear(ctx->mod);
-        free(ctx);
-    }
-}
-
-JNIEXPORT jobject JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_00024NativeModPowContext_nativeMontgomeryModPow
-  (JNIEnv *env, jobject thisObj, jlong ptr, jobject baseObj, jobject expObj) {
-    MontgomeryContext *ctx = (MontgomeryContext *)ptr;
-    if (!ctx) return NULL;
-    if (baseObj == NULL || expObj == NULL) {
-        throw_npe(env, "Null parameter");
-        return NULL;
-    }
-    
-    mpz_t base, exp, result;
-    mpz_inits(base, exp, result, NULL);
-    
-    jbyteArray baseBytes = get_biginteger_bytes(env, baseObj);
-    jbyteArray expBytes = get_biginteger_bytes(env, expObj);
-    
-    bytes_to_mpz(env, baseBytes, base);
-    bytes_to_mpz(env, expBytes, exp);
-    
-    if (!mpz_powm_signed(env, result, base, exp, ctx->mod)) {
-        mpz_clears(base, exp, result, NULL);
-        return NULL;
-    }
-    
-    jbyteArray resultBytes = mpz_to_bytes(env, result);
-    jobject resultObj = create_biginteger(env, resultBytes);
-    
-    mpz_clears(base, exp, result, NULL);
-    return resultObj;
-}
-
-JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeBatchModPow
-  (JNIEnv *env, jclass cls, jobjectArray baseObjs, jobject expObj, jobject modObj) {
-    // 检查空指针
-    if (baseObjs == NULL || expObj == NULL || modObj == NULL) {
+JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeBatchModPowOptimized
+  (JNIEnv *env, jclass cls, jobjectArray baseBytesArray, jbyteArray expBytes, jbyteArray modBytes) {
+    if (baseBytesArray == NULL || expBytes == NULL || modBytes == NULL) {
         throw_npe(env, "Null parameter");
         return NULL;
     }
     
-    jsize n = (*env)->GetArrayLength(env, baseObjs);
+    init_two_pow_table();
+    
+    jsize n = (*env)->GetArrayLength(env, baseBytesArray);
     if (n == 0) {
-        jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-        return (*env)->NewObjectArray(env, 0, bigIntegerClass, NULL);
+        jclass byteArrayClass = (*env)->FindClass(env, "[B");
+        return (*env)->NewObjectArray(env, 0, byteArrayClass, NULL);
     }
     
     mpz_t exp, mod;
     mpz_inits(exp, mod, NULL);
     
-    jbyteArray expBytes = get_biginteger_bytes(env, expObj);
-    jbyteArray modBytes = get_biginteger_bytes(env, modObj);
-    bytes_to_mpz(env, expBytes, exp);
-    bytes_to_mpz(env, modBytes, mod);
+    jbyte *expData = (*env)->GetByteArrayElements(env, expBytes, NULL);
+    jsize expLen = (*env)->GetArrayLength(env, expBytes);
+    jbyte *modData = (*env)->GetByteArrayElements(env, modBytes, NULL);
+    jsize modLen = (*env)->GetArrayLength(env, modBytes);
+    
+    bytes_to_mpz_direct(expData, expLen, exp);
+    bytes_to_mpz_direct(modData, modLen, mod);
+    
+    (*env)->ReleaseByteArrayElements(env, expBytes, expData, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, modBytes, modData, JNI_ABORT);
 
     if (mpz_sgn(mod) <= 0) {
         mpz_clears(exp, mod, NULL);
@@ -301,371 +368,519 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
         return NULL;
     }
     
-    jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-    jobjectArray resultArray = (*env)->NewObjectArray(env, n, bigIntegerClass, NULL);
+    int cpu_cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    int num_threads;
+    if (n < 8) {
+        num_threads = 1;
+    } else if (n < 32) {
+        num_threads = 2;
+    } else if (n < 128) {
+        num_threads = (cpu_cores >= 4) ? 4 : cpu_cores;
+    } else {
+        num_threads = (cpu_cores >= 8) ? 8 : cpu_cores;
+    }
+    if (num_threads > n) num_threads = n;
     
-    mpz_t base, result;
-    mpz_inits(base, result, NULL);
+    size_t max_result_size = (size_t)(mpz_sizeinbase(mod, 2) + 7) / 8 + 2;
+    unsigned char *result_pool = (unsigned char *)malloc(n * max_result_size);
     
-    for (jsize i = 0; i < n; i++) {
-        jobject baseObj = (*env)->GetObjectArrayElement(env, baseObjs, i);
-        
-        // 检查元素是否为NULL
-        if (baseObj == NULL) {
-            throw_npe(env, "Null element in baseObjs array");
-            mpz_clears(exp, mod, base, result, NULL);
-            return NULL;
-        }
-        
-        jbyteArray baseBytes = get_biginteger_bytes(env, baseObj);
-        bytes_to_mpz(env, baseBytes, base);
-        
-        if (!mpz_powm_signed(env, result, base, exp, mod)) {
-            mpz_clears(exp, mod, base, result, NULL);
-            return NULL;
-        }
-        
-        jbyteArray resultBytes = mpz_to_bytes(env, result);
-        jobject resultObj = create_biginteger(env, resultBytes);
-        (*env)->SetObjectArrayElement(env, resultArray, i, resultObj);
-        (*env)->DeleteLocalRef(env, baseObj);
-        (*env)->DeleteLocalRef(env, resultObj);
+    BatchTask *tasks = (BatchTask *)malloc(n * sizeof(BatchTask));
+    if (!tasks || !result_pool) {
+        free(result_pool);
+        free(tasks);
+        mpz_clears(exp, mod, NULL);
+        throw_npe(env, "Memory allocation failed");
+        return NULL;
     }
     
-    mpz_clears(exp, mod, base, result, NULL);
+    for (jsize i = 0; i < n; i++) {
+        jbyteArray baseArr = (jbyteArray)(*env)->GetObjectArrayElement(env, baseBytesArray, i);
+        jsize len = (*env)->GetArrayLength(env, baseArr);
+        tasks[i].base_data = (jbyte *)malloc(len);
+        (*env)->GetByteArrayRegion(env, baseArr, 0, len, tasks[i].base_data);
+        tasks[i].base_len = len;
+        tasks[i].exp_ptr = &exp;
+        tasks[i].mod_ptr = &mod;
+        mpz_init(tasks[i].base);
+        mpz_init(tasks[i].result);
+        tasks[i].result_offset = i * max_result_size;
+        tasks[i].result_len = 0;
+        tasks[i].error = 0;
+        (*env)->DeleteLocalRef(env, baseArr);
+    }
+    
+    if (num_threads == 1) {
+        ThreadArg arg = {tasks, 0, n, result_pool, max_result_size};
+        batch_modpow_worker(&arg);
+    } else {
+        pthread_t *threads = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
+        ThreadArg *thread_args = (ThreadArg *)malloc(num_threads * sizeof(ThreadArg));
+        
+        jsize chunk_size = n / num_threads;
+        for (int t = 0; t < num_threads; t++) {
+            thread_args[t].tasks = tasks;
+            thread_args[t].start = t * chunk_size;
+            thread_args[t].end = (t == num_threads - 1) ? n : (t + 1) * chunk_size;
+            thread_args[t].result_pool = result_pool;
+            thread_args[t].max_result_size = max_result_size;
+            pthread_create(&threads[t], NULL, batch_modpow_worker, &thread_args[t]);
+        }
+        
+        for (int t = 0; t < num_threads; t++) {
+            pthread_join(threads[t], NULL);
+        }
+        
+        free(threads);
+        free(thread_args);
+    }
+    
+    jclass byteArrayClass = (*env)->FindClass(env, "[B");
+    jobjectArray resultArray = (*env)->NewObjectArray(env, n, byteArrayClass, NULL);
+    
+    for (jsize i = 0; i < n; i++) {
+        if (tasks[i].error) {
+            jbyteArray emptyBytes = (*env)->NewByteArray(env, 0);
+            (*env)->SetObjectArrayElement(env, resultArray, i, emptyBytes);
+            (*env)->DeleteLocalRef(env, emptyBytes);
+        } else {
+            unsigned char *result_ptr = result_pool + i * max_result_size;
+            jbyteArray jbytes = (*env)->NewByteArray(env, (jsize)tasks[i].result_len);
+            (*env)->SetByteArrayRegion(env, jbytes, 0, (jsize)tasks[i].result_len, (jbyte*)result_ptr);
+            (*env)->SetObjectArrayElement(env, resultArray, i, jbytes);
+            (*env)->DeleteLocalRef(env, jbytes);
+        }
+    }
+    
+    for (jsize i = 0; i < n; i++) {
+        free(tasks[i].base_data);
+        mpz_clears(tasks[i].base, tasks[i].result, NULL);
+    }
+    free(result_pool);
+    free(tasks);
+    mpz_clears(exp, mod, NULL);
+    
     return resultArray;
 }
 
-JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeBatchModPowDifferentExp
-  (JNIEnv *env, jclass cls, jobjectArray baseObjs, jobjectArray expObjs, jobject modObj) {
-    // 检查空指针
-    if (baseObjs == NULL || expObjs == NULL || modObj == NULL) {
+typedef struct {
+    jbyte **a_data_array;
+    jsize *a_len_array;
+    mpz_t *n_ptr;
+    int *results;
+    jsize start;
+    jsize end;
+} JacobiBatchArg;
+
+static void* batch_jacobi_worker(void *arg) {
+    JacobiBatchArg *ctx = (JacobiBatchArg *)arg;
+    
+    for (jsize i = ctx->start; i < ctx->end; i++) {
+        mpz_t a, a_mod;
+        mpz_inits(a, a_mod, NULL);
+        bytes_to_mpz_direct(ctx->a_data_array[i], ctx->a_len_array[i], a);
+        mpz_mod(a_mod, a, *ctx->n_ptr);
+        
+        ctx->results[i] = mpz_jacobi(a_mod, *ctx->n_ptr);
+        
+        mpz_clears(a, a_mod, NULL);
+    }
+    
+    return NULL;
+}
+
+JNIEXPORT jint JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeJacobi
+  (JNIEnv *env, jclass cls, jbyteArray aBytes, jbyteArray nBytes) {
+    if (aBytes == NULL || nBytes == NULL) {
+        throw_npe(env, "Null parameter");
+        return 0;
+    }
+    
+    init_two_pow_table();
+    
+    mpz_t a, n, a_mod;
+    mpz_inits(a, n, a_mod, NULL);
+    
+    jbyte *aData = (*env)->GetByteArrayElements(env, aBytes, NULL);
+    jsize aLen = (*env)->GetArrayLength(env, aBytes);
+    jbyte *nData = (*env)->GetByteArrayElements(env, nBytes, NULL);
+    jsize nLen = (*env)->GetArrayLength(env, nBytes);
+    
+    bytes_to_mpz_direct(aData, aLen, a);
+    bytes_to_mpz_direct(nData, nLen, n);
+    
+    (*env)->ReleaseByteArrayElements(env, aBytes, aData, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, nBytes, nData, JNI_ABORT);
+    
+    if (mpz_sgn(n) <= 0 || mpz_even_p(n)) {
+        mpz_clears(a, n, a_mod, NULL);
+        jclass exception = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
+        (*env)->ThrowNew(env, exception, "n must be positive and odd");
+        return 0;
+    }
+    
+    mpz_mod(a_mod, a, n);
+    int result = mpz_jacobi(a_mod, n);
+    
+    mpz_clears(a, n, a_mod, NULL);
+    
+    return result;
+}
+
+JNIEXPORT jintArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeBatchJacobi
+  (JNIEnv *env, jclass cls, jobjectArray aBytesArray, jbyteArray nBytes) {
+    if (aBytesArray == NULL || nBytes == NULL) {
         throw_npe(env, "Null parameter");
         return NULL;
     }
     
-    jsize n = (*env)->GetArrayLength(env, baseObjs);
-    if (n == 0) {
-        jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-        return (*env)->NewObjectArray(env, 0, bigIntegerClass, NULL);
+    init_two_pow_table();
+    
+    jsize count = (*env)->GetArrayLength(env, aBytesArray);
+    if (count == 0) {
+        return (*env)->NewIntArray(env, 0);
     }
     
-    // 检查数组长度一致性
-    jsize expLen = (*env)->GetArrayLength(env, expObjs);
-    if (expLen != n) {
+    mpz_t n;
+    mpz_init(n);
+    
+    jbyte *nData = (*env)->GetByteArrayElements(env, nBytes, NULL);
+    jsize nLen = (*env)->GetArrayLength(env, nBytes);
+    bytes_to_mpz_direct(nData, nLen, n);
+    (*env)->ReleaseByteArrayElements(env, nBytes, nData, JNI_ABORT);
+    
+    if (mpz_sgn(n) <= 0 || mpz_even_p(n)) {
+        mpz_clear(n);
         jclass exception = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
-        (*env)->ThrowNew(env, exception, "baseObjs and expObjs must have same length");
+        (*env)->ThrowNew(env, exception, "n must be positive and odd");
         return NULL;
+    }
+    
+    int *results = (int *)malloc(count * sizeof(int));
+    if (!results) {
+        mpz_clear(n);
+        throw_npe(env, "Memory allocation failed");
+        return NULL;
+    }
+    
+    jbyte **a_data_array = (jbyte **)malloc(count * sizeof(jbyte *));
+    jsize *a_len_array = (jsize *)malloc(count * sizeof(jsize));
+    
+    for (jsize i = 0; i < count; i++) {
+        jbyteArray aArr = (jbyteArray)(*env)->GetObjectArrayElement(env, aBytesArray, i);
+        a_len_array[i] = (*env)->GetArrayLength(env, aArr);
+        a_data_array[i] = (jbyte *)malloc(a_len_array[i]);
+        (*env)->GetByteArrayRegion(env, aArr, 0, a_len_array[i], a_data_array[i]);
+        (*env)->DeleteLocalRef(env, aArr);
+    }
+    
+    int cpu_cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    int num_threads = (count < 16) ? 1 : (count < 64) ? 2 : (cpu_cores >= 4) ? 4 : cpu_cores;
+    if (num_threads > count) num_threads = count;
+    
+    if (num_threads == 1) {
+        JacobiBatchArg arg = {a_data_array, a_len_array, &n, results, 0, count};
+        batch_jacobi_worker(&arg);
+    } else {
+        pthread_t *threads = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
+        JacobiBatchArg *args = (JacobiBatchArg *)malloc(num_threads * sizeof(JacobiBatchArg));
+        
+        jsize chunk_size = count / num_threads;
+        for (int t = 0; t < num_threads; t++) {
+            args[t].a_data_array = a_data_array;
+            args[t].a_len_array = a_len_array;
+            args[t].n_ptr = &n;
+            args[t].results = results;
+            args[t].start = t * chunk_size;
+            args[t].end = (t == num_threads - 1) ? count : (t + 1) * chunk_size;
+            pthread_create(&threads[t], NULL, batch_jacobi_worker, &args[t]);
+        }
+        
+        for (int t = 0; t < num_threads; t++) {
+            pthread_join(threads[t], NULL);
+        }
+        
+        free(threads);
+        free(args);
+    }
+    
+    for (jsize i = 0; i < count; i++) {
+        free(a_data_array[i]);
+    }
+    free(a_data_array);
+    free(a_len_array);
+    
+    jintArray resultArray = (*env)->NewIntArray(env, count);
+    (*env)->SetIntArrayRegion(env, resultArray, 0, count, results);
+    
+    free(results);
+    mpz_clear(n);
+    
+    return resultArray;
+}
+
+typedef struct {
+    jbyte **val_data_array;
+    jsize *val_len_array;
+    mpz_t *mod_ptr;
+    unsigned char *result_pool;
+    size_t *result_len_array;
+    size_t max_result_size;
+    jsize start;
+    jsize end;
+} BatchModArg;
+
+static void* batch_mod_worker(void *arg) {
+    BatchModArg *ctx = (BatchModArg *)arg;
+    
+    for (jsize i = ctx->start; i < ctx->end; i++) {
+        mpz_t val, result;
+        mpz_inits(val, result, NULL);
+        
+        bytes_to_mpz_direct(ctx->val_data_array[i], ctx->val_len_array[i], val);
+        mpz_mod(result, val, *ctx->mod_ptr);
+        
+        unsigned char *result_ptr = ctx->result_pool + i * ctx->max_result_size;
+        ctx->result_len_array[i] = mpz_to_bytes_buffer(result, result_ptr, ctx->max_result_size);
+        
+        mpz_clears(val, result, NULL);
+    }
+    
+    return NULL;
+}
+
+JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeBatchMod
+  (JNIEnv *env, jclass cls, jobjectArray valsBytesArray, jbyteArray modBytes) {
+    if (valsBytesArray == NULL || modBytes == NULL) {
+        throw_npe(env, "Null parameter");
+        return NULL;
+    }
+    
+    init_two_pow_table();
+    
+    jsize n = (*env)->GetArrayLength(env, valsBytesArray);
+    if (n == 0) {
+        jclass byteArrayClass = (*env)->FindClass(env, "[B");
+        return (*env)->NewObjectArray(env, 0, byteArrayClass, NULL);
     }
     
     mpz_t mod;
     mpz_init(mod);
     
-    jbyteArray modBytes = get_biginteger_bytes(env, modObj);
-    bytes_to_mpz(env, modBytes, mod);
-
+    jbyte *modData = (*env)->GetByteArrayElements(env, modBytes, NULL);
+    jsize modLen = (*env)->GetArrayLength(env, modBytes);
+    bytes_to_mpz_direct(modData, modLen, mod);
+    (*env)->ReleaseByteArrayElements(env, modBytes, modData, JNI_ABORT);
+    
     if (mpz_sgn(mod) <= 0) {
         mpz_clear(mod);
         throw_arith(env, "Modulus not positive");
         return NULL;
     }
     
-    jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-    jobjectArray resultArray = (*env)->NewObjectArray(env, n, bigIntegerClass, NULL);
+    size_t max_result_size = (size_t)(mpz_sizeinbase(mod, 2) + 7) / 8 + 2;
+    unsigned char *result_pool = (unsigned char *)malloc(n * max_result_size);
+    size_t *result_len_array = (size_t *)malloc(n * sizeof(size_t));
     
-    mpz_t base, exp, result;
-    mpz_inits(base, exp, result, NULL);
+    jbyte **val_data_array = (jbyte **)malloc(n * sizeof(jbyte *));
+    jsize *val_len_array = (jsize *)malloc(n * sizeof(jsize));
+    
+    if (!result_pool || !result_len_array || !val_data_array || !val_len_array) {
+        free(result_pool);
+        free(result_len_array);
+        free(val_data_array);
+        free(val_len_array);
+        mpz_clear(mod);
+        throw_npe(env, "Memory allocation failed");
+        return NULL;
+    }
     
     for (jsize i = 0; i < n; i++) {
-        jobject baseObj = (*env)->GetObjectArrayElement(env, baseObjs, i);
-        jobject expObj = (*env)->GetObjectArrayElement(env, expObjs, i);
-        
-        // 检查元素是否为NULL
-        if (baseObj == NULL || expObj == NULL) {
-            throw_npe(env, "Null element in array");
-            mpz_clears(mod, base, exp, result, NULL);
-            return NULL;
-        }
-        
-        jbyteArray baseBytes = get_biginteger_bytes(env, baseObj);
-        jbyteArray expBytes = get_biginteger_bytes(env, expObj);
-        
-        bytes_to_mpz(env, baseBytes, base);
-        bytes_to_mpz(env, expBytes, exp);
-        
-        if (!mpz_powm_signed(env, result, base, exp, mod)) {
-            mpz_clears(mod, base, exp, result, NULL);
-            return NULL;
-        }
-        
-        jbyteArray resultBytes = mpz_to_bytes(env, result);
-        jobject resultObj = create_biginteger(env, resultBytes);
-        (*env)->SetObjectArrayElement(env, resultArray, i, resultObj);
-        (*env)->DeleteLocalRef(env, baseObj);
-        (*env)->DeleteLocalRef(env, expObj);
-        (*env)->DeleteLocalRef(env, resultObj);
+        jbyteArray valArr = (jbyteArray)(*env)->GetObjectArrayElement(env, valsBytesArray, i);
+        val_len_array[i] = (*env)->GetArrayLength(env, valArr);
+        val_data_array[i] = (jbyte *)malloc(val_len_array[i]);
+        (*env)->GetByteArrayRegion(env, valArr, 0, val_len_array[i], val_data_array[i]);
+        (*env)->DeleteLocalRef(env, valArr);
     }
     
-    mpz_clears(mod, base, exp, result, NULL);
+    int cpu_cores = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    int num_threads = (n < 16) ? 1 : (n < 64) ? 2 : (cpu_cores >= 4) ? 4 : cpu_cores;
+    if (num_threads > n) num_threads = n;
+    
+    if (num_threads == 1) {
+        BatchModArg arg = {val_data_array, val_len_array, &mod, result_pool, result_len_array, max_result_size, 0, n};
+        batch_mod_worker(&arg);
+    } else {
+        pthread_t *threads = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
+        BatchModArg *args = (BatchModArg *)malloc(num_threads * sizeof(BatchModArg));
+        
+        jsize chunk_size = n / num_threads;
+        for (int t = 0; t < num_threads; t++) {
+            args[t].val_data_array = val_data_array;
+            args[t].val_len_array = val_len_array;
+            args[t].mod_ptr = &mod;
+            args[t].result_pool = result_pool;
+            args[t].result_len_array = result_len_array;
+            args[t].max_result_size = max_result_size;
+            args[t].start = t * chunk_size;
+            args[t].end = (t == num_threads - 1) ? n : (t + 1) * chunk_size;
+            pthread_create(&threads[t], NULL, batch_mod_worker, &args[t]);
+        }
+        
+        for (int t = 0; t < num_threads; t++) {
+            pthread_join(threads[t], NULL);
+        }
+        
+        free(threads);
+        free(args);
+    }
+    
+    jclass byteArrayClass = (*env)->FindClass(env, "[B");
+    jobjectArray resultArray = (*env)->NewObjectArray(env, n, byteArrayClass, NULL);
+    
+    for (jsize i = 0; i < n; i++) {
+        unsigned char *result_ptr = result_pool + i * max_result_size;
+        jbyteArray jbytes = (*env)->NewByteArray(env, (jsize)result_len_array[i]);
+        (*env)->SetByteArrayRegion(env, jbytes, 0, (jsize)result_len_array[i], (jbyte*)result_ptr);
+        (*env)->SetObjectArrayElement(env, resultArray, i, jbytes);
+        (*env)->DeleteLocalRef(env, jbytes);
+    }
+    
+    for (jsize i = 0; i < n; i++) {
+        free(val_data_array[i]);
+    }
+    free(val_data_array);
+    free(val_len_array);
+    free(result_pool);
+    free(result_len_array);
+    mpz_clear(mod);
+    
     return resultArray;
 }
 
-JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeAffGProofTuple
-  (JNIEnv *env, jclass cls, 
-   jobject CObj, jobject onePlusN0Obj, jobject N0sqObj, 
-   jobject onePlusN1Obj, jobject N1sqObj,
-   jobjectArray alphaObjs, jobjectArray betaForN0Objs, 
-   jobjectArray betaForN1Objs, jobjectArray rObjs, jobjectArray sObjs) {
-    // 检查空指针
-    if (CObj == NULL || onePlusN0Obj == NULL || N0sqObj == NULL || onePlusN1Obj == NULL || N1sqObj == NULL) {
+JNIEXPORT jbyteArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeCrt
+  (JNIEnv *env, jclass cls, jbyteArray aBytes, jbyteArray pBytes, jbyteArray bBytes, jbyteArray qBytes, jbyteArray nBytes) {
+    if (aBytes == NULL || pBytes == NULL || bBytes == NULL || qBytes == NULL || nBytes == NULL) {
         throw_npe(env, "Null parameter");
         return NULL;
     }
-    if (alphaObjs == NULL || betaForN0Objs == NULL || betaForN1Objs == NULL || rObjs == NULL || sObjs == NULL) {
-        throw_npe(env, "Null array parameter");
+    
+    init_two_pow_table();
+    
+    mpz_t a, p, b, q, n, t, ip, k, x;
+    mpz_inits(a, p, b, q, n, t, ip, k, x, NULL);
+    
+    jbyte *aData = (*env)->GetByteArrayElements(env, aBytes, NULL);
+    jsize aLen = (*env)->GetArrayLength(env, aBytes);
+    jbyte *pData = (*env)->GetByteArrayElements(env, pBytes, NULL);
+    jsize pLen = (*env)->GetArrayLength(env, pBytes);
+    jbyte *bData = (*env)->GetByteArrayElements(env, bBytes, NULL);
+    jsize bLen = (*env)->GetArrayLength(env, bBytes);
+    jbyte *qData = (*env)->GetByteArrayElements(env, qBytes, NULL);
+    jsize qLen = (*env)->GetArrayLength(env, qBytes);
+    jbyte *nData = (*env)->GetByteArrayElements(env, nBytes, NULL);
+    jsize nLen = (*env)->GetArrayLength(env, nBytes);
+    
+    bytes_to_mpz_direct(aData, aLen, a);
+    bytes_to_mpz_direct(pData, pLen, p);
+    bytes_to_mpz_direct(bData, bLen, b);
+    bytes_to_mpz_direct(qData, qLen, q);
+    bytes_to_mpz_direct(nData, nLen, n);
+    
+    (*env)->ReleaseByteArrayElements(env, aBytes, aData, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, pBytes, pData, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, bBytes, bData, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, qBytes, qData, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, nBytes, nData, JNI_ABORT);
+    
+    mpz_sub(t, b, a);
+    mpz_mod(t, t, q);
+    
+    if (mpz_invert(ip, p, q) == 0) {
+        mpz_clears(a, p, b, q, n, t, ip, k, x, NULL);
+        throw_arith(env, "p not invertible mod q");
         return NULL;
     }
     
-    // 检查数组长度一致性
-    jsize kappa = (*env)->GetArrayLength(env, alphaObjs);
-    if (kappa == 0) {
-        jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-        return (*env)->NewObjectArray(env, 0, bigIntegerClass, NULL);
+    mpz_mul(k, t, ip);
+    mpz_mod(k, k, q);
+    
+    mpz_mul(x, k, p);
+    mpz_add(x, a, x);
+    
+    if (mpz_sgn(x) < 0 || mpz_cmp(x, n) >= 0) {
+        mpz_mod(x, x, n);
     }
     
-    jsize betaForN0Len = (*env)->GetArrayLength(env, betaForN0Objs);
-    jsize betaForN1Len = (*env)->GetArrayLength(env, betaForN1Objs);
-    jsize rLen = (*env)->GetArrayLength(env, rObjs);
-    jsize sLen = (*env)->GetArrayLength(env, sObjs);
+    unsigned char temp[4096];
+    size_t result_len = mpz_to_bytes_buffer(x, temp, sizeof(temp));
     
-    if (betaForN0Len != kappa || betaForN1Len != kappa || rLen != kappa || sLen != kappa) {
-        jclass exception = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
-        (*env)->ThrowNew(env, exception, "Array lengths mismatch");
-        return NULL;
-    }
+    jbyteArray resultArray = (*env)->NewByteArray(env, (jsize)result_len);
+    (*env)->SetByteArrayRegion(env, resultArray, 0, (jsize)result_len, (jbyte*)temp);
     
-    mpz_t C, onePlusN0, N0sq, onePlusN1, N1sq;
-    mpz_inits(C, onePlusN0, N0sq, onePlusN1, N1sq, NULL);
+    mpz_clears(a, p, b, q, n, t, ip, k, x, NULL);
     
-    jbyteArray CBytes = get_biginteger_bytes(env, CObj);
-    jbyteArray onePlusN0Bytes = get_biginteger_bytes(env, onePlusN0Obj);
-    jbyteArray N0sqBytes = get_biginteger_bytes(env, N0sqObj);
-    jbyteArray onePlusN1Bytes = get_biginteger_bytes(env, onePlusN1Obj);
-    jbyteArray N1sqBytes = get_biginteger_bytes(env, N1sqObj);
-    
-    bytes_to_mpz(env, CBytes, C);
-    bytes_to_mpz(env, onePlusN0Bytes, onePlusN0);
-    bytes_to_mpz(env, N0sqBytes, N0sq);
-    bytes_to_mpz(env, onePlusN1Bytes, onePlusN1);
-    bytes_to_mpz(env, N1sqBytes, N1sq);
-
-    if (mpz_sgn(N0sq) <= 0 || mpz_sgn(N1sq) <= 0) {
-        mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, NULL);
-        throw_arith(env, "Modulus not positive");
-        return NULL;
-    }
-    
-    mpz_t N0, N1, one;
-    mpz_inits(N0, N1, one, NULL);
-    mpz_set_ui(one, 1);
-    
-    // 从onePlusN0和onePlusN1计算N0和N1
-    // N0 = onePlusN0 - 1
-    mpz_sub(N0, onePlusN0, one);
-    // N1 = onePlusN1 - 1
-    mpz_sub(N1, onePlusN1, one);
-    
-    mpz_clear(one);
-    if (mpz_sgn(N0) < 0 || mpz_sgn(N1) < 0) {
-        mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, N0, N1, NULL);
-        throw_arith(env, "Exponent not non-negative");
-        return NULL;
-    }
-    
-    jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-    jobjectArray resultArray = (*env)->NewObjectArray(env, kappa * 2, bigIntegerClass, NULL);
-    
-    mpz_t alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2;
-    mpz_inits(alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
-    
-    for (jsize i = 0; i < kappa; i++) {
-        jobject alphaObj = (*env)->GetObjectArrayElement(env, alphaObjs, i);
-        jobject betaForN0Obj = (*env)->GetObjectArrayElement(env, betaForN0Objs, i);
-        jobject betaForN1Obj = (*env)->GetObjectArrayElement(env, betaForN1Objs, i);
-        jobject rObj = (*env)->GetObjectArrayElement(env, rObjs, i);
-        jobject sObj = (*env)->GetObjectArrayElement(env, sObjs, i);
-        
-        // 检查元素是否为NULL
-        if (alphaObj == NULL || betaForN0Obj == NULL || betaForN1Obj == NULL || rObj == NULL || sObj == NULL) {
-            throw_npe(env, "Null element in array");
-            mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, N0, N1, alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
-            return NULL;
-        }
-        
-        jbyteArray alphaBytes = get_biginteger_bytes(env, alphaObj);
-        jbyteArray betaForN0Bytes = get_biginteger_bytes(env, betaForN0Obj);
-        jbyteArray betaForN1Bytes = get_biginteger_bytes(env, betaForN1Obj);
-        jbyteArray rBytes = get_biginteger_bytes(env, rObj);
-        jbyteArray sBytes = get_biginteger_bytes(env, sObj);
-        
-        bytes_to_mpz(env, alphaBytes, alpha);
-        bytes_to_mpz(env, betaForN0Bytes, betaForN0);
-        bytes_to_mpz(env, betaForN1Bytes, betaForN1);
-        bytes_to_mpz(env, rBytes, r);
-        bytes_to_mpz(env, sBytes, s);
-        
-        // Aj = C^alpha * (1+N0)^betaForN0 * r^N0 mod N0sq
-        if (!mpz_powm_signed(env, tmp1, C, alpha, N0sq)) {
-            mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, N0, N1, alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
-            return NULL;
-        }
-        if (!mpz_powm_signed(env, tmp2, onePlusN0, betaForN0, N0sq)) {
-            mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, N0, N1, alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
-            return NULL;
-        }
-        mpz_mul(tmp1, tmp1, tmp2);
-        mpz_powm(tmp2, r, N0, N0sq);
-        mpz_mul(Aj, tmp1, tmp2);
-        mpz_mod(Aj, Aj, N0sq);
-        
-        // Bj = (1+N1)^betaForN1 * s^N1 mod N1sq
-        if (!mpz_powm_signed(env, tmp1, onePlusN1, betaForN1, N1sq)) {
-            mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, N0, N1, alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
-            return NULL;
-        }
-        mpz_powm(tmp2, s, N1, N1sq);
-        mpz_mul(Bj, tmp1, tmp2);
-        mpz_mod(Bj, Bj, N1sq);
-        
-        jbyteArray AjBytes = mpz_to_bytes(env, Aj);
-        jbyteArray BjBytes = mpz_to_bytes(env, Bj);
-        
-        jobject AjObj = create_biginteger(env, AjBytes);
-        jobject BjObj = create_biginteger(env, BjBytes);
-        (*env)->SetObjectArrayElement(env, resultArray, i * 2, AjObj);
-        (*env)->SetObjectArrayElement(env, resultArray, i * 2 + 1, BjObj);
-        (*env)->DeleteLocalRef(env, alphaObj);
-        (*env)->DeleteLocalRef(env, betaForN0Obj);
-        (*env)->DeleteLocalRef(env, betaForN1Obj);
-        (*env)->DeleteLocalRef(env, rObj);
-        (*env)->DeleteLocalRef(env, sObj);
-        (*env)->DeleteLocalRef(env, AjObj);
-        (*env)->DeleteLocalRef(env, BjObj);
-    }
-    
-    mpz_clears(C, onePlusN0, N0sq, onePlusN1, N1sq, N0, N1,
-               alpha, betaForN0, betaForN1, r, s, Aj, Bj, tmp1, tmp2, NULL);
     return resultArray;
 }
 
-JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeDecProofTuple
-  (JNIEnv *env, jclass cls, 
-   jobject KObj, jobject N0Obj, jobject N0sqObj,
-   jobjectArray alphaObjs, jobjectArray betaObjs,
-   jobjectArray rObjs) {
-    // 检查空指针
-    if (KObj == NULL || N0Obj == NULL || N0sqObj == NULL) {
-        throw_npe(env, "Null parameter");
-        return NULL;
-    }
-    if (alphaObjs == NULL || betaObjs == NULL || rObjs == NULL) {
-        throw_npe(env, "Null array parameter");
+JNIEXPORT jbyteArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeProbablePrime
+  (JNIEnv *env, jclass cls, jint bitLength, jbyteArray seedBytes) {
+    if (bitLength <= 0) {
+        throw_npe(env, "Invalid bit length");
         return NULL;
     }
     
-    // 检查数组长度一致性
-    jsize kappa = (*env)->GetArrayLength(env, alphaObjs);
-    if (kappa == 0) {
-        jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-        return (*env)->NewObjectArray(env, 0, bigIntegerClass, NULL);
+    init_two_pow_table();
+    
+    gmp_randstate_t rstate;
+    gmp_randinit_mt(rstate);
+    
+    if (seedBytes != NULL) {
+        jbyte *seedData = (*env)->GetByteArrayElements(env, seedBytes, NULL);
+        jsize seedLen = (*env)->GetArrayLength(env, seedBytes);
+        
+        mpz_t seed;
+        mpz_init(seed);
+        bytes_to_mpz_direct(seedData, seedLen, seed);
+        gmp_randseed(rstate, seed);
+        
+        (*env)->ReleaseByteArrayElements(env, seedBytes, seedData, JNI_ABORT);
+        mpz_clear(seed);
+    } else {
+        gmp_randseed_ui(rstate, (unsigned long)time(NULL));
     }
     
-    jsize betaLen = (*env)->GetArrayLength(env, betaObjs);
-    jsize rLen = (*env)->GetArrayLength(env, rObjs);
+    mpz_t prime, random_base;
+    mpz_inits(prime, random_base, NULL);
     
-    if (betaLen != kappa || rLen != kappa) {
-        jclass exception = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
-        (*env)->ThrowNew(env, exception, "Array lengths mismatch");
-        return NULL;
+    mpz_urandomb(random_base, rstate, bitLength);
+    mpz_setbit(random_base, bitLength - 1);
+    mpz_setbit(random_base, 0);
+    
+    mpz_nextprime(prime, random_base);
+    
+    int max_attempts = 1000;
+    int attempts = 0;
+    while (mpz_sizeinbase(prime, 2) < (size_t)bitLength && attempts < max_attempts) {
+        mpz_nextprime(prime, prime);
+        attempts++;
     }
     
-    mpz_t K, N0, N0sq;
-    mpz_inits(K, N0, N0sq, NULL);
-    
-    jbyteArray KBytes = get_biginteger_bytes(env, KObj);
-    jbyteArray N0Bytes = get_biginteger_bytes(env, N0Obj);
-    jbyteArray N0sqBytes = get_biginteger_bytes(env, N0sqObj);
-    
-    bytes_to_mpz(env, KBytes, K);
-    bytes_to_mpz(env, N0Bytes, N0);
-    bytes_to_mpz(env, N0sqBytes, N0sq);
-
-    if (mpz_sgn(N0sq) <= 0) {
-        mpz_clears(K, N0, N0sq, NULL);
-        throw_arith(env, "Modulus not positive");
-        return NULL;
+    if (attempts >= max_attempts) {
+        mpz_urandomb(random_base, rstate, bitLength);
+        mpz_setbit(random_base, bitLength - 1);
+        mpz_setbit(random_base, 0);
+        mpz_nextprime(prime, random_base);
     }
     
-    mpz_t ONE_PLUS_N0;
-    mpz_init(ONE_PLUS_N0);
-    mpz_add_ui(ONE_PLUS_N0, N0, 1);
-    if (mpz_sgn(N0) < 0) {
-        mpz_clears(K, N0, N0sq, ONE_PLUS_N0, NULL);
-        throw_arith(env, "Exponent not non-negative");
-        return NULL;
-    }
+    gmp_randclear(rstate);
     
-    jclass bigIntegerClass = (*env)->FindClass(env, "java/math/BigInteger");
-    jobjectArray resultArray = (*env)->NewObjectArray(env, kappa, bigIntegerClass, NULL);
+    unsigned char temp[4096];
+    size_t result_len = mpz_to_bytes_buffer(prime, temp, sizeof(temp));
     
-    mpz_t alpha, beta, r, A, tmp1, tmp2, neg_alpha;
-    mpz_inits(alpha, beta, r, A, tmp1, tmp2, neg_alpha, NULL);
+    jbyteArray resultArray = (*env)->NewByteArray(env, (jsize)result_len);
+    (*env)->SetByteArrayRegion(env, resultArray, 0, (jsize)result_len, (jbyte*)temp);
     
-    for (jsize i = 0; i < kappa; i++) {
-        jobject alphaObj = (*env)->GetObjectArrayElement(env, alphaObjs, i);
-        jobject betaObj = (*env)->GetObjectArrayElement(env, betaObjs, i);
-        jobject rObj = (*env)->GetObjectArrayElement(env, rObjs, i);
-        
-        // 检查元素是否为NULL
-        if (alphaObj == NULL || betaObj == NULL || rObj == NULL) {
-            throw_npe(env, "Null element in array");
-            mpz_clears(K, N0, N0sq, ONE_PLUS_N0, alpha, beta, r, A, tmp1, tmp2, neg_alpha, NULL);
-            return NULL;
-        }
-        
-        jbyteArray alphaBytes = get_biginteger_bytes(env, alphaObj);
-        jbyteArray betaBytes = get_biginteger_bytes(env, betaObj);
-        jbyteArray rBytes = get_biginteger_bytes(env, rObj);
-        
-        bytes_to_mpz(env, alphaBytes, alpha);
-        bytes_to_mpz(env, betaBytes, beta);
-        bytes_to_mpz(env, rBytes, r);
-        
-        // A = K^(-alpha) * (1+N0)^beta * r^N0 mod N0sq
-        mpz_neg(neg_alpha, alpha);
-        if (!mpz_powm_signed(env, tmp1, K, neg_alpha, N0sq)) {
-            mpz_clears(K, N0, N0sq, ONE_PLUS_N0, alpha, beta, r, A, tmp1, tmp2, neg_alpha, NULL);
-            return NULL;
-        }
-        if (!mpz_powm_signed(env, tmp2, ONE_PLUS_N0, beta, N0sq)) {
-            mpz_clears(K, N0, N0sq, ONE_PLUS_N0, alpha, beta, r, A, tmp1, tmp2, neg_alpha, NULL);
-            return NULL;
-        }
-        mpz_mul(tmp1, tmp1, tmp2);
-        mpz_powm(tmp2, r, N0, N0sq);
-        mpz_mul(A, tmp1, tmp2);
-        mpz_mod(A, A, N0sq);
-        
-        jbyteArray ABytes = mpz_to_bytes(env, A);
-        jobject AObj = create_biginteger(env, ABytes);
-        (*env)->SetObjectArrayElement(env, resultArray, i, AObj);
-        (*env)->DeleteLocalRef(env, alphaObj);
-        (*env)->DeleteLocalRef(env, betaObj);
-        (*env)->DeleteLocalRef(env, rObj);
-        (*env)->DeleteLocalRef(env, AObj);
-    }
+    mpz_clears(prime, random_base, NULL);
     
-    mpz_clears(K, N0, N0sq, ONE_PLUS_N0, 
-               alpha, beta, r, A, tmp1, tmp2, neg_alpha, NULL);
     return resultArray;
 }

@@ -1,5 +1,6 @@
 package com.example.mpc.service;
 
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
 import com.example.mpc.common.util.HexUtils;
@@ -621,7 +622,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
 
         for (BigInteger coefficient : coefficients) {
             result = result.add(coefficient.multiply(xPower)).mod(curveOrder);
-            xPower = xPower.multiply(x).mod(curveOrder);
+            xPower = BigIntegerUtils.modMul(xPower, x, curveOrder);
         }
 
         return result;

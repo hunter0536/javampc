@@ -1,6 +1,7 @@
 package com.example.mpc.service.cggmp.dkg;
 
 import com.example.mpc.cggmp.proof.PiSchProof;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.dto.CggmpDkgTask;
@@ -98,7 +99,7 @@ public final class CggmpDkgUtils {
         BigInteger xPower = BigInteger.ONE;
         for (BigInteger coeff : coefficients) {
             result = result.add(coeff.multiply(xPower)).mod(mod);
-            xPower = xPower.multiply(x).mod(mod);
+            xPower = BigIntegerUtils.modMul(xPower, x, mod);
         }
         return result;
     }
@@ -112,7 +113,7 @@ public final class CggmpDkgUtils {
         BigInteger xPower = BigInteger.ONE;
         for (int k = 0; k < threshold; k++) {
             powers[k] = xPower;
-            xPower = xPower.multiply(x).mod(q);
+            xPower = BigIntegerUtils.modMul(xPower, x, q);
         }
         return powers;
     }

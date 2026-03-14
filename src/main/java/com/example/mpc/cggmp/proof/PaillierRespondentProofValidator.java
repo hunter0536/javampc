@@ -1,5 +1,6 @@
 package com.example.mpc.cggmp.proof;
 
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.ZkBytes;
 import com.example.mpc.cggmp.util.ZkHash;
 import com.example.mpc.cggmp.zk.RespondentProofValidator;
@@ -48,24 +49,23 @@ public class PaillierRespondentProofValidator implements RespondentProofValidato
             return false;
         }
 
-        var left1 = h1.modPow(s1, hatN).multiply(h2.modPow(s2, hatN)).mod(hatN);
-        var right1 = z.modPow(e, hatN).multiply(zPrime).mod(hatN);
+        var left1 = BigIntegerUtils.modMul(BigIntegerUtils.modPow(h1, s1, hatN), BigIntegerUtils.modPow(h2, s2, hatN), hatN);
+        var right1 = BigIntegerUtils.modMul(BigIntegerUtils.modPow(z, e, hatN), zPrime, hatN);
         if (!left1.equals(right1)) {
             return false;
         }
 
-        var left2 = h1.modPow(t1, hatN).multiply(h2.modPow(t2, hatN)).mod(hatN);
-        var right2 = t.modPow(e, hatN).multiply(w).mod(hatN);
+        var left2 = BigIntegerUtils.modMul(BigIntegerUtils.modPow(h1, t1, hatN), BigIntegerUtils.modPow(h2, t2, hatN), hatN);
+        var right2 = BigIntegerUtils.modMul(BigIntegerUtils.modPow(t, e, hatN), w, hatN);
         if (!left2.equals(right2)) {
             return false;
         }
 
-        var left3 = ctx.c_i().modPow(s1, nsq)
-                .multiply(s.modPow(n, nsq))
-                .multiply(g.modPow(t1, nsq))
-                .mod(nsq);
+        var left3 = BigIntegerUtils.modPow(ctx.c_i(), s1, nsq);
+        left3 = BigIntegerUtils.modMul(left3, BigIntegerUtils.modPow(s, n, nsq), nsq);
+        left3 = BigIntegerUtils.modMul(left3, BigIntegerUtils.modPow(g, t1, nsq), nsq);
 
-        var right3 = ctx.c_j().modPow(e, nsq).multiply(v).mod(nsq);
+        var right3 = BigIntegerUtils.modMul(BigIntegerUtils.modPow(ctx.c_j(), e, nsq), v, nsq);
 
         return left3.equals(right3);
     }

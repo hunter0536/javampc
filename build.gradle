@@ -42,6 +42,10 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+    testLogging {
+        showStandardStreams = true
+        events "passed", "skipped", "failed"
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -105,18 +109,33 @@ tasks.register('benchmarkGMP', JavaExec) {
     dependsOn 'compileJava'
 }
 
-tasks.named('compileJava') {
-    doFirst {
-        if (file('src/main/resources/native/gmp/mpc_gmp.c').exists()) {
-            try {
-                exec {
-                    workingDir projectDir
-                    commandLine 'bash', 'src/main/resources/native/gmp/build_native.sh'
-                    ignoreExitValue = true
-                }
-            } catch (Exception e) {
-                logger.warn("Native library build skipped: ${e.message}")
+tasks.register('compileNative', DefaultTask) {
+    group = 'build'
+    description = 'Compile GMP JNI native library (incremental)'
+    
+    inputs.file('src/main/resources/native/gmp/mpc_gmp.c')
+        .skipWhenEmpty()
+        .optional()
+    outputs.file('src/main/resources/native/gmp/libmpc_gmp.dylib')
+    
+    doLast {
+        def nativeSrc = file('src/main/resources/native/gmp/mpc_gmp.c')
+        def nativeLib = file('src/main/resources/native/gmp/libmpc_gmp.dylib')
+        
+        if (nativeSrc.exists()) {
+            logger.lifecycle("Compiling native library from ${nativeSrc.name}")
+            exec {
+                workingDir projectDir
+                commandLine 'bash', 'src/main/resources/native/gmp/build_native.sh'
             }
         }
     }
+}
+
+tasks.named('processResources') {
+    dependsOn 'compileNative'
+}
+
+tasks.named('compileJava') {
+    dependsOn 'compileNative'
 }

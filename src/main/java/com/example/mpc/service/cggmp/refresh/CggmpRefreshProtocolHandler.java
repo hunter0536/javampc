@@ -2,6 +2,7 @@ package com.example.mpc.service.cggmp.refresh;
 
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.DbMapUtils;
 import com.example.mpc.common.util.HexUtils;
@@ -254,7 +255,7 @@ public final class CggmpRefreshProtocolHandler {
             BigInteger share = BigInteger.ZERO;
             BigInteger power = BigInteger.ONE;
             for (BigInteger coeff : coeffs) {
-                power = power.multiply(xVal).mod(q);
+                power = BigIntegerUtils.modMul(power, xVal, q);
                 share = share.add(coeff.multiply(power)).mod(q);
             }
             task.xShares.put(peerId, share);

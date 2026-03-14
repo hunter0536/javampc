@@ -6,6 +6,7 @@ import com.example.mpc.cggmp.proof.PiAffGProof;
 import com.example.mpc.cggmp.proof.PiEncElgProof;
 import com.example.mpc.cggmp.proof.PiLogProof;
 import com.example.mpc.cggmp.proof.PresignProofs;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.DbMapUtils;
 import com.example.mpc.common.util.HexUtils;
@@ -173,7 +174,7 @@ public final class CggmpSignatureOfflineHandler {
                         ECPoint Gamma_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), ctx.gamma_i());
                         BigInteger x_i_raw = loadLocalShare(task.groupPublicKey);
                         BigInteger lambda_i = CggmpProtocolUtils.computeSignatureLagrange(task, svc.nodeId, ctx.curveOrder());
-                        BigInteger x_i = x_i_raw.multiply(lambda_i).mod(ctx.curveOrder());
+                        BigInteger x_i = BigIntegerUtils.modMul(x_i_raw, lambda_i, ctx.curveOrder());
                         ECPoint X_i = CggmpProtocolUtils.resolvePublicShare(task, svc.nodeId, lambda_i, x_i);
 
                         long r2StartNs = System.nanoTime();
@@ -197,8 +198,8 @@ public final class CggmpSignatureOfflineHandler {
                                 BigInteger betaHat = CggmpProtocolUtils.randomNonZero(ctx.curveOrder());
                                 PaillierEncryption.Encryption encNegBeta = pk.encryptWithRandomness(CggmpProtocolUtils.negateModN(beta, pk.n()));
                                 PaillierEncryption.Encryption encNegBetaHat = pk.encryptWithRandomness(CggmpProtocolUtils.negateModN(betaHat, pk.n()));
-                                BigInteger D_ji = pk.multiply(K_peer, ctx.gamma_i()).multiply(encNegBeta.c()).mod(pk.nSquared());
-                                BigInteger Dhat_ji = pk.multiply(K_peer, x_i).multiply(encNegBetaHat.c()).mod(pk.nSquared());
+                                BigInteger D_ji = BigIntegerUtils.modMul(pk.multiply(K_peer, ctx.gamma_i()), encNegBeta.c(), pk.nSquared());
+                                BigInteger Dhat_ji = BigIntegerUtils.modMul(pk.multiply(K_peer, x_i), encNegBetaHat.c(), pk.nSquared());
                                 PaillierEncryption.Encryption encBeta = task.paillier.getPublicKeyInfo().encryptWithRandomness(beta);
                                 PaillierEncryption.Encryption encBetaHat = task.paillier.getPublicKeyInfo().encryptWithRandomness(betaHat);
                                 BigInteger F_ji = encBeta.c();
@@ -823,10 +824,10 @@ public final class CggmpSignatureOfflineHandler {
             svc.failSignatureTask(ctx.task(), "Presign chi verification failed");
             return;
         }
-        BigInteger deltaInv = delta.modInverse(ctx.curveOrder());
+        BigInteger deltaInv = BigIntegerUtils.modInverse(delta, ctx.curveOrder());
         ECPoint GammaFinal = r3ctx.Gamma().normalize();
-        BigInteger kTilde = ctx.task().k_i.multiply(deltaInv).mod(ctx.curveOrder());
-        BigInteger chiTilde = r3ctx.chi_i().multiply(deltaInv).mod(ctx.curveOrder());
+        BigInteger kTilde = BigIntegerUtils.modMul(ctx.task().k_i, deltaInv, ctx.curveOrder());
+        BigInteger chiTilde = BigIntegerUtils.modMul(r3ctx.chi_i(), deltaInv, ctx.curveOrder());
         
         for (Map.Entry<Integer, ECPoint> e : ctx.task().presignDeltaPoint.entrySet()) {
             ctx.task().presignDeltaTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());

@@ -7,6 +7,7 @@ import com.example.mpc.cggmp.proof.PresignProofs;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.SecureRandomUtils;
+import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import org.bouncycastle.math.ec.ECPoint;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -36,14 +37,14 @@ public class CggmpDiagnosticsService {
             // PiDec 自检
             PaillierEncryption paillier = new PaillierEncryption(selfCheckKeyBits);
             PaillierEncryption.PublicKey pk = paillier.getPublicKeyInfo();
-            BigInteger x = randomNonZero(q);
-            BigInteger y = randomNonZero(q);
+            BigInteger x = CggmpProtocolUtils.randomNonZero(q);
+            BigInteger y = CggmpProtocolUtils.randomNonZero(q);
             PaillierEncryption.Encryption encX = pk.encryptWithRandomness(x);
             BigInteger K = encX.c();
             BigInteger rho = BigIntegerUtils.randomZnStar(pk.n(), rnd);
             BigInteger encY = pk.encryptWithRandom(y, rho);
             BigInteger KInvX = BigIntegerUtils.powSigned(K, x.negate(), pk.nSquared());
-            BigInteger D = encY.multiply(KInvX).mod(pk.nSquared());
+            BigInteger D = BigIntegerUtils.modMul(encY, KInvX, pk.nSquared());
             ECPoint X = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x);
             ECPoint S = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), y);
             PiDecProof decProof = PresignProofs.createDecProof(
@@ -79,17 +80,22 @@ public class CggmpDiagnosticsService {
             PaillierEncryption paillier1 = new PaillierEncryption(selfCheckKeyBits);
             PaillierEncryption.PublicKey pk0 = paillier0.getPublicKeyInfo();
             PaillierEncryption.PublicKey pk1 = paillier1.getPublicKeyInfo();
-            BigInteger x2 = randomNonZero(q);
-            BigInteger y2 = randomNonZero(q);
-            BigInteger a = randomNonZero(q);
+            BigInteger x2 = CggmpProtocolUtils.randomNonZero(q);
+            BigInteger y2 = CggmpProtocolUtils.randomNonZero(q);
+            BigInteger a = CggmpProtocolUtils.randomNonZero(q);
             PaillierEncryption.Encryption encC = pk0.encryptWithRandomness(a);
             BigInteger C = encC.c();
             BigInteger rho2 = BigIntegerUtils.randomZnStar(pk0.n(), rnd);
             BigInteger mu2 = BigIntegerUtils.randomZnStar(pk1.n(), rnd);
-            BigInteger D2 = BigIntegerUtils.powSigned(C, x2, pk0.nSquared())
-                    .multiply(BigIntegerUtils.powSigned(BigInteger.ONE.add(pk0.n()), y2, pk0.nSquared()))
-                    .multiply(rho2.modPow(pk0.n(), pk0.nSquared()))
-                    .mod(pk0.nSquared());
+            BigInteger D2 = BigIntegerUtils.modMul(
+                BigIntegerUtils.modMul(
+                    BigIntegerUtils.powSigned(C, x2, pk0.nSquared()),
+                    BigIntegerUtils.powSigned(BigInteger.ONE.add(pk0.n()), y2, pk0.nSquared()),
+                    pk0.nSquared()
+                ),
+                BigIntegerUtils.modPow(rho2, pk0.n(), pk0.nSquared()),
+                pk0.nSquared()
+            );
             BigInteger Y2 = pk1.encryptWithRandom(y2, mu2);
             ECPoint X2 = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x2);
             PiAffGProof affProof = PresignProofs.createAffGProof(
@@ -126,14 +132,5 @@ public class CggmpDiagnosticsService {
             result.put("error", e.getMessage());
         }
         return result;
-    }
-
-    private static BigInteger randomNonZero(BigInteger n) {
-        SecureRandom rnd = SecureRandomUtils.getInstance();
-        BigInteger r;
-        do {
-            r = new BigInteger(n.bitLength(), rnd).mod(n);
-        } while (r.signum() == 0);
-        return r;
     }
 }

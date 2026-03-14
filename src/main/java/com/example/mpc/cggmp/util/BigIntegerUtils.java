@@ -31,14 +31,6 @@ public final class BigIntegerUtils {
     private BigIntegerUtils() {
     }
 
-    public static BigIntegerBackend getBackend() {
-        return BACKEND;
-    }
-    
-    public static boolean isNativeAvailable() {
-        return BACKEND.isNative();
-    }
-
     public static BigInteger modPow(BigInteger base, BigInteger exp, BigInteger mod) {
         return BACKEND.modPow(base, exp, mod);
     }
@@ -47,23 +39,23 @@ public final class BigIntegerUtils {
         return BACKEND.modInverse(val, mod);
     }
 
-    public static BigInteger multiply(BigInteger a, BigInteger b) {
-        return BACKEND.multiply(a, b);
+    public static BigInteger modMul(BigInteger a, BigInteger b, BigInteger mod) {
+        return BACKEND.modMul(a, b, mod);
     }
 
     public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
         return BACKEND.batchModPow(bases, exp, mod);
     }
 
-    public static BigInteger[] batchModPowDifferentExp(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
-        return BACKEND.batchModPowDifferentExp(bases, exps, mod);
-    }
-
     public static BigInteger randomZnStar(BigInteger n, SecureRandom rnd) {
+        if (n.compareTo(BigInteger.valueOf(3)) <= 0) {
+            throw new IllegalArgumentException("n must be greater than 3");
+        }
+        BigInteger nMinusOne = n.subtract(BigInteger.ONE);
         BigInteger x;
         do {
-            x = new BigInteger(n.bitLength(), rnd).mod(n);
-        } while (x.signum() == 0 || !x.gcd(n).equals(BigInteger.ONE));
+            x = new BigInteger(nMinusOne.bitLength(), rnd).mod(nMinusOne).add(BigInteger.ONE);
+        } while (!x.gcd(n).equals(BigInteger.ONE));
         return x;
     }
 
@@ -76,28 +68,55 @@ public final class BigIntegerUtils {
     }
 
     public static int jacobi(BigInteger a, BigInteger n) {
-        if (n.signum() <= 0 || !n.testBit(0)) {
-            throw new IllegalArgumentException("n must be positive and odd");
-        }
-        a = a.mod(n);
-        int result = 1;
-        while (a.signum() != 0) {
-            while (!a.testBit(0)) {
-                a = a.shiftRight(1);
-                BigInteger nMod8 = n.and(BigInteger.valueOf(7));
-                if (nMod8.equals(BigInteger.valueOf(3)) || nMod8.equals(BigInteger.valueOf(5))) {
-                    result = -result;
-                }
+        return BACKEND.jacobi(a, n);
+    }
+
+    public static int[] batchJacobi(BigInteger[] as, BigInteger n) {
+        return BACKEND.batchJacobi(as, n);
+    }
+
+    public static BigInteger[] batchMod(BigInteger[] vals, BigInteger mod) {
+        return BACKEND.batchMod(vals, mod);
+    }
+
+    public static BigInteger crt(BigInteger a, BigInteger p, BigInteger b, BigInteger q, BigInteger n) {
+        return BACKEND.crt(a, p, b, q, n);
+    }
+
+    public static BigInteger probablePrime(int bitLength, SecureRandom random) {
+        return BACKEND.probablePrime(bitLength, random);
+    }
+
+    public static BigInteger lcm(BigInteger a, BigInteger b) {
+        return a.multiply(b).divide(a.gcd(b));
+    }
+
+    public static BigInteger positiveModInverse(BigInteger a, BigInteger mod) {
+        BigInteger x = BACKEND.modInverse(a, mod);
+        return x.signum() < 0 ? x.add(mod) : x;
+    }
+
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    public static BigInteger generateSafePrime(int bits, SecureRandom rnd) {
+        final int batchSize = Runtime.getRuntime().availableProcessors() * 2;
+        
+        while (true) {
+            java.util.List<BigInteger> candidates = java.util.stream.IntStream.range(0, batchSize)
+                .parallel()
+                .mapToObj(i -> {
+                    BigInteger q = probablePrime(bits - 1, rnd);
+                    return q.shiftLeft(1).add(BigInteger.ONE);
+                })
+                .toList();
+            
+            java.util.Optional<BigInteger> found = candidates.parallelStream()
+                .filter(p -> p.isProbablePrime(128))
+                .findAny();
+            
+            if (found.isPresent()) {
+                return found.get();
             }
-            BigInteger temp = a;
-            a = n;
-            n = temp;
-            if (a.and(BigInteger.valueOf(3)).equals(BigInteger.valueOf(3)) && n.and(BigInteger.valueOf(3)).equals(BigInteger.valueOf(3))) {
-                result = -result;
-            }
-            a = a.mod(n);
         }
-        return n.equals(BigInteger.ONE) ? result : 0;
     }
 
     public static byte[] toUnsignedBytes(BigInteger x, int len) {

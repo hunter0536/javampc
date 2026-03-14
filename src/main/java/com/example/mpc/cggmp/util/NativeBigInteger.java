@@ -8,43 +8,55 @@ import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.security.SecureRandom;
 
-public class NativeBigInteger {
+public final class NativeBigInteger {
     private static final Logger logger = LoggerFactory.getLogger(NativeBigInteger.class);
     private static final boolean NATIVE_AVAILABLE;
+    private static final int MODULUS_THRESHOLD = 2048;
     
     static {
-        logger.info("NativeBigInteger static initialization started");
-        boolean available = false;
-        try {
-            String libName = System.mapLibraryName("mpc_gmp");
-            logger.info("Attempting to load native library: {}", libName);
-            
-            InputStream libStream = NativeBigInteger.class.getResourceAsStream("/native/gmp/" + libName);
+        NATIVE_AVAILABLE = loadNativeLibrary();
+        logger.info("NativeBigInteger initialized, GMP available: {}", NATIVE_AVAILABLE);
+    }
+    
+    private NativeBigInteger() {
+    }
+    
+    private static boolean loadNativeLibrary() {
+        String libName = System.mapLibraryName("mpc_gmp");
+        
+        try (InputStream libStream = NativeBigInteger.class.getResourceAsStream("/native/gmp/" + libName)) {
             if (libStream != null) {
-                logger.info("Native library found in classpath: /native/gmp/{}", libName);
-                Path tempDir = Files.createTempDirectory("mpc_native");
-                Path tempLib = tempDir.resolve(libName);
-                Files.copy(libStream, tempLib, StandardCopyOption.REPLACE_EXISTING);
-                libStream.close();
-                
-                System.load(tempLib.toAbsolutePath().toString());
-                available = true;
-                logger.info("Native GMP library loaded from classpath: {}", libName);
-            } else {
-                logger.info("Native library not found in classpath, trying system library");
-                System.loadLibrary("mpc_gmp");
-                available = true;
-                logger.info("Native GMP library loaded from system path");
+                return loadFromClasspath(libStream, libName);
             }
+            return loadFromSystem(libName);
         } catch (UnsatisfiedLinkError e) {
-            logger.error("Native GMP library not available, falling back to Java BigInteger: {}", e.getMessage());
+            logger.warn("Native GMP library not available: {}", e.getMessage());
+            return false;
         } catch (IOException e) {
-            logger.error("Failed to extract native library: {}", e.getMessage());
+            logger.warn("Failed to load native library: {}", e.getMessage());
+            return false;
         }
-        NATIVE_AVAILABLE = available;
-        logger.info("NativeBigInteger static initialization completed, NATIVE_AVAILABLE={}", NATIVE_AVAILABLE);
+    }
+    
+    private static boolean loadFromClasspath(InputStream libStream, String libName) throws IOException {
+        Path tempDir = Files.createTempDirectory("mpc_native");
+        Path tempLib = tempDir.resolve(libName);
+        Files.copy(libStream, tempLib, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        
+        tempLib.toFile().deleteOnExit();
+        tempDir.toFile().deleteOnExit();
+        
+        System.load(tempLib.toAbsolutePath().toString());
+        logger.debug("GMP library loaded from classpath");
+        return true;
+    }
+    
+    private static boolean loadFromSystem(String libName) {
+        System.loadLibrary("mpc_gmp");
+        logger.debug("GMP library loaded from system path: {}", libName);
+        return true;
     }
     
     public static boolean isNativeAvailable() {
@@ -52,119 +64,90 @@ public class NativeBigInteger {
     }
     
     public static BigInteger modPow(BigInteger base, BigInteger exp, BigInteger mod) {
-        if (NATIVE_AVAILABLE) {
-            return nativeModPow(base, exp, mod);
-        }
-        return base.modPow(exp, mod);
+        return nativeModPow(base, exp, mod);
     }
     
     public static BigInteger modInverse(BigInteger val, BigInteger mod) {
-        if (NATIVE_AVAILABLE) {
-            return nativeModInverse(val, mod);
-        }
-        return val.modInverse(mod);
+        return nativeModInverse(val, mod);
     }
     
-    public static BigInteger multiply(BigInteger a, BigInteger b) {
-        if (NATIVE_AVAILABLE) {
-            return nativeMultiply(a, b);
-        }
-        return a.multiply(b);
-    }
-    
-    public static byte[] toByteArray(BigInteger val) {
-        return val.toByteArray();
-    }
-    
-    public static BigInteger fromByteArray(byte[] data) {
-        return new BigInteger(data);
+    public static BigInteger modMul(BigInteger a, BigInteger b, BigInteger mod) {
+        return nativeModMul(a, b, mod);
     }
     
     public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
-        if (NATIVE_AVAILABLE) {
-            return nativeBatchModPow(bases, exp, mod);
+        if (mod.bitLength() < MODULUS_THRESHOLD) {
+            return java.util.stream.IntStream.range(0, bases.length)
+                    .parallel()
+                    .mapToObj(i -> bases[i].modPow(exp, mod))
+                    .toArray(BigInteger[]::new);
         }
-        BigInteger[] result = new BigInteger[bases.length];
+        
+        byte[][] baseBytes = new byte[bases.length][];
         for (int i = 0; i < bases.length; i++) {
-            result[i] = bases[i].modPow(exp, mod);
+            baseBytes[i] = bases[i].toByteArray();
         }
-        return result;
-    }
-    
-    public static BigInteger[] batchModPowDifferentExp(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
-        if (NATIVE_AVAILABLE) {
-            return nativeBatchModPowDifferentExp(bases, exps, mod);
+        byte[] expBytes = exp.toByteArray();
+        byte[] modBytes = mod.toByteArray();
+        
+        byte[][] resultBytes = nativeBatchModPowOptimized(baseBytes, expBytes, modBytes);
+        
+        BigInteger[] results = new BigInteger[resultBytes.length];
+        for (int i = 0; i < resultBytes.length; i++) {
+            results[i] = new BigInteger(resultBytes[i]);
         }
-        if (bases.length != exps.length) {
-            throw new IllegalArgumentException("bases and exps must have same length");
-        }
-        BigInteger[] result = new BigInteger[bases.length];
-        for (int i = 0; i < bases.length; i++) {
-            result[i] = bases[i].modPow(exps[i], mod);
-        }
-        return result;
-    }
-    
-    public static AffGProofResult computeAffGProofTuples(
-            BigInteger C, BigInteger onePlusN0, BigInteger N0sq, BigInteger onePlusN1, BigInteger N1sq,
-            BigInteger[] alphas, BigInteger[] betasForN0, BigInteger[] betasForN1, BigInteger[] rs, BigInteger[] ss) {
-        if (NATIVE_AVAILABLE) {
-            return nativeComputeAffGProofTuples(C, onePlusN0, N0sq, onePlusN1, N1sq, alphas, betasForN0, betasForN1, rs, ss);
-        }
-        return javaComputeAffGProofTuples(C, onePlusN0, N0sq, onePlusN1, N1sq, alphas, betasForN0, betasForN1, rs, ss);
+        return results;
     }
     
     private static native BigInteger nativeModPow(BigInteger base, BigInteger exp, BigInteger mod);
     private static native BigInteger nativeModInverse(BigInteger val, BigInteger mod);
-    private static native BigInteger nativeMultiply(BigInteger a, BigInteger b);
-    private static native BigInteger[] nativeBatchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod);
-    private static native BigInteger[] nativeBatchModPowDifferentExp(BigInteger[] bases, BigInteger[] exps, BigInteger mod);
-    private static native AffGProofResult nativeComputeAffGProofTuples(
-            BigInteger C, BigInteger onePlusN0, BigInteger N0sq, BigInteger onePlusN1, BigInteger N1sq,
-            BigInteger[] alphas, BigInteger[] betasForN0, BigInteger[] betasForN1, BigInteger[] rs, BigInteger[] ss);
+    private static native BigInteger nativeModMul(BigInteger a, BigInteger b, BigInteger mod);
+    private static native byte[][] nativeBatchModPowOptimized(byte[][] baseBytes, byte[] expBytes, byte[] modBytes);
+    private static native int nativeJacobi(byte[] aBytes, byte[] nBytes);
+    private static native int[] nativeBatchJacobi(byte[][] aBytes, byte[] nBytes);
+    private static native byte[][] nativeBatchMod(byte[][] valsBytes, byte[] modBytes);
+    private static native byte[] nativeCrt(byte[] aBytes, byte[] pBytes, byte[] bBytes, byte[] qBytes, byte[] nBytes);
+    private static native byte[] nativeProbablePrime(int bitLength, byte[] seedBytes);
     
-    private static AffGProofResult javaComputeAffGProofTuples(
-            BigInteger C, BigInteger onePlusN0, BigInteger N0sq,
-            BigInteger onePlusN1, BigInteger N1sq,
-            BigInteger[] alphas, BigInteger[] betasForN0, BigInteger[] betasForN1,
-            BigInteger[] rs, BigInteger[] ss) {
-        int kappa = alphas.length;
-        BigInteger N0 = N0sq.sqrt();
-        BigInteger N1 = N1sq.sqrt();
-        BigInteger[] Aj = new BigInteger[kappa];
-        BigInteger[] Bj = new BigInteger[kappa];
-
-        for (int i = 0; i < kappa; i++) {
-            Aj[i] = BigIntegerUtils.powSigned(C, alphas[i], N0sq)
-                    .multiply(BigIntegerUtils.powSigned(onePlusN0, betasForN0[i], N0sq))
-                    .multiply(rs[i].modPow(N0, N0sq))
-                    .mod(N0sq);
-
-            Bj[i] = BigIntegerUtils.powSigned(onePlusN1, betasForN1[i], N1sq)
-                    .multiply(ss[i].modPow(N1, N1sq))
-                    .mod(N1sq);
-        }
-
-        return new AffGProofResult(Aj, Bj);
+    public static BigInteger probablePrime(int bitLength, SecureRandom random) {
+        byte[] seed = new byte[32];
+        random.nextBytes(seed);
+        byte[] resultBytes = nativeProbablePrime(bitLength, seed);
+        return new BigInteger(resultBytes);
     }
     
-    public static class NativeModPowContext implements AutoCloseable {
-        private final BigInteger mod;
-        
-        public NativeModPowContext(BigInteger mod) {
-            this.mod = mod;
+    public static int jacobi(BigInteger a, BigInteger n) {
+        return nativeJacobi(a.toByteArray(), n.toByteArray());
+    }
+    
+    public static BigInteger[] batchMod(BigInteger[] vals, BigInteger mod) {
+        byte[][] valsBytes = new byte[vals.length][];
+        for (int i = 0; i < vals.length; i++) {
+            valsBytes[i] = vals[i].toByteArray();
         }
+        byte[] modBytes = mod.toByteArray();
         
-        public BigInteger getMod() {
-            return mod;
-        }
+        byte[][] resultBytes = nativeBatchMod(valsBytes, modBytes);
         
-        public BigInteger modPow(BigInteger base, BigInteger exp) {
-            return base.modPow(exp, mod);
+        BigInteger[] results = new BigInteger[resultBytes.length];
+        for (int i = 0; i < resultBytes.length; i++) {
+            results[i] = new BigInteger(resultBytes[i]);
         }
+        return results;
+    }
+    
+    public static BigInteger crt(BigInteger a, BigInteger p, BigInteger b, BigInteger q, BigInteger n) {
+        byte[] resultBytes = nativeCrt(a.toByteArray(), p.toByteArray(), b.toByteArray(), q.toByteArray(), n.toByteArray());
+        return new BigInteger(resultBytes);
+    }
+    
+    public static int[] batchJacobi(BigInteger[] as, BigInteger n) {
+        byte[][] aBytes = new byte[as.length][];
+        for (int i = 0; i < as.length; i++) {
+            aBytes[i] = as[i].toByteArray();
+        }
+        byte[] nBytes = n.toByteArray();
         
-        @Override
-        public void close() {
-        }
+        return nativeBatchJacobi(aBytes, nBytes);
     }
 }

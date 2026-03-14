@@ -4,6 +4,7 @@ import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.PiAffGProof;
 import com.example.mpc.cggmp.proof.PiDecProof;
 import com.example.mpc.cggmp.proof.PresignProofs;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.RetryUtils;
@@ -51,7 +52,7 @@ public final class CggmpSignatureEvidenceHandler {
             }
             ECPoint S = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), delta_i);
             BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
-            BigInteger c = task.paillier.getPublicKeyInfo().multiply(K, gamma_i).multiply(D).mod(nSquared);
+            BigInteger c = BigIntegerUtils.modMul(task.paillier.getPublicKeyInfo().multiply(K, gamma_i), D, nSquared);
             BigInteger rho = task.paillier.recoverRandomizer(c, delta_i);
             PiDecProof proof = PresignProofs.createDecProof(
                     Secp256k1CurveUtils.G(),
@@ -94,7 +95,7 @@ public final class CggmpSignatureEvidenceHandler {
             ECPoint X_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x_i);
             ECPoint S = Gamma.multiply(chi_i).normalize();
             BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
-            BigInteger c = task.paillier.getPublicKeyInfo().multiply(K, x_i).multiply(Dhat).mod(nSquared);
+            BigInteger c = BigIntegerUtils.modMul(task.paillier.getPublicKeyInfo().multiply(K, x_i), Dhat, nSquared);
             BigInteger rho = task.paillier.recoverRandomizer(c, chi_i);
             PiDecProof proof = PresignProofs.createDecProof(
                     Secp256k1CurveUtils.G(),
@@ -465,8 +466,8 @@ public final class CggmpSignatureEvidenceHandler {
             if (d == null || f == null) {
                 return null;
             }
-            acc = acc.multiply(d).mod(nSquared);
-            acc = acc.multiply(f).mod(nSquared);
+            acc = BigIntegerUtils.modMul(acc, d, nSquared);
+            acc = BigIntegerUtils.modMul(acc, f, nSquared);
         }
         return acc;
     }

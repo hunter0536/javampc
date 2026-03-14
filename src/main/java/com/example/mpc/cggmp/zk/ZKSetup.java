@@ -39,12 +39,12 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
         long startNs = System.nanoTime();
         SecureRandom rnd = SecureRandomUtils.getInstance();
         logger.debug("ZKSetup generate start: bitLength={}", bitLength);
-        BigInteger p = generateSafePrime(bitLength / 2, rnd);
+        BigInteger p = BigIntegerUtils.generateSafePrime(bitLength / 2, rnd);
         logger.debug("ZKSetup safe prime p generated: bits={} elapsedMs={}",
                 p.bitLength(), (System.nanoTime() - startNs) / 1_000_000);
-        BigInteger q = generateSafePrime(bitLength / 2, rnd);
+        BigInteger q = BigIntegerUtils.generateSafePrime(bitLength / 2, rnd);
         while (p.equals(q)) {
-            q = generateSafePrime(bitLength / 2, rnd);
+            q = BigIntegerUtils.generateSafePrime(bitLength / 2, rnd);
         }
         logger.debug("ZKSetup safe prime q generated: bits={} elapsedMs={}",
                 q.bitLength(), (System.nanoTime() - startNs) / 1_000_000);
@@ -56,21 +56,17 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
             h2 = sampleUnit(hatN, rnd);
         } while (h2.equals(h1));
 
-        h1 = h1.modPow(BigInteger.TWO, hatN);
-        h2 = h2.modPow(BigInteger.TWO, hatN);
+        h1 = BigIntegerUtils.modPow(h1, BigInteger.TWO, hatN);
+        h2 = BigIntegerUtils.modPow(h2, BigInteger.TWO, hatN);
         logger.debug("ZKSetup h1/h2 generated: hatNBits={} elapsedMs={}",
                 hatN.bitLength(), (System.nanoTime() - startNs) / 1_000_000);
 
         BigInteger pMinus1 = p.subtract(BigInteger.ONE);
         BigInteger qMinus1 = q.subtract(BigInteger.ONE);
-        BigInteger lambda = lcm(pMinus1, qMinus1);
+        BigInteger lambda = BigIntegerUtils.lcm(pMinus1, qMinus1);
         logger.debug("ZKSetup lambda computed: elapsedMs={}", (System.nanoTime() - startNs) / 1_000_000);
 
         return new InternalSetup(hatN, h1, h2, lambda);
-    }
-
-    private static BigInteger lcm(BigInteger a, BigInteger b) {
-        return a.divide(a.gcd(b)).multiply(b);
     }
 
     private record InternalSetup(BigInteger hatN, BigInteger h1, BigInteger h2, BigInteger lambda) {
@@ -85,27 +81,5 @@ public record ZKSetup(BigInteger hatN, BigInteger h1, BigInteger h2) {
             u = new BigInteger(hatN.bitLength(), rnd).mod(hatN);
         } while (u.signum() == 0 || u.equals(BigInteger.ONE) || u.equals(hatN.subtract(BigInteger.ONE)) || !u.gcd(hatN).equals(BigInteger.ONE));
         return u;
-    }
-
-    private static BigInteger generateSafePrime(int bits, SecureRandom rnd) {
-        final int batchSize = Runtime.getRuntime().availableProcessors() * 2;
-        
-        while (true) {
-            java.util.List<BigInteger> candidates = java.util.stream.IntStream.range(0, batchSize)
-                .parallel()
-                .mapToObj(i -> {
-                    BigInteger q = BigInteger.probablePrime(bits - 1, rnd);
-                    return q.shiftLeft(1).add(BigInteger.ONE);
-                })
-                .collect(java.util.stream.Collectors.toList());
-            
-            java.util.Optional<BigInteger> found = candidates.parallelStream()
-                .filter(p -> p.isProbablePrime(128))
-                .findAny();
-            
-            if (found.isPresent()) {
-                return found.get();
-            }
-        }
     }
 }

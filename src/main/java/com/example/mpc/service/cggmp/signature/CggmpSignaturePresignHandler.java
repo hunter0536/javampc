@@ -518,7 +518,66 @@ public final class CggmpSignaturePresignHandler {
             PaillierEncryption.PublicKey N1 = task.peerPaillierKeys.get(senderId);
             ECPoint X_i = X_i_resolved;
             
-            if (K_self != null && D_ji != null && F_ji != null && N1 != null) {
+            boolean hasAffG = K_self != null && D_ji != null && F_ji != null && N1 != null;
+            boolean hasAffGHat = K_self != null && Dhat_ji != null && Fhat_ji != null && N1 != null;
+            
+            if (hasAffG && hasAffGHat) {
+                PresignProofs.AffGVerifyResult[] affGResults = new PresignProofs.AffGVerifyResult[2];
+                Thread affGThread = new Thread(() -> {
+                    affGResults[0] = PresignProofs.verifyAffGProofDetailedNegY(
+                            proof,
+                            Secp256k1CurveUtils.G(),
+                            ctx.Gamma,
+                            N0.n(),
+                            N1.n(),
+                            K_self,
+                            D_ji,
+                            F_ji,
+                            svc.proofKappa,
+                            svc.proofEpsBits,
+                            CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2")
+                    );
+                });
+                Thread affGHatThread = new Thread(() -> {
+                    affGResults[1] = PresignProofs.verifyAffGProofDetailedNegY(
+                            proofHat,
+                            Secp256k1CurveUtils.G(),
+                            X_i,
+                            N0.n(),
+                            N1.n(),
+                            K_self,
+                            Dhat_ji,
+                            Fhat_ji,
+                            svc.proofKappa,
+                            svc.proofEpsBits,
+                            CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2H")
+                    );
+                });
+                
+                affGThread.start();
+                affGHatThread.start();
+                
+                try {
+                    affGThread.join();
+                    affGHatThread.join();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return R2VerifyResult.failure(senderId, "Verification interrupted");
+                }
+                
+                if (!affGResults[0].ok()) {
+                    logger.warn("Invalid PiAffG proof from node {}: index={}, eq1={}, eq2={}, eq3={}, zInRange={}, zPrimeInRange={}",
+                            senderId, affGResults[0].index(), affGResults[0].eq1(), affGResults[0].eq2(),
+                            affGResults[0].eq3(), affGResults[0].zInRange(), affGResults[0].zPrimeInRange());
+                    return R2VerifyResult.failure(senderId, "Invalid PiAffG proof");
+                }
+                if (!affGResults[1].ok()) {
+                    logger.warn("Invalid PiAffG proof (hat) from node {}: index={}, eq1={}, eq2={}, eq3={}, zInRange={}, zPrimeInRange={}",
+                            senderId, affGResults[1].index(), affGResults[1].eq1(), affGResults[1].eq2(),
+                            affGResults[1].eq3(), affGResults[1].zInRange(), affGResults[1].zPrimeInRange());
+                    return R2VerifyResult.failure(senderId, "Invalid PiAffG proof (hat)");
+                }
+            } else if (hasAffG) {
                 PresignProofs.AffGVerifyResult affGResult = PresignProofs.verifyAffGProofDetailedNegY(
                         proof,
                         Secp256k1CurveUtils.G(),
@@ -538,8 +597,7 @@ public final class CggmpSignaturePresignHandler {
                             affGResult.eq3(), affGResult.zInRange(), affGResult.zPrimeInRange());
                     return R2VerifyResult.failure(senderId, "Invalid PiAffG proof");
                 }
-            }
-            if (K_self != null && Dhat_ji != null && Fhat_ji != null && N1 != null) {
+            } else if (hasAffGHat) {
                 PresignProofs.AffGVerifyResult affGHatResult = PresignProofs.verifyAffGProofDetailedNegY(
                         proofHat,
                         Secp256k1CurveUtils.G(),

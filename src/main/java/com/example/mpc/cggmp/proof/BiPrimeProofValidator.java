@@ -71,14 +71,14 @@ public final class BiPrimeProofValidator {
         if (z.signum() < 0 || z.compareTo(N) >= 0) return false;
 
         BigInteger y = BiPrimeProofGenerator.genY(N, w, ctx, i);
-        if (!z.modPow(N, N).equals(y)) return false;
+        if (!BigIntegerUtils.modPow(z, N, N).equals(y)) return false;
 
         BigInteger rhs = y;
-        if (b) rhs = rhs.multiply(w).mod(N);
+        if (b) rhs = BigIntegerUtils.modMul(rhs, w, N);
         if (a) rhs = N.subtract(rhs).mod(N);
 
-        BigInteger x2 = x.multiply(x).mod(N);
-        BigInteger x4 = x2.multiply(x2).mod(N);
+        BigInteger x2 = BigIntegerUtils.modMul(x, x, N);
+        BigInteger x4 = BigIntegerUtils.modMul(x2, x2, N);
 
         return x4.equals(rhs);
     }

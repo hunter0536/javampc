@@ -34,10 +34,10 @@ public final class BiPrimeProofGenerator {
         BigInteger N = p.multiply(q);
 
         validateBlum(p, q);
-        var lambda = lcm(p.subtract(BigInteger.ONE), q.subtract(BigInteger.ONE));
+        var lambda = BigIntegerUtils.lcm(p.subtract(BigInteger.ONE), q.subtract(BigInteger.ONE));
         ensureCoprime(N, lambda);
 
-        var Ninverse = positiveModInverse(N, lambda);
+        var Ninverse = BigIntegerUtils.positiveModInverse(N, lambda);
         var eP = Ninverse.mod(p.subtract(BigInteger.ONE));
         var eQ = Ninverse.mod(q.subtract(BigInteger.ONE));
 
@@ -87,14 +87,9 @@ public final class BiPrimeProofGenerator {
         }
     }
 
-    private static BigInteger positiveModInverse(BigInteger a, BigInteger mod) {
-        BigInteger x = a.modInverse(mod);
-        return x.signum() < 0 ? x.add(mod) : x;
-    }
-
     private static BigInteger inv4(BigInteger prime) {
         var half = prime.subtract(BigInteger.ONE).divide(BigInteger.TWO);
-        return BigInteger.valueOf(4).modInverse(half);
+        return BigIntegerUtils.modInverse(BigInteger.valueOf(4), half);
     }
 
     private static BigInteger pickW(BigInteger N, byte[] ctx) {
@@ -111,11 +106,10 @@ public final class BiPrimeProofGenerator {
     private List<BigInteger> generateSigmas(BigInteger N, byte[] ctx) {
         List<BigInteger> sigmas = new ArrayList<>(sfRounds);
         for (int i = 0; i < sfRounds; i++) {
-            BigInteger s;
             BigInteger sigma;
             do {
-                s = hashToZNStarDet(N, ctx, "sigma", i);
-                sigma = s.modPow(N, N);
+                BigInteger s = hashToZNStarDet(N, ctx, "sigma", i);
+                sigma = BigIntegerUtils.modPow(s, N, N);
             } while (sigma.equals(BigInteger.ONE) || sigma.equals(N.subtract(BigInteger.ONE)) || !sigma.subtract(BigInteger.ONE).gcd(N).equals(BigInteger.ONE));
             sigmas.add(sigma);
         }
@@ -133,19 +127,23 @@ public final class BiPrimeProofGenerator {
         
         // Batch optimization: collect all y values for batch processing
         BigInteger[] yValues = new BigInteger[blumRounds];
-        BigInteger[] basesP = new BigInteger[blumRounds];
-        BigInteger[] basesQ = new BigInteger[blumRounds];
         
-        // Step 1: Generate all y values and prepare bases
+        // Step 1: Generate all y values
         for (int i = 0; i < blumRounds; i++) {
             yValues[i] = genY(N, w, ctx, i);
-            basesP[i] = yValues[i].mod(p);
-            basesQ[i] = yValues[i].mod(q);
         }
         
-        // Step 2: Use BigIntegerUtils batch modPow for better performance
+        // Step 2: Batch compute y mod p and y mod q
+        BigInteger[] basesP = BigIntegerUtils.batchMod(yValues, p);
+        BigInteger[] basesQ = BigIntegerUtils.batchMod(yValues, q);
+        
+        // Step 3: Use BigIntegerUtils batch modPow for better performance
         BigInteger[] zps = BigIntegerUtils.batchModPow(basesP, eP, p);
         BigInteger[] zqs = BigIntegerUtils.batchModPow(basesQ, eQ, q);
+        
+        // Step 4: Batch compute jacobi symbols
+        int[] yPs = BigIntegerUtils.batchJacobi(yValues, p);
+        int[] yQs = BigIntegerUtils.batchJacobi(yValues, q);
         
         BigInteger[] zValues = new BigInteger[blumRounds];
         BigInteger[] rhsValues = new BigInteger[blumRounds];
@@ -157,10 +155,10 @@ public final class BiPrimeProofGenerator {
             var y = yValues[i];
             var zp = zps[i];
             var zq = zqs[i];
-            var z = crt(zp, p, zq, q, N);
+            var z = BigIntegerUtils.crt(zp, p, zq, q, N);
 
-            int yP = BigIntegerUtils.jacobi(y, p);
-            int yQ = BigIntegerUtils.jacobi(y, q);
+            int yP = yPs[i];
+            int yQ = yQs[i];
             boolean aBit = false;
             boolean bBit = false;
 
@@ -180,7 +178,7 @@ public final class BiPrimeProofGenerator {
             }
 
             var rhs = y;
-            if (bBit) rhs = rhs.multiply(w).mod(N);
+            if (bBit) rhs = BigIntegerUtils.modMul(rhs, w, N);
             if (aBit) rhs = N.subtract(rhs).mod(N);
             
             zValues[i] = z;
@@ -190,19 +188,15 @@ public final class BiPrimeProofGenerator {
         }
         
         // Step 4: Batch compute xp and xq
-        BigInteger[] rhsP = new BigInteger[blumRounds];
-        BigInteger[] rhsQ = new BigInteger[blumRounds];
-        for (int i = 0; i < blumRounds; i++) {
-            rhsP[i] = rhsValues[i].mod(p);
-            rhsQ[i] = rhsValues[i].mod(q);
-        }
+        BigInteger[] rhsP = BigIntegerUtils.batchMod(rhsValues, p);
+        BigInteger[] rhsQ = BigIntegerUtils.batchMod(rhsValues, q);
         
         BigInteger[] xps = BigIntegerUtils.batchModPow(rhsP, inv4p, p);
         BigInteger[] xqs = BigIntegerUtils.batchModPow(rhsQ, inv4q, q);
         
         // Step 5: Create rounds
         for (int i = 0; i < blumRounds; i++) {
-            var x = crt(xps[i], p, xqs[i], q, N);
+            var x = BigIntegerUtils.crt(xps[i], p, xqs[i], q, N);
             rounds.add(new Round(x, zValues[i], aBits[i], bBits[i]));
         }
         
@@ -229,14 +223,6 @@ public final class BiPrimeProofGenerator {
         return y;
     }
 
-    private static BigInteger crt(BigInteger a, BigInteger p, BigInteger b, BigInteger q, BigInteger N) {
-        var t = b.subtract(a).mod(q);
-        var ip = p.modInverse(q);
-        var k = t.multiply(ip).mod(q);
-        var x = a.add(k.multiply(p));
-        return (x.signum() < 0 || x.compareTo(N) >= 0) ? x.mod(N) : x;
-    }
-
     private static byte[] toByteArray(BitSet bits, int len) {
         byte[] out = new byte[(len + 7) >>> 3];
         for (int i = 0; i < len; i++) {
@@ -246,9 +232,5 @@ public final class BiPrimeProofGenerator {
     }
 
     private record Round(BigInteger x, BigInteger z, boolean a, boolean b) {
-    }
-
-    private static BigInteger lcm(BigInteger a, BigInteger b) {
-        return a.multiply(b).divide(a.gcd(b));
     }
 }

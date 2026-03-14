@@ -1,5 +1,6 @@
 package com.example.mpc.service.cggmp;
 
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.SecureRandomUtils;
@@ -208,11 +209,11 @@ public final class CggmpProtocolUtils {
      */
     public static BigInteger randomNonZero(BigInteger n) {
         SecureRandom rnd = SecureRandomUtils.getInstance();
-        BigInteger r;
-        do {
-            r = new BigInteger(n.bitLength(), rnd).mod(n);
-        } while (r.signum() == 0);
-        return r;
+        BigInteger nMinusOne = n.subtract(BigInteger.ONE);
+        if (nMinusOne.signum() <= 0) {
+            throw new IllegalArgumentException("n must be greater than 1");
+        }
+        return new BigInteger(nMinusOne.bitLength(), rnd).mod(nMinusOne).add(BigInteger.ONE);
     }
 
     public static Map<?, ?> asMap(Object value) {
@@ -264,11 +265,11 @@ public final class CggmpProtocolUtils {
                 continue;
             }
             BigInteger peerBi = indexMap != null && indexMap.get(peerId) != null ? indexMap.get(peerId) : BigInteger.valueOf(peerId);
-            num = num.multiply(peerBi).mod(mod);
+            num = BigIntegerUtils.modMul(num, peerBi, mod);
             BigInteger diff = peerBi.subtract(idBi).mod(mod);
-            den = den.multiply(diff).mod(mod);
+            den = BigIntegerUtils.modMul(den, diff, mod);
         }
-        return num.multiply(den.modInverse(mod)).mod(mod);
+        return BigIntegerUtils.modMul(num, BigIntegerUtils.modInverse(den, mod), mod);
     }
 
     private static BigInteger lagrangeCoefficientAtZero(int id, Set<Integer> participants, Map<Integer, BigInteger> indexMap, BigInteger mod) {
@@ -283,11 +284,11 @@ public final class CggmpProtocolUtils {
                 continue;
             }
             BigInteger peerBi = indexMap != null && indexMap.get(peerId) != null ? indexMap.get(peerId) : BigInteger.valueOf(peerId);
-            num = num.multiply(peerBi).mod(mod);
+            num = BigIntegerUtils.modMul(num, peerBi, mod);
             BigInteger diff = peerBi.subtract(idBi).mod(mod);
-            den = den.multiply(diff).mod(mod);
+            den = BigIntegerUtils.modMul(den, diff, mod);
         }
-        return num.multiply(den.modInverse(mod)).mod(mod);
+        return BigIntegerUtils.modMul(num, BigIntegerUtils.modInverse(den, mod), mod);
     }
 
     private static String buildSignSid(String taskId) {
