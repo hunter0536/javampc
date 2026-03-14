@@ -5,33 +5,48 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <time.h>
+#include <fcntl.h>
 
 static jclass bigIntegerClass = NULL;
 static jmethodID bigIntegerConstructor = NULL;
 static jmethodID bigIntegerToByteArray = NULL;
 static mpz_t two_pow_table[2048];
-static int two_pow_table_initialized = 0;
-static pthread_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t two_pow_once = PTHREAD_ONCE_INIT;
+static pthread_once_t jni_ids_once = PTHREAD_ONCE_INIT;
+static JNIEnv *jni_env_for_once = NULL;
+static pthread_mutex_t jni_ids_mutex = PTHREAD_MUTEX_INITIALIZER;
+static void throw_npe(JNIEnv *env, const char *message);
+
+static void init_two_pow_table_once(void) {
+    for (int i = 0; i < 2048; i++) {
+        mpz_init(two_pow_table[i]);
+        mpz_ui_pow_ui(two_pow_table[i], 2, i);
+    }
+}
 
 static void init_two_pow_table(void) {
-    pthread_mutex_lock(&init_mutex);
-    if (!two_pow_table_initialized) {
-        for (int i = 0; i < 2048; i++) {
-            mpz_init(two_pow_table[i]);
-            mpz_ui_pow_ui(two_pow_table[i], 2, i);
-        }
-        two_pow_table_initialized = 1;
-    }
-    pthread_mutex_unlock(&init_mutex);
+    pthread_once(&two_pow_once, init_two_pow_table_once);
+}
+
+static void cache_jni_ids_once(void) {
+    if (jni_env_for_once == NULL) return;
+    jclass cls = (*jni_env_for_once)->FindClass(jni_env_for_once, "java/math/BigInteger");
+    if (cls == NULL) return;
+    bigIntegerClass = (*jni_env_for_once)->NewGlobalRef(jni_env_for_once, cls);
+    (*jni_env_for_once)->DeleteLocalRef(jni_env_for_once, cls);
+    if (bigIntegerClass == NULL) return;
+    bigIntegerConstructor = (*jni_env_for_once)->GetMethodID(jni_env_for_once, bigIntegerClass, "<init>", "([B)V");
+    bigIntegerToByteArray = (*jni_env_for_once)->GetMethodID(jni_env_for_once, bigIntegerClass, "toByteArray", "()[B");
 }
 
 static void cache_jni_ids(JNIEnv *env) {
-    if (bigIntegerClass == NULL) {
-        jclass cls = (*env)->FindClass(env, "java/math/BigInteger");
-        bigIntegerClass = (*env)->NewGlobalRef(env, cls);
-        bigIntegerConstructor = (*env)->GetMethodID(env, bigIntegerClass, "<init>", "([B)V");
-        bigIntegerToByteArray = (*env)->GetMethodID(env, bigIntegerClass, "toByteArray", "()[B");
+    if (bigIntegerClass != NULL) return;
+    pthread_mutex_lock(&jni_ids_mutex);
+    if (jni_env_for_once == NULL) {
+        jni_env_for_once = env;
     }
+    pthread_mutex_unlock(&jni_ids_mutex);
+    pthread_once(&jni_ids_once, cache_jni_ids_once);
 }
 
 static void bytes_to_mpz(JNIEnv *env, jbyteArray array, mpz_t result) {
@@ -149,11 +164,32 @@ static size_t mpz_to_bytes_buffer(mpz_t value, unsigned char *buffer, size_t buf
 }
 
 static jbyteArray mpz_to_bytes(JNIEnv *env, mpz_t value) {
-    unsigned char temp[4096];
-    size_t len = mpz_to_bytes_buffer(value, temp, sizeof(temp));
+    mpz_t abs_val;
+    mpz_init(abs_val);
+    mpz_abs(abs_val, value);
+    size_t bits = mpz_sizeinbase(abs_val, 2);
+    mpz_clear(abs_val);
+    
+    size_t bytes = (bits + 7) / 8;
+    if (bytes == 0) bytes = 1;
+    size_t buffer_size = bytes + 2;
+    
+    unsigned char *temp = (unsigned char *)malloc(buffer_size);
+    if (!temp) {
+        throw_npe(env, "Memory allocation failed");
+        return NULL;
+    }
+    
+    size_t len = mpz_to_bytes_buffer(value, temp, buffer_size);
+    if (len == 0) {
+        free(temp);
+        throw_npe(env, "Result too large");
+        return NULL;
+    }
     
     jbyteArray result = (*env)->NewByteArray(env, (jsize)len);
     (*env)->SetByteArrayRegion(env, result, 0, (jsize)len, (jbyte*)temp);
+    free(temp);
     return result;
 }
 
@@ -328,6 +364,9 @@ static void* batch_modpow_worker(void *arg) {
         
         unsigned char *result_ptr = result_pool + i * max_result_size;
         tasks[i].result_len = mpz_to_bytes_buffer(tasks[i].result, result_ptr, max_result_size);
+        if (tasks[i].result_len == 0) {
+            tasks[i].error = 1;
+        }
     }
     
     return NULL;
@@ -393,12 +432,48 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
         return NULL;
     }
     
+    size_t base_pool_size = 0;
     for (jsize i = 0; i < n; i++) {
         jbyteArray baseArr = (jbyteArray)(*env)->GetObjectArrayElement(env, baseBytesArray, i);
         jsize len = (*env)->GetArrayLength(env, baseArr);
-        tasks[i].base_data = (jbyte *)malloc(len);
-        (*env)->GetByteArrayRegion(env, baseArr, 0, len, tasks[i].base_data);
         tasks[i].base_len = len;
+        if (len > 0) {
+            if (base_pool_size + (size_t)len < base_pool_size) {
+                (*env)->DeleteLocalRef(env, baseArr);
+                free(result_pool);
+                free(tasks);
+                mpz_clears(exp, mod, NULL);
+                throw_npe(env, "Memory allocation failed");
+                return NULL;
+            }
+            base_pool_size += (size_t)len;
+        }
+        (*env)->DeleteLocalRef(env, baseArr);
+    }
+    
+    jbyte *base_pool = NULL;
+    if (base_pool_size > 0) {
+        base_pool = (jbyte *)malloc(base_pool_size);
+        if (!base_pool) {
+            free(result_pool);
+            free(tasks);
+            mpz_clears(exp, mod, NULL);
+            throw_npe(env, "Memory allocation failed");
+            return NULL;
+        }
+    }
+    
+    size_t base_offset = 0;
+    for (jsize i = 0; i < n; i++) {
+        jbyteArray baseArr = (jbyteArray)(*env)->GetObjectArrayElement(env, baseBytesArray, i);
+        jsize len = tasks[i].base_len;
+        if (len > 0) {
+            (*env)->GetByteArrayRegion(env, baseArr, 0, len, base_pool + base_offset);
+            tasks[i].base_data = base_pool + base_offset;
+            base_offset += (size_t)len;
+        } else {
+            tasks[i].base_data = NULL;
+        }
         tasks[i].exp_ptr = &exp;
         tasks[i].mod_ptr = &mod;
         mpz_init(tasks[i].base);
@@ -415,23 +490,29 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
     } else {
         pthread_t *threads = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
         ThreadArg *thread_args = (ThreadArg *)malloc(num_threads * sizeof(ThreadArg));
-        
-        jsize chunk_size = n / num_threads;
-        for (int t = 0; t < num_threads; t++) {
-            thread_args[t].tasks = tasks;
-            thread_args[t].start = t * chunk_size;
-            thread_args[t].end = (t == num_threads - 1) ? n : (t + 1) * chunk_size;
-            thread_args[t].result_pool = result_pool;
-            thread_args[t].max_result_size = max_result_size;
-            pthread_create(&threads[t], NULL, batch_modpow_worker, &thread_args[t]);
+        if (!threads || !thread_args) {
+            free(threads);
+            free(thread_args);
+            ThreadArg arg = {tasks, 0, n, result_pool, max_result_size};
+            batch_modpow_worker(&arg);
+        } else {
+            jsize chunk_size = n / num_threads;
+            for (int t = 0; t < num_threads; t++) {
+                thread_args[t].tasks = tasks;
+                thread_args[t].start = t * chunk_size;
+                thread_args[t].end = (t == num_threads - 1) ? n : (t + 1) * chunk_size;
+                thread_args[t].result_pool = result_pool;
+                thread_args[t].max_result_size = max_result_size;
+                pthread_create(&threads[t], NULL, batch_modpow_worker, &thread_args[t]);
+            }
+            
+            for (int t = 0; t < num_threads; t++) {
+                pthread_join(threads[t], NULL);
+            }
+            
+            free(threads);
+            free(thread_args);
         }
-        
-        for (int t = 0; t < num_threads; t++) {
-            pthread_join(threads[t], NULL);
-        }
-        
-        free(threads);
-        free(thread_args);
     }
     
     jclass byteArrayClass = (*env)->FindClass(env, "[B");
@@ -452,9 +533,9 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
     }
     
     for (jsize i = 0; i < n; i++) {
-        free(tasks[i].base_data);
         mpz_clears(tasks[i].base, tasks[i].result, NULL);
     }
+    free(base_pool);
     free(result_pool);
     free(tasks);
     mpz_clears(exp, mod, NULL);
@@ -474,16 +555,16 @@ typedef struct {
 static void* batch_jacobi_worker(void *arg) {
     JacobiBatchArg *ctx = (JacobiBatchArg *)arg;
     
+    mpz_t a, a_mod;
+    mpz_inits(a, a_mod, NULL);
     for (jsize i = ctx->start; i < ctx->end; i++) {
-        mpz_t a, a_mod;
-        mpz_inits(a, a_mod, NULL);
+        mpz_set_ui(a, 0);
         bytes_to_mpz_direct(ctx->a_data_array[i], ctx->a_len_array[i], a);
         mpz_mod(a_mod, a, *ctx->n_ptr);
         
         ctx->results[i] = mpz_jacobi(a_mod, *ctx->n_ptr);
-        
-        mpz_clears(a, a_mod, NULL);
     }
+    mpz_clears(a, a_mod, NULL);
     
     return NULL;
 }
@@ -564,12 +645,58 @@ JNIEXPORT jintArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nat
     
     jbyte **a_data_array = (jbyte **)malloc(count * sizeof(jbyte *));
     jsize *a_len_array = (jsize *)malloc(count * sizeof(jsize));
+    if (!a_data_array || !a_len_array) {
+        free(a_data_array);
+        free(a_len_array);
+        free(results);
+        mpz_clear(n);
+        throw_npe(env, "Memory allocation failed");
+        return NULL;
+    }
     
+    size_t a_pool_size = 0;
     for (jsize i = 0; i < count; i++) {
         jbyteArray aArr = (jbyteArray)(*env)->GetObjectArrayElement(env, aBytesArray, i);
         a_len_array[i] = (*env)->GetArrayLength(env, aArr);
-        a_data_array[i] = (jbyte *)malloc(a_len_array[i]);
-        (*env)->GetByteArrayRegion(env, aArr, 0, a_len_array[i], a_data_array[i]);
+        if (a_len_array[i] > 0) {
+            if (a_pool_size + (size_t)a_len_array[i] < a_pool_size) {
+                (*env)->DeleteLocalRef(env, aArr);
+                free(a_data_array);
+                free(a_len_array);
+                free(results);
+                mpz_clear(n);
+                throw_npe(env, "Memory allocation failed");
+                return NULL;
+            }
+            a_pool_size += (size_t)a_len_array[i];
+        }
+        (*env)->DeleteLocalRef(env, aArr);
+    }
+    
+    jbyte *a_pool = NULL;
+    if (a_pool_size > 0) {
+        a_pool = (jbyte *)malloc(a_pool_size);
+        if (!a_pool) {
+            free(a_data_array);
+            free(a_len_array);
+            free(results);
+            mpz_clear(n);
+            throw_npe(env, "Memory allocation failed");
+            return NULL;
+        }
+    }
+    
+    size_t a_offset = 0;
+    for (jsize i = 0; i < count; i++) {
+        jbyteArray aArr = (jbyteArray)(*env)->GetObjectArrayElement(env, aBytesArray, i);
+        jsize len = a_len_array[i];
+        if (len > 0) {
+            (*env)->GetByteArrayRegion(env, aArr, 0, len, a_pool + a_offset);
+            a_data_array[i] = a_pool + a_offset;
+            a_offset += (size_t)len;
+        } else {
+            a_data_array[i] = NULL;
+        }
         (*env)->DeleteLocalRef(env, aArr);
     }
     
@@ -583,31 +710,35 @@ JNIEXPORT jintArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nat
     } else {
         pthread_t *threads = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
         JacobiBatchArg *args = (JacobiBatchArg *)malloc(num_threads * sizeof(JacobiBatchArg));
-        
-        jsize chunk_size = count / num_threads;
-        for (int t = 0; t < num_threads; t++) {
-            args[t].a_data_array = a_data_array;
-            args[t].a_len_array = a_len_array;
-            args[t].n_ptr = &n;
-            args[t].results = results;
-            args[t].start = t * chunk_size;
-            args[t].end = (t == num_threads - 1) ? count : (t + 1) * chunk_size;
-            pthread_create(&threads[t], NULL, batch_jacobi_worker, &args[t]);
+        if (!threads || !args) {
+            free(threads);
+            free(args);
+            JacobiBatchArg arg = {a_data_array, a_len_array, &n, results, 0, count};
+            batch_jacobi_worker(&arg);
+        } else {
+            jsize chunk_size = count / num_threads;
+            for (int t = 0; t < num_threads; t++) {
+                args[t].a_data_array = a_data_array;
+                args[t].a_len_array = a_len_array;
+                args[t].n_ptr = &n;
+                args[t].results = results;
+                args[t].start = t * chunk_size;
+                args[t].end = (t == num_threads - 1) ? count : (t + 1) * chunk_size;
+                pthread_create(&threads[t], NULL, batch_jacobi_worker, &args[t]);
+            }
+            
+            for (int t = 0; t < num_threads; t++) {
+                pthread_join(threads[t], NULL);
+            }
+            
+            free(threads);
+            free(args);
         }
-        
-        for (int t = 0; t < num_threads; t++) {
-            pthread_join(threads[t], NULL);
-        }
-        
-        free(threads);
-        free(args);
     }
     
-    for (jsize i = 0; i < count; i++) {
-        free(a_data_array[i]);
-    }
     free(a_data_array);
     free(a_len_array);
+    free(a_pool);
     
     jintArray resultArray = (*env)->NewIntArray(env, count);
     (*env)->SetIntArrayRegion(env, resultArray, 0, count, results);
@@ -632,18 +763,17 @@ typedef struct {
 static void* batch_mod_worker(void *arg) {
     BatchModArg *ctx = (BatchModArg *)arg;
     
+    mpz_t val, result;
+    mpz_inits(val, result, NULL);
     for (jsize i = ctx->start; i < ctx->end; i++) {
-        mpz_t val, result;
-        mpz_inits(val, result, NULL);
-        
+        mpz_set_ui(val, 0);
         bytes_to_mpz_direct(ctx->val_data_array[i], ctx->val_len_array[i], val);
         mpz_mod(result, val, *ctx->mod_ptr);
         
         unsigned char *result_ptr = ctx->result_pool + i * ctx->max_result_size;
         ctx->result_len_array[i] = mpz_to_bytes_buffer(result, result_ptr, ctx->max_result_size);
-        
-        mpz_clears(val, result, NULL);
     }
+    mpz_clears(val, result, NULL);
     
     return NULL;
 }
@@ -694,11 +824,51 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
         return NULL;
     }
     
+    size_t val_pool_size = 0;
     for (jsize i = 0; i < n; i++) {
         jbyteArray valArr = (jbyteArray)(*env)->GetObjectArrayElement(env, valsBytesArray, i);
         val_len_array[i] = (*env)->GetArrayLength(env, valArr);
-        val_data_array[i] = (jbyte *)malloc(val_len_array[i]);
-        (*env)->GetByteArrayRegion(env, valArr, 0, val_len_array[i], val_data_array[i]);
+        if (val_len_array[i] > 0) {
+            if (val_pool_size + (size_t)val_len_array[i] < val_pool_size) {
+                (*env)->DeleteLocalRef(env, valArr);
+                free(val_data_array);
+                free(val_len_array);
+                free(result_pool);
+                free(result_len_array);
+                mpz_clear(mod);
+                throw_npe(env, "Memory allocation failed");
+                return NULL;
+            }
+            val_pool_size += (size_t)val_len_array[i];
+        }
+        (*env)->DeleteLocalRef(env, valArr);
+    }
+    
+    jbyte *val_pool = NULL;
+    if (val_pool_size > 0) {
+        val_pool = (jbyte *)malloc(val_pool_size);
+        if (!val_pool) {
+            free(val_data_array);
+            free(val_len_array);
+            free(result_pool);
+            free(result_len_array);
+            mpz_clear(mod);
+            throw_npe(env, "Memory allocation failed");
+            return NULL;
+        }
+    }
+    
+    size_t val_offset = 0;
+    for (jsize i = 0; i < n; i++) {
+        jbyteArray valArr = (jbyteArray)(*env)->GetObjectArrayElement(env, valsBytesArray, i);
+        jsize len = val_len_array[i];
+        if (len > 0) {
+            (*env)->GetByteArrayRegion(env, valArr, 0, len, val_pool + val_offset);
+            val_data_array[i] = val_pool + val_offset;
+            val_offset += (size_t)len;
+        } else {
+            val_data_array[i] = NULL;
+        }
         (*env)->DeleteLocalRef(env, valArr);
     }
     
@@ -712,26 +882,32 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
     } else {
         pthread_t *threads = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
         BatchModArg *args = (BatchModArg *)malloc(num_threads * sizeof(BatchModArg));
-        
-        jsize chunk_size = n / num_threads;
-        for (int t = 0; t < num_threads; t++) {
-            args[t].val_data_array = val_data_array;
-            args[t].val_len_array = val_len_array;
-            args[t].mod_ptr = &mod;
-            args[t].result_pool = result_pool;
-            args[t].result_len_array = result_len_array;
-            args[t].max_result_size = max_result_size;
-            args[t].start = t * chunk_size;
-            args[t].end = (t == num_threads - 1) ? n : (t + 1) * chunk_size;
-            pthread_create(&threads[t], NULL, batch_mod_worker, &args[t]);
+        if (!threads || !args) {
+            free(threads);
+            free(args);
+            BatchModArg arg = {val_data_array, val_len_array, &mod, result_pool, result_len_array, max_result_size, 0, n};
+            batch_mod_worker(&arg);
+        } else {
+            jsize chunk_size = n / num_threads;
+            for (int t = 0; t < num_threads; t++) {
+                args[t].val_data_array = val_data_array;
+                args[t].val_len_array = val_len_array;
+                args[t].mod_ptr = &mod;
+                args[t].result_pool = result_pool;
+                args[t].result_len_array = result_len_array;
+                args[t].max_result_size = max_result_size;
+                args[t].start = t * chunk_size;
+                args[t].end = (t == num_threads - 1) ? n : (t + 1) * chunk_size;
+                pthread_create(&threads[t], NULL, batch_mod_worker, &args[t]);
+            }
+            
+            for (int t = 0; t < num_threads; t++) {
+                pthread_join(threads[t], NULL);
+            }
+            
+            free(threads);
+            free(args);
         }
-        
-        for (int t = 0; t < num_threads; t++) {
-            pthread_join(threads[t], NULL);
-        }
-        
-        free(threads);
-        free(args);
     }
     
     jclass byteArrayClass = (*env)->FindClass(env, "[B");
@@ -745,13 +921,11 @@ JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_
         (*env)->DeleteLocalRef(env, jbytes);
     }
     
-    for (jsize i = 0; i < n; i++) {
-        free(val_data_array[i]);
-    }
     free(val_data_array);
     free(val_len_array);
     free(result_pool);
     free(result_len_array);
+    free(val_pool);
     mpz_clear(mod);
     
     return resultArray;
@@ -811,11 +985,7 @@ JNIEXPORT jbyteArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_na
         mpz_mod(x, x, n);
     }
     
-    unsigned char temp[4096];
-    size_t result_len = mpz_to_bytes_buffer(x, temp, sizeof(temp));
-    
-    jbyteArray resultArray = (*env)->NewByteArray(env, (jsize)result_len);
-    (*env)->SetByteArrayRegion(env, resultArray, 0, (jsize)result_len, (jbyte*)temp);
+    jbyteArray resultArray = mpz_to_bytes(env, x);
     
     mpz_clears(a, p, b, q, n, t, ip, k, x, NULL);
     
@@ -825,7 +995,8 @@ JNIEXPORT jbyteArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_na
 JNIEXPORT jbyteArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeProbablePrime
   (JNIEnv *env, jclass cls, jint bitLength, jbyteArray seedBytes) {
     if (bitLength <= 0) {
-        throw_npe(env, "Invalid bit length");
+        jclass exception = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
+        (*env)->ThrowNew(env, exception, "Invalid bit length");
         return NULL;
     }
     
@@ -846,7 +1017,17 @@ JNIEXPORT jbyteArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_na
         (*env)->ReleaseByteArrayElements(env, seedBytes, seedData, JNI_ABORT);
         mpz_clear(seed);
     } else {
-        gmp_randseed_ui(rstate, (unsigned long)time(NULL));
+        unsigned long seed = (unsigned long)time(NULL);
+        unsigned long extra = 0;
+        int fd = open("/dev/urandom", O_RDONLY);
+        if (fd >= 0) {
+            ssize_t r = read(fd, &extra, sizeof(extra));
+            close(fd);
+            if (r == (ssize_t)sizeof(extra)) {
+                seed ^= extra;
+            }
+        }
+        gmp_randseed_ui(rstate, seed);
     }
     
     mpz_t prime, random_base;
@@ -874,11 +1055,7 @@ JNIEXPORT jbyteArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_na
     
     gmp_randclear(rstate);
     
-    unsigned char temp[4096];
-    size_t result_len = mpz_to_bytes_buffer(prime, temp, sizeof(temp));
-    
-    jbyteArray resultArray = (*env)->NewByteArray(env, (jsize)result_len);
-    (*env)->SetByteArrayRegion(env, resultArray, 0, (jsize)result_len, (jbyte*)temp);
+    jbyteArray resultArray = mpz_to_bytes(env, prime);
     
     mpz_clears(prime, random_base, NULL);
     

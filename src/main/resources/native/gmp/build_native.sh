@@ -13,7 +13,6 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../../.." && pwd)"
-NATIVE_SRC="$PROJECT_ROOT/src/main/native"
 NATIVE_LIB="$PROJECT_ROOT/src/main/resources/native/gmp"
 GMP_BUILD="$PROJECT_ROOT/build/gmp"
 
