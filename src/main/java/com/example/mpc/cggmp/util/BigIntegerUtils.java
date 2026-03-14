@@ -5,6 +5,9 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.IntStream;
 
 public final class BigIntegerUtils {
     private static final Logger logger = LoggerFactory.getLogger(BigIntegerUtils.class);
@@ -105,7 +108,7 @@ public final class BigIntegerUtils {
         final int batchSize = Runtime.getRuntime().availableProcessors() * 2;
         
         while (true) {
-            java.util.List<BigInteger> candidates = java.util.stream.IntStream.range(0, batchSize)
+            List<BigInteger> candidates = IntStream.range(0, batchSize)
                 .parallel()
                 .mapToObj(i -> {
                     BigInteger q = probablePrime(bits - 1, rnd);
@@ -113,7 +116,7 @@ public final class BigIntegerUtils {
                 })
                 .toList();
             
-            java.util.Optional<BigInteger> found = candidates.parallelStream()
+            Optional<BigInteger> found = candidates.parallelStream()
                 .filter(p -> p.isProbablePrime(128))
                 .findAny();
             

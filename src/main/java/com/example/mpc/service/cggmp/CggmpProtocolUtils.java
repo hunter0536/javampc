@@ -15,6 +15,8 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -97,7 +99,7 @@ public final class CggmpProtocolUtils {
             md.update(task.executionId.getBytes(StandardCharsets.UTF_8));
             md.update(task.taskId.getBytes(StandardCharsets.UTF_8));
             int count = 0;
-            java.util.SortedMap<Integer, String> ordered = new java.util.TreeMap<>(task.commitHashes);
+            SortedMap<Integer, String> ordered = new TreeMap<>(task.commitHashes);
             for (Map.Entry<Integer, String> e : ordered.entrySet()) {
                 count++;
                 md.update(String.valueOf(e.getKey()).getBytes(StandardCharsets.UTF_8));

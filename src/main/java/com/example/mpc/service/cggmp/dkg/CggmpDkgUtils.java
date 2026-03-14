@@ -10,9 +10,11 @@ import com.example.mpc.service.cggmp.CggmpHashUtils;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -27,7 +29,7 @@ public final class CggmpDkgUtils {
     public static byte[] buildDkgContext(String taskId, String executionId, byte[] rid, int senderId, String label) {
         String sid = buildSid(executionId, taskId);
         String base = "DKG:" + label + ":" + sid + ":" + senderId + ":";
-        byte[] prefix = base.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] prefix = base.getBytes(StandardCharsets.UTF_8);
         if (rid == null) {
             return prefix;
         }
@@ -145,7 +147,7 @@ public final class CggmpDkgUtils {
     public static BigInteger schChallenge(byte[] context, ECPoint g, ECPoint X, ECPoint A) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            md.update("PI_SCH".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            md.update("PI_SCH".getBytes(StandardCharsets.UTF_8));
             if (context != null) {
                 md.update(context);
             }
@@ -189,7 +191,7 @@ public final class CggmpDkgUtils {
         }
         Map<Integer, ECPoint> XkStar = task.XkStar;
         if (XkStar.isEmpty()) {
-            Map<Integer, ECPoint> merged = new java.util.HashMap<>();
+            Map<Integer, ECPoint> merged = new HashMap<>();
             for (int peerId : task.participants) {
                 Map<Integer, ECPoint> Xjk = task.Xjks.get(peerId);
                 if (Xjk == null) {

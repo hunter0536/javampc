@@ -8,7 +8,9 @@ import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
+import java.util.stream.IntStream;
 
 public final class NativeBigInteger {
     private static final Logger logger = LoggerFactory.getLogger(NativeBigInteger.class);
@@ -43,7 +45,7 @@ public final class NativeBigInteger {
     private static boolean loadFromClasspath(InputStream libStream, String libName) throws IOException {
         Path tempDir = Files.createTempDirectory("mpc_native");
         Path tempLib = tempDir.resolve(libName);
-        Files.copy(libStream, tempLib, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        Files.copy(libStream, tempLib, StandardCopyOption.REPLACE_EXISTING);
         
         tempLib.toFile().deleteOnExit();
         tempDir.toFile().deleteOnExit();
@@ -77,7 +79,7 @@ public final class NativeBigInteger {
     
     public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
         if (mod.bitLength() < MODULUS_THRESHOLD) {
-            return java.util.stream.IntStream.range(0, bases.length)
+            return IntStream.range(0, bases.length)
                     .parallel()
                     .mapToObj(i -> bases[i].modPow(exp, mod))
                     .toArray(BigInteger[]::new);
@@ -104,13 +106,13 @@ public final class NativeBigInteger {
             throw new IllegalArgumentException("bases and exps must have the same length");
         }
         if (mod.bitLength() < MODULUS_THRESHOLD) {
-            return java.util.stream.IntStream.range(0, bases.length)
+            return IntStream.range(0, bases.length)
                     .parallel()
                     .mapToObj(i -> bases[i].modPow(exps[i], mod))
                     .toArray(BigInteger[]::new);
         }
         
-        return java.util.stream.IntStream.range(0, bases.length)
+        return IntStream.range(0, bases.length)
                 .parallel()
                 .mapToObj(i -> nativeModPow(bases[i], exps[i], mod))
                 .toArray(BigInteger[]::new);

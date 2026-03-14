@@ -670,7 +670,7 @@ public final class CggmpSignaturePresignHandler {
             }
         }
         
-        for (Map.Entry<Integer, java.util.Map<String, Object>> entry : task.pendingPresignR3.entrySet()) {
+        for (Map.Entry<Integer, Map<String, Object>> entry : task.pendingPresignR3.entrySet()) {
             processPresignR3(task, entry.getKey(), entry.getValue());
         }
         task.pendingPresignR3.clear();

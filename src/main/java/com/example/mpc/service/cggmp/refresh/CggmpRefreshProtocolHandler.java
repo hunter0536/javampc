@@ -10,6 +10,7 @@ import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dto.CggmpRefreshTask;
 import com.example.mpc.dto.KeyShare;
+import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import com.example.mpc.service.cggmp.types.BigIntIndexMap;
@@ -210,7 +211,7 @@ public final class CggmpRefreshProtocolHandler {
                                 }
                             }, refreshExecutorService)
                             .thenCompose(v -> {
-                                if (task.status.get() == com.example.mpc.enums.TaskStatus.FAILED) {
+                                if (task.status.get() == TaskStatus.FAILED) {
                                     return CompletableFuture.completedFuture(null);
                                 }
                                 task.commitAcks.put(svc.nodeId, Boolean.TRUE);
@@ -218,7 +219,7 @@ public final class CggmpRefreshProtocolHandler {
                                         .thenCompose(x -> waitForLatchAsync(task.commitLatch, "refresh commit"));
                             })
                             .thenRunAsync(() -> {
-                                if (task.status.get() == com.example.mpc.enums.TaskStatus.FAILED) {
+                                if (task.status.get() == TaskStatus.FAILED) {
                                     return;
                                 }
                                 task.complete();

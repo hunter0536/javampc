@@ -838,8 +838,8 @@ public final class CggmpSignatureOfflineHandler {
         
         String presignId = ctx.task().taskId;
         ctx.task().presignature = new Presignature(presignId, GammaFinal, kTilde, chiTilde, 
-            new java.util.HashMap<>(ctx.task().presignDeltaTilde), 
-            new java.util.HashMap<>(ctx.task().presignSTilde));
+            new HashMap<>(ctx.task().presignDeltaTilde), 
+            new HashMap<>(ctx.task().presignSTilde));
         ctx.task().presignatureLatch.countDown();
 
         if (ctx.task().taskId.startsWith("presign-offline-") && ctx.task().presignature != null) {
