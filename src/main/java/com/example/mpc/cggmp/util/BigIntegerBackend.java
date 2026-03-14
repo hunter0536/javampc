@@ -8,6 +8,7 @@ public interface BigIntegerBackend {
     BigInteger modInverse(BigInteger val, BigInteger mod);
     BigInteger modMul(BigInteger a, BigInteger b, BigInteger mod);
     BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod);
+    BigInteger[] batchModPow(BigInteger[] bases, BigInteger[] exps, BigInteger mod);
     BigInteger[] batchMod(BigInteger[] vals, BigInteger mod);
     BigInteger crt(BigInteger a, BigInteger p, BigInteger b, BigInteger q, BigInteger n);
     int jacobi(BigInteger a, BigInteger n);

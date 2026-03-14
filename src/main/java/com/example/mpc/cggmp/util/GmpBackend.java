@@ -34,6 +34,11 @@ public final class GmpBackend implements BigIntegerBackend {
     }
 
     @Override
+    public BigInteger[] batchModPow(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
+        return NativeBigInteger.batchModPow(bases, exps, mod);
+    }
+
+    @Override
     public BigInteger[] batchMod(BigInteger[] vals, BigInteger mod) {
         return NativeBigInteger.batchMod(vals, mod);
     }

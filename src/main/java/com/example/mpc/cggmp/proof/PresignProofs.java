@@ -176,26 +176,37 @@ public final class PresignProofs {
         BigInteger[] rPowN0 = BigIntegerUtils.batchModPow(rArr, N0, N0sq);
         BigInteger[] sPowN1 = BigIntegerUtils.batchModPow(sArr, N1, N1sq);
         
+        BigInteger[] betaForN0Arr = new BigInteger[effectiveKappa];
+        for (int i = 0; i < effectiveKappa; i++) {
+            betaForN0Arr[i] = negY ? betaArr[i].negate() : betaArr[i];
+        }
+        
+        BigInteger[] onePlusN0Arr = new BigInteger[effectiveKappa];
+        BigInteger[] onePlusN1Arr = new BigInteger[effectiveKappa];
+        for (int i = 0; i < effectiveKappa; i++) {
+            onePlusN0Arr[i] = onePlusN0;
+            onePlusN1Arr[i] = onePlusN1;
+        }
+        
+        BigInteger[] onePlusN0PowBeta = BigIntegerUtils.batchModPow(onePlusN0Arr, betaForN0Arr, N0sq);
+        BigInteger[] onePlusN1PowBeta = BigIntegerUtils.batchModPow(onePlusN1Arr, betaArr, N1sq);
+        BigInteger[] CPowAlpha = BigIntegerUtils.batchModPow(
+            java.util.Collections.nCopies(effectiveKappa, C).toArray(new BigInteger[0]),
+            alphaArr,
+            N0sq
+        );
+        
         BigInteger[] AjArr = new BigInteger[effectiveKappa];
         BigInteger[] BjArr = new BigInteger[effectiveKappa];
         
         java.util.stream.IntStream.range(0, effectiveKappa).parallel().forEach(i -> {
-            BigInteger betaForN0 = negY ? betaArr[i].negate() : betaArr[i];
             AjArr[i] = BigIntegerUtils.modMul(
-                BigIntegerUtils.modMul(
-                    BigIntegerUtils.powSigned(C, alphaArr[i], N0sq),
-                    BigIntegerUtils.powSigned(onePlusN0, betaForN0, N0sq),
-                    N0sq
-                ),
+                BigIntegerUtils.modMul(CPowAlpha[i], onePlusN0PowBeta[i], N0sq),
                 rPowN0[i],
                 N0sq
             );
             
-            BjArr[i] = BigIntegerUtils.modMul(
-                BigIntegerUtils.powSigned(onePlusN1, betaArr[i], N1sq),
-                sPowN1[i],
-                N1sq
-            );
+            BjArr[i] = BigIntegerUtils.modMul(onePlusN1PowBeta[i], sPowN1[i], N1sq);
         });
         
         logger.debug("PiAffG modPow computed in {} ms",

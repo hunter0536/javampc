@@ -47,6 +47,10 @@ public final class BigIntegerUtils {
         return BACKEND.batchModPow(bases, exp, mod);
     }
 
+    public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
+        return BACKEND.batchModPow(bases, exps, mod);
+    }
+
     public static BigInteger randomZnStar(BigInteger n, SecureRandom rnd) {
         if (n.compareTo(BigInteger.valueOf(3)) <= 0) {
             throw new IllegalArgumentException("n must be greater than 3");

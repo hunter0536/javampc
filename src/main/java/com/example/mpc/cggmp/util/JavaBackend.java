@@ -38,6 +38,17 @@ public final class JavaBackend implements BigIntegerBackend {
     }
 
     @Override
+    public BigInteger[] batchModPow(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
+        if (bases.length != exps.length) {
+            throw new IllegalArgumentException("bases and exps must have the same length");
+        }
+        return IntStream.range(0, bases.length)
+                .parallel()
+                .mapToObj(i -> bases[i].modPow(exps[i], mod))
+                .toArray(BigInteger[]::new);
+    }
+
+    @Override
     public BigInteger[] batchMod(BigInteger[] vals, BigInteger mod) {
         return IntStream.range(0, vals.length)
                 .parallel()

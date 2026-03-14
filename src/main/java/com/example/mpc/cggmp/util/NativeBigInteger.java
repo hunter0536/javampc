@@ -99,6 +99,23 @@ public final class NativeBigInteger {
         return results;
     }
     
+    public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
+        if (bases.length != exps.length) {
+            throw new IllegalArgumentException("bases and exps must have the same length");
+        }
+        if (mod.bitLength() < MODULUS_THRESHOLD) {
+            return java.util.stream.IntStream.range(0, bases.length)
+                    .parallel()
+                    .mapToObj(i -> bases[i].modPow(exps[i], mod))
+                    .toArray(BigInteger[]::new);
+        }
+        
+        return java.util.stream.IntStream.range(0, bases.length)
+                .parallel()
+                .mapToObj(i -> nativeModPow(bases[i], exps[i], mod))
+                .toArray(BigInteger[]::new);
+    }
+    
     private static native BigInteger nativeModPow(BigInteger base, BigInteger exp, BigInteger mod);
     private static native BigInteger nativeModInverse(BigInteger val, BigInteger mod);
     private static native BigInteger nativeModMul(BigInteger a, BigInteger b, BigInteger mod);

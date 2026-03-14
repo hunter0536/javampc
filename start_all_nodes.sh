@@ -8,10 +8,17 @@ if [ ! -f "$JAR" ]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/jvm_opts.sh" ]; then
+  source "$SCRIPT_DIR/jvm_opts.sh"
+else
+  JVM_OPTS="-Xmx1024m -Xms512m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:ParallelGCThreads=2"
+fi
+
 start_node() {
   local node_id="$1"
   local log_file="logs/node${node_id}.out"
-  nohup java -jar "$JAR" --spring.profiles.active="node${node_id}" > "$log_file" 2>&1 &
+  nohup java $JVM_OPTS -jar "$JAR" --spring.profiles.active="node${node_id}" > "$log_file" 2>&1 &
   local pid=$!
   echo "Node ${node_id} started with PID: ${pid}"
   sleep 1
