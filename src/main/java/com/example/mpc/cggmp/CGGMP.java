@@ -83,7 +83,7 @@ public class CGGMP {
 
         BigInteger curveOrder = pedersen.getCurveOrder();
         BigInteger[] coefficients = new BigInteger[threshold];
-        
+
         java.util.stream.IntStream.range(0, threshold).parallel().forEach(i -> {
             BigInteger coeff;
             do {
@@ -97,7 +97,7 @@ public class CGGMP {
         java.util.stream.IntStream.range(0, threshold).parallel().forEach(i -> {
             commitmentArray[i] = g.multiply(coefficients[i]).normalize();
         });
-        
+
         List<ECPoint> commitments = new ArrayList<>();
         for (int i = 0; i < threshold; i++) {
             commitments.add(commitmentArray[i]);
@@ -111,17 +111,17 @@ public class CGGMP {
 
         BiPrimeBlumProof[] biPrimeProofHolder = new BiPrimeBlumProof[1];
         NoSmallFactorProof[] factorProofHolder = new NoSmallFactorProof[1];
-        
+
         Thread biPrimeThread = new Thread(() -> {
             biPrimeProofHolder[0] = biPrimeProofGenerator.createProof(paillier.getPrivateKeyInfo(), context);
         });
         Thread factorProofThread = new Thread(() -> {
             factorProofHolder[0] = noSmallFactorProofGenerator.createProof(paillier.getPrivateKeyInfo(), context);
         });
-        
+
         biPrimeThread.start();
         factorProofThread.start();
-        
+
         try {
             biPrimeThread.join();
             factorProofThread.join();

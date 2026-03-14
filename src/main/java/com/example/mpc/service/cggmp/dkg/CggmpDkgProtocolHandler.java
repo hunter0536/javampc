@@ -192,15 +192,15 @@ public final class CggmpDkgProtocolHandler {
 
             String context = CggmpDkgUtils.buildSid(task.executionId, task.taskId);
             byte[] contextBytes = context.getBytes();
-            
+
             BiPrimeProofGenerator biPrimeProofGenerator = new BiPrimeProofGenerator();
             NoSmallFactorProofGenerator noSmallFactorProofGenerator = new NoSmallFactorProofGenerator(task.zkSetup);
-            
+
             BiPrimeBlumProof biPrimeProof = biPrimeProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
             NoSmallFactorProof factorProof = noSmallFactorProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
-            
-            logger.info("Generated ZK proofs for DKG Round 1, BiPrimeProof bits: {}", 
-                task.paillier.getPublicKeyInfo().n().bitLength());
+
+            logger.info("Generated ZK proofs for DKG Round 1, BiPrimeProof bits: {}",
+                    task.paillier.getPublicKeyInfo().n().bitLength());
 
             Map<String, Object> r1Open = new LinkedHashMap<>();
             r1Open.put("taskId", task.taskId);
@@ -214,10 +214,10 @@ public final class CggmpDkgProtocolHandler {
             if (chainCodePart != null) {
                 r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
             }
-            
+
             r1Open.put("modProof", CggmpCodecUtils.encodeBiPrimeProof(biPrimeProof));
             r1Open.put("facProof", CggmpCodecUtils.encodeNoSmallFactorProof(factorProof));
-            
+
             String vCommit = CggmpDkgUtils.computeDkgCommitHash(task.executionId, task.taskId, svc.nodeId, ridPart, S_i.toMap(), A_i, uCommit, chainCodePart);
             task.round1PayloadHashes.put(svc.nodeId, vCommit);
             Map<String, Object> r1Commit = new HashMap<>();
@@ -408,15 +408,15 @@ public final class CggmpDkgProtocolHandler {
 
                     String context = CggmpDkgUtils.buildSid(task.executionId, task.taskId);
                     byte[] contextBytes = context.getBytes();
-                    
+
                     BiPrimeProofGenerator biPrimeProofGenerator = new BiPrimeProofGenerator();
                     NoSmallFactorProofGenerator noSmallFactorProofGenerator = new NoSmallFactorProofGenerator(task.zkSetup);
-                    
+
                     BiPrimeBlumProof biPrimeProof = biPrimeProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
                     NoSmallFactorProof factorProof = noSmallFactorProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
-                    
-                    logger.info("Generated ZK proofs for DKG Round 1 (n-of-n), BiPrimeProof bits: {}", 
-                        task.paillier.getPublicKeyInfo().n().bitLength());
+
+                    logger.info("Generated ZK proofs for DKG Round 1 (n-of-n), BiPrimeProof bits: {}",
+                            task.paillier.getPublicKeyInfo().n().bitLength());
 
                     byte[] uCommit = CggmpProtocolUtils.randomBytes(32);
                     Map<String, Object> r1Open = new LinkedHashMap<>();
@@ -430,10 +430,10 @@ public final class CggmpDkgProtocolHandler {
                     if (chainCodePart != null) {
                         r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
                     }
-                    
+
                     r1Open.put("modProof", CggmpCodecUtils.encodeBiPrimeProof(biPrimeProof));
                     r1Open.put("facProof", CggmpCodecUtils.encodeNoSmallFactorProof(factorProof));
-                    
+
                     String vCommit = CggmpDkgUtils.computeDkgCommitHash(task.executionId, task.taskId, svc.nodeId, ridPart, S_i.toMap(), A_i, uCommit, chainCodePart);
                     task.round1PayloadHashes.put(svc.nodeId, vCommit);
                     Map<String, Object> r1Commit = new HashMap<>();

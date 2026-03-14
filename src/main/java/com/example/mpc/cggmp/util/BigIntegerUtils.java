@@ -11,26 +11,26 @@ import java.util.stream.IntStream;
 
 public final class BigIntegerUtils {
     private static final Logger logger = LoggerFactory.getLogger(BigIntegerUtils.class);
-    
+
     private static final BigIntegerBackend BACKEND;
-    
+
     static {
         boolean gmpEnabled = Boolean.parseBoolean(System.getProperty("cggmp.gmp.enabled", "true"));
         boolean nativeAvailable = false;
-        
+
         try {
             nativeAvailable = NativeBigInteger.isNativeAvailable();
         } catch (Throwable e) {
             logger.warn("NativeBigInteger not available: {}", e.getMessage());
         }
-        
+
         boolean useGmp = gmpEnabled && nativeAvailable;
         BACKEND = useGmp ? GmpBackend.getInstance() : JavaBackend.getInstance();
-        
-        logger.info("BigIntegerUtils initialized: gmpEnabled={}, nativeAvailable={}, useGmp={}", 
-                    gmpEnabled, nativeAvailable, useGmp);
+
+        logger.info("BigIntegerUtils initialized: gmpEnabled={}, nativeAvailable={}, useGmp={}",
+                gmpEnabled, nativeAvailable, useGmp);
     }
-    
+
     private BigIntegerUtils() {
     }
 
@@ -67,11 +67,7 @@ public final class BigIntegerUtils {
     }
 
     public static BigInteger powSigned(BigInteger base, BigInteger exp, BigInteger mod) {
-        if (exp.signum() >= 0) {
-            return BACKEND.modPow(base, exp, mod);
-        }
-        BigInteger inv = BACKEND.modInverse(base, mod);
-        return BACKEND.modPow(inv, exp.negate(), mod);
+        return BACKEND.modPow(base, exp, mod);
     }
 
     public static int jacobi(BigInteger a, BigInteger n) {
@@ -106,20 +102,20 @@ public final class BigIntegerUtils {
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public static BigInteger generateSafePrime(int bits, SecureRandom rnd) {
         final int batchSize = Runtime.getRuntime().availableProcessors() * 2;
-        
+
         while (true) {
             List<BigInteger> candidates = IntStream.range(0, batchSize)
-                .parallel()
-                .mapToObj(i -> {
-                    BigInteger q = probablePrime(bits - 1, rnd);
-                    return q.shiftLeft(1).add(BigInteger.ONE);
-                })
-                .toList();
-            
+                    .parallel()
+                    .mapToObj(i -> {
+                        BigInteger q = probablePrime(bits - 1, rnd);
+                        return q.shiftLeft(1).add(BigInteger.ONE);
+                    })
+                    .toList();
+
             Optional<BigInteger> found = candidates.parallelStream()
-                .filter(p -> p.isProbablePrime(128))
-                .findAny();
-            
+                    .filter(p -> p.isProbablePrime(128))
+                    .findAny();
+
             if (found.isPresent()) {
                 return found.get();
             }

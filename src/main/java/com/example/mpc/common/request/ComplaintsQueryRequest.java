@@ -11,7 +11,8 @@ public class ComplaintsQueryRequest {
     private Integer limit = 50;
     private Integer offset = 0;
 
-    public ComplaintsQueryRequest() {}
+    public ComplaintsQueryRequest() {
+    }
 
     public String getTaskId() {
         return taskId;

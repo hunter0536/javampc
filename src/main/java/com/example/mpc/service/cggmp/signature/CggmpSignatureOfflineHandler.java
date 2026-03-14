@@ -828,18 +828,18 @@ public final class CggmpSignatureOfflineHandler {
         ECPoint GammaFinal = r3ctx.Gamma().normalize();
         BigInteger kTilde = BigIntegerUtils.modMul(ctx.task().k_i, deltaInv, ctx.curveOrder());
         BigInteger chiTilde = BigIntegerUtils.modMul(r3ctx.chi_i(), deltaInv, ctx.curveOrder());
-        
+
         for (Map.Entry<Integer, ECPoint> e : ctx.task().presignDeltaPoint.entrySet()) {
             ctx.task().presignDeltaTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
         }
         for (Map.Entry<Integer, ECPoint> e : ctx.task().presignSPoint.entrySet()) {
             ctx.task().presignSTilde.put(e.getKey(), e.getValue().multiply(deltaInv).normalize());
         }
-        
+
         String presignId = ctx.task().taskId;
-        ctx.task().presignature = new Presignature(presignId, GammaFinal, kTilde, chiTilde, 
-            new HashMap<>(ctx.task().presignDeltaTilde), 
-            new HashMap<>(ctx.task().presignSTilde));
+        ctx.task().presignature = new Presignature(presignId, GammaFinal, kTilde, chiTilde,
+                new HashMap<>(ctx.task().presignDeltaTilde),
+                new HashMap<>(ctx.task().presignSTilde));
         ctx.task().presignatureLatch.countDown();
 
         if (ctx.task().taskId.startsWith("presign-offline-") && ctx.task().presignature != null) {

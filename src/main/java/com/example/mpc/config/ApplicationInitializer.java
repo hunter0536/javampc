@@ -1,6 +1,7 @@
 package com.example.mpc.config;
 
 import com.example.mpc.constant.Constants;
+import com.example.mpc.cggmp.util.NativeBigInteger;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
@@ -57,6 +58,15 @@ public class ApplicationInitializer implements CommandLineRunner {
     public void init() {
         System.setProperty("cggmp.gmp.enabled", String.valueOf(gmpEnabled));
         logger.info("Set system property cggmp.gmp.enabled={}", gmpEnabled);
+        
+        if (gmpEnabled) {
+            try {
+                boolean nativeAvailable = NativeBigInteger.isNativeAvailable();
+                logger.info("GMP native library pre-loaded: {}", nativeAvailable);
+            } catch (Exception e) {
+                logger.warn("Failed to pre-load GMP native library: {}", e.getMessage());
+            }
+        }
     }
 
     @Override

@@ -23,8 +23,8 @@ public class R2VerifyResult {
         this.GammaScalar = null;
     }
 
-    private R2VerifyResult(int senderId, boolean success, BigInteger D_ji, BigInteger Dhat_ji, 
-                          BigInteger F_ji, BigInteger Fhat_ji, BigInteger GammaScalar) {
+    private R2VerifyResult(int senderId, boolean success, BigInteger D_ji, BigInteger Dhat_ji,
+                           BigInteger F_ji, BigInteger Fhat_ji, BigInteger GammaScalar) {
         this.senderId = senderId;
         this.success = success;
         this.errorMessage = null;

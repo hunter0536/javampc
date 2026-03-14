@@ -153,6 +153,7 @@ public class GennaroDkgService implements NodeService.MessageHandler {
             }
         }, ThreadPoolUtil.getSingleThreadPool());
     }
+
     public CompletableFuture<Void> startDkgProcess(String taskId) {
         logger.info("startDkgProcess invoked for task {}", taskId);
         return waitForTask(taskId, 20, 200)

@@ -28,7 +28,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 
 /**
  * CGGMP签名预计算处理器
@@ -393,7 +395,7 @@ public final class CggmpSignaturePresignHandler {
         if (dMap == null || dhMap == null || fMap == null || fhMap == null) {
             return;
         }
-        
+
         ECPoint Gamma = Secp256k1CurveUtils.decodePoint(HexUtils.hexToBytes(gammaHex));
         task.presignGamma.put(senderId, Gamma);
         BigIntIndexMap D = BigIntIndexMap.of(CggmpCodecUtils.decodeBigIntegerMap(dMap));
@@ -409,7 +411,7 @@ public final class CggmpSignaturePresignHandler {
                 Dhat.values().keySet(),
                 dForNode == null ? null : dForNode.toString(16),
                 dhatForNode == null ? null : dhatForNode.toString(16));
-        
+
         ECPoint Y = task.presignY.get(senderId);
         ECPoint B1 = task.presignB1.get(senderId);
         ECPoint B2 = task.presignB2.get(senderId);
@@ -417,12 +419,12 @@ public final class CggmpSignaturePresignHandler {
             task.pendingPresignR2.put(senderId, copyStringObjectMap(dataMap));
             return;
         }
-        
+
         R2VerifyContext ctx = new R2VerifyContext(
-            senderId, gammaHex, dMap, dhMap, fMap, fhMap, 
-            affGMap, affGhatMap, logProofMap, xHex, D, Dhat, F, Fhat, Gamma
+                senderId, gammaHex, dMap, dhMap, fMap, fhMap,
+                affGMap, affGhatMap, logProofMap, xHex, D, Dhat, F, Fhat, Gamma
         );
-        
+
         com.example.mpc.common.util.ThreadPoolUtil.getPresignThreadPool().execute(() -> {
             try {
                 R2VerifyResult result = verifyR2Proofs(task, ctx);
@@ -437,7 +439,7 @@ public final class CggmpSignaturePresignHandler {
             }
         });
     }
-    
+
     private static class R2VerifyContext {
         final int senderId;
         final String gammaHex;
@@ -446,11 +448,11 @@ public final class CggmpSignaturePresignHandler {
         final String xHex;
         final BigIntIndexMap D, Dhat, F, Fhat;
         final ECPoint Gamma;
-        
-        R2VerifyContext(int senderId, String gammaHex, Map<?, ?> dMap, Map<?, ?> dhMap, 
-                       Map<?, ?> fMap, Map<?, ?> fhMap, Map<?, ?> affGMap, Map<?, ?> affGhatMap,
-                       Map<?, ?> logProofMap, String xHex, BigIntIndexMap D, BigIntIndexMap Dhat,
-                       BigIntIndexMap F, BigIntIndexMap Fhat, ECPoint Gamma) {
+
+        R2VerifyContext(int senderId, String gammaHex, Map<?, ?> dMap, Map<?, ?> dhMap,
+                        Map<?, ?> fMap, Map<?, ?> fhMap, Map<?, ?> affGMap, Map<?, ?> affGhatMap,
+                        Map<?, ?> logProofMap, String xHex, BigIntIndexMap D, BigIntIndexMap Dhat,
+                        BigIntIndexMap F, BigIntIndexMap Fhat, ECPoint Gamma) {
             this.senderId = senderId;
             this.gammaHex = gammaHex;
             this.dMap = dMap;
@@ -468,7 +470,7 @@ public final class CggmpSignaturePresignHandler {
             this.Gamma = Gamma;
         }
     }
-    
+
     /**
      * 验证 R2 证明 - 可并行执行，只读操作
      */
@@ -479,11 +481,11 @@ public final class CggmpSignaturePresignHandler {
         ECPoint Y = task.presignY.get(senderId);
         ECPoint B1 = task.presignB1.get(senderId);
         ECPoint B2 = task.presignB2.get(senderId);
-        
+
         if (!PresignProofs.verifyLogProof(logProof, Secp256k1CurveUtils.G(), Secp256k1CurveUtils.G(), ctx.Gamma, Y, B1, B2, verifyCtx)) {
             return R2VerifyResult.failure(senderId, "Invalid PiLog proof (R2)");
         }
-        
+
         BigInteger curveOrder = Secp256k1CurveUtils.n();
         ECPoint expectedX = null;
         BigInteger lambdaSender = CggmpProtocolUtils.computeSignatureLagrange(task, senderId, curveOrder);
@@ -503,7 +505,7 @@ public final class CggmpSignaturePresignHandler {
         if (X_i_resolved == null) {
             return R2VerifyResult.failure(senderId, "Missing X in presign R2");
         }
-        
+
         if (ctx.affGMap != null && ctx.affGhatMap != null) {
             AffGProofMap proofs = AffGProofMap.of(decodeAffGProofMap(ctx.affGMap));
             AffGProofMap proofsHat = AffGProofMap.of(decodeAffGProofMap(ctx.affGhatMap));
@@ -517,64 +519,63 @@ public final class CggmpSignaturePresignHandler {
             PaillierEncryption.PublicKey N0 = task.paillier.getPublicKeyInfo();
             PaillierEncryption.PublicKey N1 = task.peerPaillierKeys.get(senderId);
             ECPoint X_i = X_i_resolved;
-            
+
             boolean hasAffG = K_self != null && D_ji != null && F_ji != null && N1 != null;
             boolean hasAffGHat = K_self != null && Dhat_ji != null && Fhat_ji != null && N1 != null;
-            
+
             if (hasAffG && hasAffGHat) {
-                PresignProofs.AffGVerifyResult[] affGResults = new PresignProofs.AffGVerifyResult[2];
-                Thread affGThread = new Thread(() -> {
-                    affGResults[0] = PresignProofs.verifyAffGProofDetailedNegY(
-                            proof,
-                            Secp256k1CurveUtils.G(),
-                            ctx.Gamma,
-                            N0.n(),
-                            N1.n(),
-                            K_self,
-                            D_ji,
-                            F_ji,
-                            svc.proofKappa,
-                            svc.proofEpsBits,
-                            CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2")
-                    );
-                });
-                Thread affGHatThread = new Thread(() -> {
-                    affGResults[1] = PresignProofs.verifyAffGProofDetailedNegY(
-                            proofHat,
-                            Secp256k1CurveUtils.G(),
-                            X_i,
-                            N0.n(),
-                            N1.n(),
-                            K_self,
-                            Dhat_ji,
-                            Fhat_ji,
-                            svc.proofKappa,
-                            svc.proofEpsBits,
-                            CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2H")
-                    );
-                });
-                
-                affGThread.start();
-                affGHatThread.start();
-                
+                ExecutorService executor = com.example.mpc.common.util.ThreadPoolUtil.getPresignThreadPool();
+
+                CompletableFuture<PresignProofs.AffGVerifyResult> affGFuture = CompletableFuture.supplyAsync(() ->
+                        PresignProofs.verifyAffGProofDetailedNegY(
+                                proof,
+                                Secp256k1CurveUtils.G(),
+                                ctx.Gamma,
+                                N0.n(),
+                                N1.n(),
+                                K_self,
+                                D_ji,
+                                F_ji,
+                                svc.proofKappa,
+                                svc.proofEpsBits,
+                                CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2")
+                        ), executor);
+
+                CompletableFuture<PresignProofs.AffGVerifyResult> affGHatFuture = CompletableFuture.supplyAsync(() ->
+                        PresignProofs.verifyAffGProofDetailedNegY(
+                                proofHat,
+                                Secp256k1CurveUtils.G(),
+                                X_i,
+                                N0.n(),
+                                N1.n(),
+                                K_self,
+                                Dhat_ji,
+                                Fhat_ji,
+                                svc.proofKappa,
+                                svc.proofEpsBits,
+                                CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2H")
+                        ), executor);
+
+                PresignProofs.AffGVerifyResult affGResult;
+                PresignProofs.AffGVerifyResult affGHatResult;
                 try {
-                    affGThread.join();
-                    affGHatThread.join();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return R2VerifyResult.failure(senderId, "Verification interrupted");
+                    affGResult = affGFuture.join();
+                    affGHatResult = affGHatFuture.join();
+                } catch (Exception e) {
+                    logger.error("AffG verification failed for sender {}: {}", senderId, e.getMessage());
+                    return R2VerifyResult.failure(senderId, "AffG verification failed: " + e.getMessage());
                 }
-                
-                if (!affGResults[0].ok()) {
+
+                if (!affGResult.ok()) {
                     logger.warn("Invalid PiAffG proof from node {}: index={}, eq1={}, eq2={}, eq3={}, zInRange={}, zPrimeInRange={}",
-                            senderId, affGResults[0].index(), affGResults[0].eq1(), affGResults[0].eq2(),
-                            affGResults[0].eq3(), affGResults[0].zInRange(), affGResults[0].zPrimeInRange());
+                            senderId, affGResult.index(), affGResult.eq1(), affGResult.eq2(),
+                            affGResult.eq3(), affGResult.zInRange(), affGResult.zPrimeInRange());
                     return R2VerifyResult.failure(senderId, "Invalid PiAffG proof");
                 }
-                if (!affGResults[1].ok()) {
+                if (!affGHatResult.ok()) {
                     logger.warn("Invalid PiAffG proof (hat) from node {}: index={}, eq1={}, eq2={}, eq3={}, zInRange={}, zPrimeInRange={}",
-                            senderId, affGResults[1].index(), affGResults[1].eq1(), affGResults[1].eq2(),
-                            affGResults[1].eq3(), affGResults[1].zInRange(), affGResults[1].zPrimeInRange());
+                            senderId, affGHatResult.index(), affGHatResult.eq1(), affGHatResult.eq2(),
+                            affGHatResult.eq3(), affGHatResult.zInRange(), affGHatResult.zPrimeInRange());
                     return R2VerifyResult.failure(senderId, "Invalid PiAffG proof (hat)");
                 }
             } else if (hasAffG) {
@@ -619,20 +620,20 @@ public final class CggmpSignaturePresignHandler {
                 }
             }
         }
-        
+
         if (!ctx.D.containsKey(svc.nodeId) || !ctx.Dhat.containsKey(svc.nodeId)) {
             logger.warn("Presign R2 missing payload for receiver {} from sender {} (D or Dhat not found)", svc.nodeId, senderId);
             return R2VerifyResult.failure(senderId, "Missing payload");
         }
-        
+
         BigInteger D_ji = ctx.D.get(svc.nodeId).orElse(null);
         BigInteger Dhat_ji = ctx.Dhat.get(svc.nodeId).orElse(null);
         BigInteger F_ji = ctx.F.containsKey(svc.nodeId) ? ctx.F.get(svc.nodeId).orElse(null) : null;
         BigInteger Fhat_ji = ctx.Fhat.containsKey(svc.nodeId) ? ctx.Fhat.get(svc.nodeId).orElse(null) : null;
-        
+
         return R2VerifyResult.success(senderId, D_ji, Dhat_ji, F_ji, Fhat_ji, null);
     }
-    
+
     /**
      * 等待所有 R2 验证完成并更新共享状态
      */
@@ -640,7 +641,7 @@ public final class CggmpSignaturePresignHandler {
         if (task.r2VerifyLatch == null) {
             return;
         }
-        
+
         try {
             task.r2VerifyLatch.await();
             logger.info("R2 verification completed for task {}, processing {} results", task.taskId, task.r2VerifyResults.size());
@@ -648,28 +649,28 @@ public final class CggmpSignaturePresignHandler {
             Thread.currentThread().interrupt();
             return;
         }
-        
+
         for (R2VerifyResult result : task.r2VerifyResults.values()) {
             if (!result.success) {
                 CggmpProtocolUtils.fireAndForget(
-                    svc.broadcastComplaint(task, result.senderId, result.errorMessage, Map.of()),
-                    logger, "CGGMP_PRESIGN_COMPLAINT"
+                        svc.broadcastComplaint(task, result.senderId, result.errorMessage, Map.of()),
+                        logger, "CGGMP_PRESIGN_COMPLAINT"
                 );
                 svc.failSignatureTask(task, result.errorMessage);
                 return;
             }
-            
+
             task.presignD.put(result.senderId, result.D_ji);
             task.presignDhat.put(result.senderId, result.Dhat_ji);
             if (result.F_ji != null) task.presignF.put(result.senderId, result.F_ji);
             if (result.Fhat_ji != null) task.presignFhat.put(result.senderId, result.Fhat_ji);
-            
+
             if (task.presignR2Received.putIfAbsent(result.senderId, Boolean.TRUE) == null
                     && task.presignR2Latch.getCount() > 0) {
                 task.presignR2Latch.countDown();
             }
         }
-        
+
         for (Map.Entry<Integer, Map<String, Object>> entry : task.pendingPresignR3.entrySet()) {
             processPresignR3(task, entry.getKey(), entry.getValue());
         }

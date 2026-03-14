@@ -158,7 +158,7 @@ public final class PresignProofs {
         BigInteger q = Secp256k1CurveUtils.n();
         BigInteger rangeBound = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps + 1);
         long loop1Start = System.nanoTime();
-        
+
         java.util.stream.IntStream.range(0, effectiveKappa).parallel().forEach(i -> {
             SecureRandom rnd = SecureRandomUtils.getInstance();
             alphaArr[i] = randomSigned(rangeBound, rnd);
@@ -172,43 +172,43 @@ public final class PresignProofs {
         long batchStart = System.nanoTime();
         BigInteger onePlusN0 = BigInteger.ONE.add(N0);
         BigInteger onePlusN1 = BigInteger.ONE.add(N1);
-        
+
         BigInteger[] rPowN0 = BigIntegerUtils.batchModPow(rArr, N0, N0sq);
         BigInteger[] sPowN1 = BigIntegerUtils.batchModPow(sArr, N1, N1sq);
-        
+
         BigInteger[] betaForN0Arr = new BigInteger[effectiveKappa];
         for (int i = 0; i < effectiveKappa; i++) {
             betaForN0Arr[i] = negY ? betaArr[i].negate() : betaArr[i];
         }
-        
+
         BigInteger[] onePlusN0Arr = new BigInteger[effectiveKappa];
         BigInteger[] onePlusN1Arr = new BigInteger[effectiveKappa];
         for (int i = 0; i < effectiveKappa; i++) {
             onePlusN0Arr[i] = onePlusN0;
             onePlusN1Arr[i] = onePlusN1;
         }
-        
+
         BigInteger[] onePlusN0PowBeta = BigIntegerUtils.batchModPow(onePlusN0Arr, betaForN0Arr, N0sq);
         BigInteger[] onePlusN1PowBeta = BigIntegerUtils.batchModPow(onePlusN1Arr, betaArr, N1sq);
         BigInteger[] CPowAlpha = BigIntegerUtils.batchModPow(
-            java.util.Collections.nCopies(effectiveKappa, C).toArray(new BigInteger[0]),
-            alphaArr,
-            N0sq
+                java.util.Collections.nCopies(effectiveKappa, C).toArray(new BigInteger[0]),
+                alphaArr,
+                N0sq
         );
-        
+
         BigInteger[] AjArr = new BigInteger[effectiveKappa];
         BigInteger[] BjArr = new BigInteger[effectiveKappa];
-        
+
         java.util.stream.IntStream.range(0, effectiveKappa).parallel().forEach(i -> {
             AjArr[i] = BigIntegerUtils.modMul(
-                BigIntegerUtils.modMul(CPowAlpha[i], onePlusN0PowBeta[i], N0sq),
-                rPowN0[i],
-                N0sq
+                    BigIntegerUtils.modMul(CPowAlpha[i], onePlusN0PowBeta[i], N0sq),
+                    rPowN0[i],
+                    N0sq
             );
-            
+
             BjArr[i] = BigIntegerUtils.modMul(onePlusN1PowBeta[i], sPowN1[i], N1sq);
         });
-        
+
         logger.debug("PiAffG modPow computed in {} ms",
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
@@ -216,7 +216,7 @@ public final class PresignProofs {
         java.util.stream.IntStream.range(0, effectiveKappa).parallel().forEach(i -> {
             Rarr[i] = ecMulSigned(g, alphaArr[i]).normalize();
         });
-        
+
         List<BigInteger> A = new ArrayList<>(effectiveKappa);
         List<BigInteger> B = new ArrayList<>(effectiveKappa);
         for (int i = 0; i < effectiveKappa; i++) {
@@ -231,12 +231,12 @@ public final class PresignProofs {
         boolean[] e = challengeBits("PI_AFFG", context, effectiveKappa, A, B, R);
         long challengeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - challengeStart);
         logger.debug("PiAffG challenge computed in {} ms", challengeMs);
-        
+
         BigInteger rhoPow0 = BigInteger.ONE;
         BigInteger rhoPow1 = BigIntegerUtils.modPow(rho, BigInteger.ONE, N0);
         BigInteger muPow0 = BigInteger.ONE;
         BigInteger muPow1 = BigIntegerUtils.modPow(mu, BigInteger.ONE, N1);
-        
+
         long loop2Start = System.nanoTime();
         for (int i = 0; i < effectiveKappa; i++) {
             BigInteger ei = e[i] ? BigInteger.ONE : BigInteger.ZERO;
@@ -343,16 +343,16 @@ public final class PresignProofs {
         boolean[] e = challengeBits("PI_AFFG", context, n, proof.A(), proof.B(), proof.R());
         BigInteger q = Secp256k1CurveUtils.n();
         BigInteger rangeBound = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps + 1);
-        
+
         BigInteger onePlusN0 = BigInteger.ONE.add(N0);
         BigInteger onePlusN1 = BigInteger.ONE.add(N1);
-        
+
         boolean[] eq1Results = new boolean[n];
         boolean[] eq2Results = new boolean[n];
         boolean[] eq3Results = new boolean[n];
         boolean[] zInRangeResults = new boolean[n];
         boolean[] zPrimeInRangeResults = new boolean[n];
-        
+
         java.util.stream.IntStream.range(0, n).parallel().forEach(i -> {
             BigInteger ei = e[i] ? BigInteger.ONE : BigInteger.ZERO;
             BigInteger zi = proof.z().get(i);
@@ -362,13 +362,13 @@ public final class PresignProofs {
 
             BigInteger zPrimeForN0 = negY ? zpi.negate() : zpi;
             BigInteger left1 = BigIntegerUtils.modMul(
-                BigIntegerUtils.modMul(
-                    BigIntegerUtils.powSigned(C, zi, N0sq),
-                    BigIntegerUtils.powSigned(onePlusN0, zPrimeForN0, N0sq),
+                    BigIntegerUtils.modMul(
+                            BigIntegerUtils.powSigned(C, zi, N0sq),
+                            BigIntegerUtils.powSigned(onePlusN0, zPrimeForN0, N0sq),
+                            N0sq
+                    ),
+                    BigIntegerUtils.modPow(wi, N0, N0sq),
                     N0sq
-                ),
-                BigIntegerUtils.modPow(wi, N0, N0sq),
-                N0sq
             );
             BigInteger right1 = BigIntegerUtils.modMul(proof.A().get(i), BigIntegerUtils.modPow(D, ei, N0sq), N0sq);
             eq1Results[i] = left1.equals(right1);
@@ -378,9 +378,9 @@ public final class PresignProofs {
             eq2Results[i] = left2.equals(right2);
 
             BigInteger left3 = BigIntegerUtils.modMul(
-                BigIntegerUtils.powSigned(onePlusN1, zpi, N1sq),
-                BigIntegerUtils.modPow(li, N1, N1sq),
-                N1sq
+                    BigIntegerUtils.powSigned(onePlusN1, zpi, N1sq),
+                    BigIntegerUtils.modPow(li, N1, N1sq),
+                    N1sq
             );
             BigInteger right3 = BigIntegerUtils.modMul(proof.B().get(i), BigIntegerUtils.modPow(Y, ei, N1sq), N1sq);
             eq3Results[i] = left3.equals(right3);
@@ -388,7 +388,7 @@ public final class PresignProofs {
             zInRangeResults[i] = zi.abs().compareTo(rangeBound) <= 0;
             zPrimeInRangeResults[i] = zpi.abs().compareTo(rangeBound) <= 0;
         });
-        
+
         for (int i = 0; i < n; i++) {
             if (!(eq1Results[i] && eq2Results[i] && eq3Results[i] && zInRangeResults[i] && zPrimeInRangeResults[i])) {
                 return new AffGVerifyResult(false, i, eq1Results[i], eq2Results[i], eq3Results[i], zInRangeResults[i], zPrimeInRangeResults[i]);
@@ -495,21 +495,21 @@ public final class PresignProofs {
         BigInteger r = BigIntegerUtils.randomZnStar(N0, rnd);
 
         BigInteger S = BigIntegerUtils.modMul(
-            BigIntegerUtils.powSigned(s, x, hatN),
-            BigIntegerUtils.powSigned(t, mu, hatN),
-            hatN
+                BigIntegerUtils.powSigned(s, x, hatN),
+                BigIntegerUtils.powSigned(t, mu, hatN),
+                hatN
         );
         BigInteger D = BigIntegerUtils.modMul(
-            BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), alpha, N0sq),
-            BigIntegerUtils.modPow(r, N0, N0sq),
-            N0sq
+                BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), alpha, N0sq),
+                BigIntegerUtils.modPow(r, N0, N0sq),
+                N0sq
         );
         ECPoint Y = A.multiply(beta).add(g.multiply(alpha)).normalize();
         ECPoint Z = g.multiply(beta).normalize();
         BigInteger T = BigIntegerUtils.modMul(
-            BigIntegerUtils.powSigned(s, alpha, hatN),
-            BigIntegerUtils.powSigned(t, gamma, hatN),
-            hatN
+                BigIntegerUtils.powSigned(s, alpha, hatN),
+                BigIntegerUtils.powSigned(t, gamma, hatN),
+                hatN
         );
 
         BigInteger e = challengeSignedBounded("PI_ENC_ELG", effectiveEps, context, publicKey.n(), A, B, X, S, T, D, Y, Z);
@@ -560,9 +560,9 @@ public final class PresignProofs {
         BigInteger e = challengeSignedBounded("PI_ENC_ELG", effectiveEps, context, publicKey.n(), A, B, X, proof.S(), proof.T(), proof.D(), proof.Y(), proof.Z());
 
         BigInteger left1 = BigIntegerUtils.modMul(
-            BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), proof.z1(), N0sq),
-            BigIntegerUtils.modPow(proof.z2(), N0, N0sq),
-            N0sq
+                BigIntegerUtils.powSigned(BigInteger.ONE.add(N0), proof.z1(), N0sq),
+                BigIntegerUtils.modPow(proof.z2(), N0, N0sq),
+                N0sq
         );
         BigInteger right1 = BigIntegerUtils.modMul(proof.D(), BigIntegerUtils.powSigned(C, e, N0sq), N0sq);
         boolean eq1 = left1.equals(right1);
@@ -576,9 +576,9 @@ public final class PresignProofs {
         boolean eq3 = left3.equals(right3);
 
         BigInteger left4 = BigIntegerUtils.modMul(
-            BigIntegerUtils.powSigned(s, proof.z1(), hatN),
-            BigIntegerUtils.powSigned(t, proof.z3(), hatN),
-            hatN
+                BigIntegerUtils.powSigned(s, proof.z1(), hatN),
+                BigIntegerUtils.powSigned(t, proof.z3(), hatN),
+                hatN
         );
         BigInteger right4 = BigIntegerUtils.modMul(proof.T(), BigIntegerUtils.powSigned(proof.S(), e, hatN), hatN);
         boolean eq4 = left4.equals(right4);
@@ -645,32 +645,32 @@ public final class PresignProofs {
         BigInteger[] alphaArr = alpha.toArray(new BigInteger[0]);
         BigInteger[] betaArr = beta.toArray(new BigInteger[0]);
         BigInteger[] rArr = r.toArray(new BigInteger[0]);
-        
+
         BigInteger onePlusN0 = N0.add(BigInteger.ONE);
-        
+
         for (int i = 0; i < effectiveKappa; i++) {
             BigInteger Ai = BigIntegerUtils.modMul(
-                BigIntegerUtils.modMul(
-                    BigIntegerUtils.powSigned(K, alphaArr[i].negate(), N0sq),
-                    BigIntegerUtils.powSigned(onePlusN0, betaArr[i], N0sq),
+                    BigIntegerUtils.modMul(
+                            BigIntegerUtils.powSigned(K, alphaArr[i].negate(), N0sq),
+                            BigIntegerUtils.powSigned(onePlusN0, betaArr[i], N0sq),
+                            N0sq
+                    ),
+                    BigIntegerUtils.modPow(rArr[i], N0, N0sq),
                     N0sq
-                ),
-                BigIntegerUtils.modPow(rArr[i], N0, N0sq),
-                N0sq
             );
             A.add(Ai);
             B.add(ecMulSigned(g, betaArr[i]).normalize());
             C.add(ecMulSigned(g, alphaArr[i]).normalize());
         }
-        
+
         logger.debug("PiDec A values computed in {} ms",
                 TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
 
         boolean[] e = challengeBits("PI_DEC", context, effectiveKappa, A, B, C);
-        
+
         BigInteger rhoPow0 = BigInteger.ONE;
         BigInteger rhoPow1 = BigIntegerUtils.modPow(rho, BigInteger.ONE, N0);
-        
+
         for (int i = 0; i < effectiveKappa; i++) {
             BigInteger ei = e[i] ? BigInteger.ONE : BigInteger.ZERO;
             BigInteger zi = alpha.get(i).add(ei.multiply(x));
@@ -719,7 +719,7 @@ public final class PresignProofs {
         BigInteger q = Secp256k1CurveUtils.n();
         BigInteger rangeBound = BigInteger.ONE.shiftLeft(q.bitLength() + effectiveEps);
         BigInteger onePlusN0 = BigInteger.ONE.add(N0);
-        
+
         boolean[] results = new boolean[n];
         java.util.stream.IntStream.range(0, n).parallel().forEach(i -> {
             BigInteger ei = e[i] ? BigInteger.ONE : BigInteger.ZERO;
@@ -727,13 +727,13 @@ public final class PresignProofs {
             BigInteger wi = proof.w().get(i);
             BigInteger nui = proof.nu().get(i);
             BigInteger left1 = BigIntegerUtils.modMul(
-                BigIntegerUtils.modMul(
-                    BigIntegerUtils.powSigned(onePlusN0, wi, N0sq),
-                    BigIntegerUtils.modPow(nui, N0, N0sq),
+                    BigIntegerUtils.modMul(
+                            BigIntegerUtils.powSigned(onePlusN0, wi, N0sq),
+                            BigIntegerUtils.modPow(nui, N0, N0sq),
+                            N0sq
+                    ),
+                    BigIntegerUtils.powSigned(K, zi.negate(), N0sq),
                     N0sq
-                ),
-                BigIntegerUtils.powSigned(K, zi.negate(), N0sq),
-                N0sq
             );
             BigInteger right1 = BigIntegerUtils.modMul(proof.A().get(i), BigIntegerUtils.modPow(D, ei, N0sq), N0sq);
             if (!left1.equals(right1)) {
@@ -763,10 +763,10 @@ public final class PresignProofs {
                 results[i] = false;
                 return;
             }
-            
+
             results[i] = true;
         });
-        
+
         for (int i = 0; i < n; i++) {
             if (!results[i]) return false;
         }

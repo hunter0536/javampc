@@ -124,32 +124,32 @@ public final class BiPrimeProofGenerator {
             byte[] ctx
     ) {
         List<Round> rounds = new ArrayList<>(blumRounds);
-        
+
         // Batch optimization: collect all y values for batch processing
         BigInteger[] yValues = new BigInteger[blumRounds];
-        
+
         // Step 1: Generate all y values
         for (int i = 0; i < blumRounds; i++) {
             yValues[i] = genY(N, w, ctx, i);
         }
-        
+
         // Step 2: Batch compute y mod p and y mod q
         BigInteger[] basesP = BigIntegerUtils.batchMod(yValues, p);
         BigInteger[] basesQ = BigIntegerUtils.batchMod(yValues, q);
-        
+
         // Step 3: Use BigIntegerUtils batch modPow for better performance
         BigInteger[] zps = BigIntegerUtils.batchModPow(basesP, eP, p);
         BigInteger[] zqs = BigIntegerUtils.batchModPow(basesQ, eQ, q);
-        
+
         // Step 4: Batch compute jacobi symbols
         int[] yPs = BigIntegerUtils.batchJacobi(yValues, p);
         int[] yQs = BigIntegerUtils.batchJacobi(yValues, q);
-        
+
         BigInteger[] zValues = new BigInteger[blumRounds];
         BigInteger[] rhsValues = new BigInteger[blumRounds];
         boolean[] aBits = new boolean[blumRounds];
         boolean[] bBits = new boolean[blumRounds];
-        
+
         // Step 3: Process results and compute remaining operations
         for (int i = 0; i < blumRounds; i++) {
             var y = yValues[i];
@@ -180,26 +180,26 @@ public final class BiPrimeProofGenerator {
             var rhs = y;
             if (bBit) rhs = BigIntegerUtils.modMul(rhs, w, N);
             if (aBit) rhs = N.subtract(rhs).mod(N);
-            
+
             zValues[i] = z;
             rhsValues[i] = rhs;
             aBits[i] = aBit;
             bBits[i] = bBit;
         }
-        
+
         // Step 4: Batch compute xp and xq
         BigInteger[] rhsP = BigIntegerUtils.batchMod(rhsValues, p);
         BigInteger[] rhsQ = BigIntegerUtils.batchMod(rhsValues, q);
-        
+
         BigInteger[] xps = BigIntegerUtils.batchModPow(rhsP, inv4p, p);
         BigInteger[] xqs = BigIntegerUtils.batchModPow(rhsQ, inv4q, q);
-        
+
         // Step 5: Create rounds
         for (int i = 0; i < blumRounds; i++) {
             var x = BigIntegerUtils.crt(xps[i], p, xqs[i], q, N);
             rounds.add(new Round(x, zValues[i], aBits[i], bBits[i]));
         }
-        
+
         return rounds;
     }
 

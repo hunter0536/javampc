@@ -112,16 +112,16 @@ tasks.register('benchmarkGMP', JavaExec) {
 tasks.register('compileNative', DefaultTask) {
     group = 'build'
     description = 'Compile GMP JNI native library (incremental)'
-    
+
     inputs.file('src/main/resources/native/gmp/mpc_gmp.c')
-        .skipWhenEmpty()
-        .optional()
+            .skipWhenEmpty()
+            .optional()
     outputs.file('src/main/resources/native/gmp/libmpc_gmp.dylib')
-    
+
     doLast {
         def nativeSrc = file('src/main/resources/native/gmp/mpc_gmp.c')
         def nativeLib = file('src/main/resources/native/gmp/libmpc_gmp.dylib')
-        
+
         if (nativeSrc.exists()) {
             logger.lifecycle("Compiling native library from ${nativeSrc.name}")
             exec {

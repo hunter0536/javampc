@@ -188,7 +188,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             return taskId;
         } catch (RuntimeException e) {
             if (isHotWallet) {
-            hotWalletSignatureLocks.get(groupPublicKey).decrementAndGet();
+                hotWalletSignatureLocks.get(groupPublicKey).decrementAndGet();
             } else {
                 signatureInProgress.set(false);
             }
@@ -201,8 +201,8 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public void createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants, String auxTaskId, boolean isHotWallet) {
-        logger.debug("createSignatureTaskWithIdAndGroupKey called: taskId={}, isHotWallet={}, signatureInProgress={}", 
-            signatureTaskId, isHotWallet, signatureInProgress.get());
+        logger.debug("createSignatureTaskWithIdAndGroupKey called: taskId={}, isHotWallet={}, signatureInProgress={}",
+                signatureTaskId, isHotWallet, signatureInProgress.get());
         if (!isHotWallet) {
             if (!signatureInProgress.compareAndSet(false, true)) {
                 logger.warn("createSignatureTaskWithIdAndGroupKey FAILED: signatureInProgress is true, taskId={}", signatureTaskId);
@@ -213,15 +213,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             int maxConcurrent = 10;
             if (lock.incrementAndGet() > maxConcurrent) {
                 lock.decrementAndGet();
-                logger.warn("createSignatureTaskWithIdAndGroupKey FAILED: too many concurrent tasks, taskId={}, groupPublicKey={}", 
-                    signatureTaskId, groupPublicKey);
+                logger.warn("createSignatureTaskWithIdAndGroupKey FAILED: too many concurrent tasks, taskId={}, groupPublicKey={}",
+                        signatureTaskId, groupPublicKey);
                 throw new RuntimeException("Too many concurrent signature tasks for hot wallet: " + groupPublicKey);
             }
         }
 
         AuxInfo auxInfo;
         boolean isInitiator = (initiatorId == nodeId);
-        
+
         if (isInitiator) {
             auxInfo = auxInfoDao.loadLatestSync(nodeId);
             if (auxInfo == null) {
@@ -239,7 +239,7 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 }
                 throw new RuntimeException("Missing auxTaskId from initiator. Task terminated for security.");
             }
-            
+
             auxInfo = auxInfoDao.loadLatestSync(nodeId);
             if (auxInfo == null) {
                 if (!isHotWallet) {
@@ -247,15 +247,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
                 }
                 throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
             }
-            
+
             if (!auxTaskId.equals(auxInfo.getTaskId())) {
-                logger.error("Aux task ID mismatch! Received={}, Local latest={}, terminating task {}", 
-                    auxTaskId, auxInfo.getTaskId(), signatureTaskId);
+                logger.error("Aux task ID mismatch! Received={}, Local latest={}, terminating task {}",
+                        auxTaskId, auxInfo.getTaskId(), signatureTaskId);
                 if (!isHotWallet) {
                     signatureInProgress.set(false);
                 }
-                throw new RuntimeException("Aux task ID mismatch. Expected: " + auxTaskId + 
-                    ", Local latest: " + auxInfo.getTaskId() + ". Task terminated for security.");
+                throw new RuntimeException("Aux task ID mismatch. Expected: " + auxTaskId +
+                        ", Local latest: " + auxInfo.getTaskId() + ". Task terminated for security.");
             }
             logger.info("Participant verified aux task ID: received={}, local latest={}", auxTaskId, auxInfo.getTaskId());
         }
@@ -686,13 +686,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public String signWithPresignature(String groupPublicKey, String message, Presignature presignature) {
-        logger.info("signWithPresignature called: groupPublicKey={}, message={}, presignature={}", 
-            groupPublicKey, message, presignature != null ? "present" : "null");
-        
+        logger.info("signWithPresignature called: groupPublicKey={}, message={}, presignature={}",
+                groupPublicKey, message, presignature != null ? "present" : "null");
+
         if (!nodeService.areAllPeerConnectionsActive()) {
             throw new RuntimeException("Network not ready: not all peer connections are active");
         }
-        
+
         AtomicInteger lock = hotWalletSignatureLocks.computeIfAbsent(groupPublicKey, k -> new AtomicInteger(0));
         int maxConcurrent = 10;
         if (lock.incrementAndGet() > maxConcurrent) {
@@ -707,14 +707,14 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
 
             taskId = "sign-with-presign-" + UUID.randomUUID().toString();
             CggmpSignatureTask task = new CggmpSignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId, null, true);
-            
+
             AuxInfo auxInfo = auxInfoDao.loadLatestSync(nodeId);
             if (auxInfo == null) {
                 throw new RuntimeException("Missing auxiliary info. Run AUX provisioning first.");
             }
             task.auxTaskId = auxInfo.getTaskId();
             initTaskPaillierAndZkSetup(task, auxInfo);
-            
+
             task.presignature = presignature;
             if (presignature.deltaTilde() != null) {
                 task.presignDeltaTilde.putAll(presignature.deltaTilde());
@@ -722,13 +722,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             if (presignature.sTilde() != null) {
                 task.presignSTilde.putAll(presignature.sTilde());
             }
-            
+
             task.groupPublicKeyPoint = com.example.mpc.cggmp.util.Secp256k1CurveUtils.decodePoint(
-                com.example.mpc.common.util.HexUtils.hexToBytes(fixedGroupPublicKey));
-            
+                    com.example.mpc.common.util.HexUtils.hexToBytes(fixedGroupPublicKey));
+
             task.messageHash = CggmpProtocolUtils.hashMessage(task.message);
             logger.info("Computed messageHash for presign signature (redacted)");
-            
+
             signatureTasks.put(taskId, task);
 
             if (!task.start()) {
@@ -744,15 +744,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             String signature;
             try {
                 onlineHandler.broadcastOnlineInit(task).get();
-                
+
                 for (int i = 0; i < task.participants.size() - 1; i++) {
                     task.offlineReadyLatch.countDown();
                 }
                 logger.info("Initiator countdown offlineReadyLatch for hot wallet task {}", taskId);
-                
+
                 waitForLatchAsync(task.offlineReadyLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "hot wallet participants ready").get();
                 logger.info("All participants ready for hot wallet task {}", taskId);
-                
+
                 onlineHandler.runOnlinePhase(task).get();
                 signature = getSignatureString(taskId);
                 if (signature == null && task.signature != null) {

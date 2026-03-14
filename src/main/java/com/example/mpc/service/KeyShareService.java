@@ -14,10 +14,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class KeyShareService {
     private static final Logger logger = LoggerFactory.getLogger(KeyShareService.class);
-    
+
     @Autowired
     private KeyShareDao keyShareDao;
-    
+
     private final Map<String, KeyShare> cachedHotWalletKeyShares = new ConcurrentHashMap<>();
     private volatile long cachedKeyShareTime = 0;
     private static final long CACHE_VALID_TIME_MS = 5000;
@@ -29,14 +29,14 @@ public class KeyShareService {
     public KeyShare getActiveKeyShare(int nodeId) {
         return keyShareDao.findLatestSync(nodeId);
     }
-    
+
     public KeyShare getActiveHotWalletKeyShare(int nodeId) {
         long now = System.currentTimeMillis();
         if (!cachedHotWalletKeyShares.isEmpty() && (now - cachedKeyShareTime) < CACHE_VALID_TIME_MS) {
             logger.debug("Using cached hot wallet key shares, size: {}", cachedHotWalletKeyShares.size());
             return cachedHotWalletKeyShares.values().iterator().next();
         }
-        
+
         List<KeyShare> keyShares = keyShareDao.findAllHotWalletSync(nodeId);
         if (keyShares != null && !keyShares.isEmpty()) {
             cachedHotWalletKeyShares.clear();
@@ -49,14 +49,14 @@ public class KeyShareService {
         }
         return null;
     }
-    
+
     public Map<String, KeyShare> getAllActiveHotWalletKeyShares(int nodeId) {
         long now = System.currentTimeMillis();
         if (!cachedHotWalletKeyShares.isEmpty() && (now - cachedKeyShareTime) < CACHE_VALID_TIME_MS) {
             logger.debug("Using cached hot wallet key shares, size: {}", cachedHotWalletKeyShares.size());
             return cachedHotWalletKeyShares;
         }
-        
+
         List<KeyShare> keyShares = keyShareDao.findAllHotWalletSync(nodeId);
         if (keyShares != null && !keyShares.isEmpty()) {
             cachedHotWalletKeyShares.clear();

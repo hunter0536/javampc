@@ -109,18 +109,18 @@ public class CggmpDkgService implements NodeService.MessageHandler {
 
     public String createDkgTask(boolean isHotWallet) {
         if (isHotWallet) {
-                int hotWalletCount = keyShareDao.countHotWalletSync(nodeId);
-                if (hotWalletCount >= 1) {
-                    throw new RuntimeException("Already have 1 hot wallet key share, cannot create new hot wallet DKG task");
-                }
+            int hotWalletCount = keyShareDao.countHotWalletSync(nodeId);
+            if (hotWalletCount >= 1) {
+                throw new RuntimeException("Already have 1 hot wallet key share, cannot create new hot wallet DKG task");
             }
-        
+        }
+
         int auxCount = auxInfoDao.countAuxSync(nodeId);
         if (auxCount == 0) {
             logger.warn("No AUX data available. Please run AUX provisioning first.");
             throw new MpcException(ErrorCode.NO_AUX_DATA_AVAILABLE);
         }
-        
+
         String taskId = UUID.randomUUID().toString();
         String executionId = UUID.randomUUID().toString();
         CggmpDkgTask task = createDkgTaskInternal(taskId, executionId, nodesCount, threshold, null, nodeId, isHotWallet);
@@ -181,16 +181,16 @@ public class CggmpDkgService implements NodeService.MessageHandler {
         }
 
         CggmpDkgTask task = new CggmpDkgTask(taskId, executionId, nodesCount, threshold, participants, initiatorId, isHotWallet);
-        
+
         BigInteger p = new BigInteger(auxInfo.getPaillierP(), 16);
         BigInteger q = new BigInteger(auxInfo.getPaillierQ(), 16);
         BigInteger hatN = new BigInteger(auxInfo.getPedersenHatN(), 16);
         BigInteger s = new BigInteger(auxInfo.getPedersenS(), 16);
         BigInteger t = new BigInteger(auxInfo.getPedersenT(), 16);
-        
+
         task.paillier = new PaillierEncryption(p, q);
         task.zkSetup = new ZKSetup(hatN, s, t);
-        
+
         task.evalPowers = CggmpDkgUtils.precomputeEvalPowers(CggmpDkgUtils.getIndexValue(task, nodeId), threshold);
         logger.info("Loaded AUX data for DKG task: {}, paillier bits: {}", taskId, task.paillier.getBitLength());
         return task;

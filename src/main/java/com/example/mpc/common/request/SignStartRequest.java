@@ -5,11 +5,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public class SignStartRequest {
     private String groupPublicKey;
     private String message;
-    
+
     @JsonProperty("isHotWallet")
     private boolean isHotWallet;
 
-    public SignStartRequest() {}
+    public SignStartRequest() {
+    }
 
     public SignStartRequest(String groupPublicKey, String message) {
         this.groupPublicKey = groupPublicKey;

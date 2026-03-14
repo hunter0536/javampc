@@ -15,15 +15,16 @@ public class PresignData implements java.io.Serializable {
     private static final Logger logger = LoggerFactory.getLogger(PresignData.class);
 
     private String groupPublicKey;
-    private String gamma;       
-    private String kTilde;      
-    private String chiTilde;    
+    private String gamma;
+    private String kTilde;
+    private String chiTilde;
     private long createdAt;
     private String presignId;
     private Map<Integer, String> deltaTilde;
     private Map<Integer, String> sTilde;
 
-    public PresignData() {}
+    public PresignData() {
+    }
 
     public PresignData(String groupPublicKey, Presignature presignature) {
         this.groupPublicKey = groupPublicKey;
@@ -32,7 +33,7 @@ public class PresignData implements java.io.Serializable {
         this.chiTilde = presignature.chiTilde().toString(16);
         this.createdAt = System.currentTimeMillis();
         this.presignId = presignature.presignId() != null ? presignature.presignId() : java.util.UUID.randomUUID().toString();
-        
+
         if (presignature.deltaTilde() != null) {
             this.deltaTilde = new HashMap<>();
             for (Map.Entry<Integer, ECPoint> e : presignature.deltaTilde().entrySet()) {
@@ -112,18 +113,18 @@ public class PresignData implements java.io.Serializable {
     }
 
     public Presignature toPresignature() {
-        logger.info("Converting PresignData to Presignature: presignId={}, gamma={}, kTilde length={}, chiTilde length={}", 
-            presignId,
-            gamma != null ? gamma.substring(0, Math.min(20, gamma.length())) : "null",
-            kTilde != null ? kTilde.length() : "null",
-            chiTilde != null ? chiTilde.length() : "null");
+        logger.info("Converting PresignData to Presignature: presignId={}, gamma={}, kTilde length={}, chiTilde length={}",
+                presignId,
+                gamma != null ? gamma.substring(0, Math.min(20, gamma.length())) : "null",
+                kTilde != null ? kTilde.length() : "null",
+                chiTilde != null ? chiTilde.length() : "null");
         ECPoint gammaPoint = deserializeECPoint(gamma);
         BigInteger k = new BigInteger(kTilde, 16);
         BigInteger chi = new BigInteger(chiTilde, 16);
-        
+
         Map<Integer, ECPoint> deltaTildeMap = null;
         Map<Integer, ECPoint> sTildeMap = null;
-        
+
         if (deltaTilde != null) {
             deltaTildeMap = new HashMap<>();
             for (Map.Entry<Integer, String> e : deltaTilde.entrySet()) {
@@ -136,7 +137,7 @@ public class PresignData implements java.io.Serializable {
                 sTildeMap.put(e.getKey(), deserializeECPoint(e.getValue()));
             }
         }
-        
+
         return new Presignature(presignId, gammaPoint, k, chi, deltaTildeMap, sTildeMap);
     }
 

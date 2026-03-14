@@ -45,13 +45,27 @@ public final class NoSmallFactorProofGenerator {
         java.util.stream.IntStream.range(0, 7).parallel().forEach(i -> {
             SecureRandom rnd = SecureRandomUtils.getInstance();
             switch (i) {
-                case 0: randomValues[0] = randomSigned(bound1, rnd); break;
-                case 1: randomValues[1] = randomSigned(bound1, rnd); break;
-                case 2: randomValues[2] = randomSigned(bound2, rnd); break;
-                case 3: randomValues[3] = randomSigned(bound2, rnd); break;
-                case 4: randomValues[4] = randomSigned(bound3, rnd); break;
-                case 5: randomValues[5] = randomSigned(bound3, rnd); break;
-                case 6: randomValues[6] = randomSigned(bound3, rnd); break;
+                case 0:
+                    randomValues[0] = randomSigned(bound1, rnd);
+                    break;
+                case 1:
+                    randomValues[1] = randomSigned(bound1, rnd);
+                    break;
+                case 2:
+                    randomValues[2] = randomSigned(bound2, rnd);
+                    break;
+                case 3:
+                    randomValues[3] = randomSigned(bound2, rnd);
+                    break;
+                case 4:
+                    randomValues[4] = randomSigned(bound3, rnd);
+                    break;
+                case 5:
+                    randomValues[5] = randomSigned(bound3, rnd);
+                    break;
+                case 6:
+                    randomValues[6] = randomSigned(bound3, rnd);
+                    break;
             }
         });
 
@@ -69,10 +83,18 @@ public final class NoSmallFactorProofGenerator {
         BigInteger[] expResults = new BigInteger[4];
         java.util.stream.IntStream.range(0, 4).parallel().forEach(i -> {
             switch (i) {
-                case 0: expResults[0] = multiexpSigned(Nj, s, p, t, mu); break;
-                case 1: expResults[1] = multiexpSigned(Nj, s, q, t, nu); break;
-                case 2: expResults[2] = multiexpSigned(Nj, s, alpha, t, x); break;
-                case 3: expResults[3] = multiexpSigned(Nj, s, beta, t, y); break;
+                case 0:
+                    expResults[0] = multiexpSigned(Nj, s, p, t, mu);
+                    break;
+                case 1:
+                    expResults[1] = multiexpSigned(Nj, s, q, t, nu);
+                    break;
+                case 2:
+                    expResults[2] = multiexpSigned(Nj, s, alpha, t, x);
+                    break;
+                case 3:
+                    expResults[3] = multiexpSigned(Nj, s, beta, t, y);
+                    break;
             }
         });
 

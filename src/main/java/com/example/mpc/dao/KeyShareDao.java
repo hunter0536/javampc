@@ -198,7 +198,7 @@ public class KeyShareDao {
     public CompletableFuture<KeyShare> findHotWalletLatest(int shareIndex) {
         return CompletableFuture.supplyAsync(() -> findHotWalletLatestSync(shareIndex), ThreadPoolUtil.getIoThreadPool());
     }
-    
+
     public List<KeyShare> findAllHotWalletSync(int shareIndex) {
         Connection conn = null;
         PreparedStatement pstmt = null;

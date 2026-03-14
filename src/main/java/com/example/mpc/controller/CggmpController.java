@@ -202,7 +202,7 @@ public class CggmpController {
                 String message = request.getMessage();
                 boolean isHotWallet = request.isHotWallet();
                 logger.info("Sign request received: isHotWallet={}, groupPublicKey={}", isHotWallet, groupPublicKey);
-                
+
                 if (groupPublicKey == null || groupPublicKey.isEmpty()) {
                     return ApiResponse.badRequest("groupPublicKey cannot be null or empty");
                 }
@@ -217,10 +217,10 @@ public class CggmpController {
                         String signature = presignPoolService.signWithPresignData(groupPublicKey, message, presigned.get());
                         logger.info("Using presigned signature from pool for groupKey: {}", groupPublicKey);
                         SignatureTaskStartResponse data = new SignatureTaskStartResponse(
-                            "presign-" + System.currentTimeMillis(),
-                            groupPublicKey,
-                            message,
-                            "Hot wallet signature from presign pool"
+                                "presign-" + System.currentTimeMillis(),
+                                groupPublicKey,
+                                message,
+                                "Hot wallet signature from presign pool"
                         );
                         data.setSignature(signature);
                         return ApiResponse.success(data);
@@ -382,14 +382,14 @@ public class CggmpController {
             try {
                 List<ComplaintDao.ComplaintRecord> records =
                         cggmpSignatureService.getComplaints(
-                                request.getTaskId(), 
-                                request.getReason(), 
-                                request.getReasonLike(), 
-                                request.getSenderId(), 
-                                request.getOffenderId(), 
-                                request.getFromTs(), 
-                                request.getToTs(), 
-                                request.getLimit() != null ? request.getLimit() : 50, 
+                                request.getTaskId(),
+                                request.getReason(),
+                                request.getReasonLike(),
+                                request.getSenderId(),
+                                request.getOffenderId(),
+                                request.getFromTs(),
+                                request.getToTs(),
+                                request.getLimit() != null ? request.getLimit() : 50,
                                 request.getOffset() != null ? request.getOffset() : 0);
                 return ApiResponse.success(records);
             } catch (Exception e) {
@@ -407,14 +407,14 @@ public class CggmpController {
         return CompletableFuture.supplyAsync(() -> {
             List<ComplaintDao.ComplaintRecord> records =
                     cggmpSignatureService.getComplaints(
-                            request.getTaskId(), 
-                            request.getReason(), 
-                            request.getReasonLike(), 
-                            request.getSenderId(), 
-                            request.getOffenderId(), 
-                            request.getFromTs(), 
-                            request.getToTs(), 
-                            request.getLimit() != null ? request.getLimit() : 500, 
+                            request.getTaskId(),
+                            request.getReason(),
+                            request.getReasonLike(),
+                            request.getSenderId(),
+                            request.getOffenderId(),
+                            request.getFromTs(),
+                            request.getToTs(),
+                            request.getLimit() != null ? request.getLimit() : 500,
                             request.getOffset() != null ? request.getOffset() : 0);
             StringBuilder sb = new StringBuilder();
             for (com.example.mpc.dao.ComplaintDao.ComplaintRecord r : records) {
@@ -445,14 +445,14 @@ public class CggmpController {
         return CompletableFuture.supplyAsync(() -> {
             List<ComplaintDao.ComplaintRecord> records =
                     cggmpSignatureService.getComplaints(
-                            request.getTaskId(), 
-                            request.getReason(), 
-                            request.getReasonLike(), 
-                            request.getSenderId(), 
-                            request.getOffenderId(), 
-                            request.getFromTs(), 
-                            request.getToTs(), 
-                            request.getLimit() != null ? request.getLimit() : 500, 
+                            request.getTaskId(),
+                            request.getReason(),
+                            request.getReasonLike(),
+                            request.getSenderId(),
+                            request.getOffenderId(),
+                            request.getFromTs(),
+                            request.getToTs(),
+                            request.getLimit() != null ? request.getLimit() : 500,
                             request.getOffset() != null ? request.getOffset() : 0);
             StringBuilder sb = new StringBuilder();
             sb.append("ts,taskId,senderId,offenderId,reason,evidence\n");
@@ -478,17 +478,17 @@ public class CggmpController {
         }
         return v;
     }
-    
+
     private Optional<com.example.mpc.dto.PresignData> waitAndConsumePresign(String groupPublicKey, boolean isHotWallet, long timeoutMs) {
         long startTime = System.currentTimeMillis();
         long intervalMs = 1000;
-        
+
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             var presigned = presignPoolService.tryConsume(groupPublicKey, isHotWallet);
             if (presigned.isPresent()) {
                 return presigned;
             }
-            
+
             logger.info("No presign available for groupKey: {}, waiting {}ms...", groupPublicKey, intervalMs);
             try {
                 Thread.sleep(intervalMs);
@@ -497,7 +497,7 @@ public class CggmpController {
                 break;
             }
         }
-        
+
         logger.warn("Timeout waiting for presign for groupKey: {}, timeout: {}ms", groupPublicKey, timeoutMs);
         return Optional.empty();
     }

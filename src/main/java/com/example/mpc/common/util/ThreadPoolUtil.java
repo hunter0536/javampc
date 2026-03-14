@@ -204,6 +204,7 @@ public class ThreadPoolUtil {
     public static ExecutorService getHotWalletPresignThreadPool() {
         return hotWalletPresignThreadPool;
     }
+
     public static ExecutorService getAuxDispatchThreadPool() {
         return auxDispatchThreadPool;
     }

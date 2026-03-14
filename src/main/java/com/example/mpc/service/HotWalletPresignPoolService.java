@@ -246,13 +246,13 @@ public class HotWalletPresignPoolService {
             }
 
             BlockingQueue<PresignData> pool = hotWalletPools.computeIfAbsent(
-                groupPublicKey, k -> new LinkedBlockingQueue<>(maxSize));
+                    groupPublicKey, k -> new LinkedBlockingQueue<>(maxSize));
 
             int currentSize = pool.size();
             int expiredCount = countExpiredPresigns(pool);
 
             LOGGER.debug("Processing pool for groupPublicKey={}, size={}, expired={}",
-                groupPublicKey, currentSize, expiredCount);
+                    groupPublicKey, currentSize, expiredCount);
 
             if (expiredCount > 0) {
                 removeExpiredPresigns(pool, expiredCount);

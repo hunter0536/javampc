@@ -2,7 +2,9 @@
 
 ## 项目概述
 
-本项目是一个基于 Spring Boot 和 Gradle 的 MPC（安全多方计算）钱包实现，使用 3-of-5 门限方案生成分布式私钥。项目采用完整的 Gennaro DKG（分布式密钥生成）算法和 CGGMP 协议，通过基于 Netty 的高性能 P2P 网络在 5 个节点之间进行异步通信，每个节点连接到自己的 SQLite 数据库存储密钥份额。项目提供了简洁的 RESTful API 接口，支持分布式私钥生成、任务状态查询、群公钥获取和分布式签名等核心功能。
+本项目是一个基于 Spring Boot 和 Gradle 的 MPC（安全多方计算）钱包实现，使用 3-of-5 门限方案生成分布式私钥。项目采用完整的
+Gennaro DKG（分布式密钥生成）算法和 CGGMP 协议，通过基于 Netty 的高性能 P2P 网络在 5 个节点之间进行异步通信，每个节点连接到自己的
+SQLite 数据库存储密钥份额。项目提供了简洁的 RESTful API 接口，支持分布式私钥生成、任务状态查询、群公钥获取和分布式签名等核心功能。
 
 ## 功能特性
 
@@ -205,22 +207,22 @@ curl -X POST "http://localhost:8081/api/gennaro/dkg/public-key" \
 
 ## API 汇总表
 
-| 模块 | 方法 | 路径 | 说明 |
-|------|------|------|------|
-| **CGGMP AUX** | GET | `/api/cggmp/aux/start` | 启动 AUX 任务 |
-| | POST | `/api/cggmp/aux/status` | 查询 AUX 状态 |
-| **CGGMP DKG** | GET | `/api/cggmp/dkg/start` | 启动 DKG 任务 |
-| | POST | `/api/cggmp/dkg/status` | 查询 DKG 状态 |
-| | POST | `/api/cggmp/dkg/public-key` | 获取聚合公钥 |
-| **CGGMP Sign** | POST | `/api/cggmp/sign/start` | 启动签名任务 |
-| | POST | `/api/cggmp/sign/status` | 查询签名状态 |
-| | POST | `/api/cggmp/sign/result` | 获取签名结果 |
-| **CGGMP Refresh** | POST | `/api/cggmp/refresh/start` | 启动刷新任务 |
-| | POST | `/api/cggmp/refresh/status` | 查询刷新状态 |
-| **诊断** | GET | `/api/cggmp/proof/self-check` | 零知识证明自检 |
-| **投诉** | POST | `/api/cggmp/complaints` | 查询投诉记录 |
-| | POST | `/api/cggmp/complaints/export` | 导出 JSONL |
-| | POST | `/api/cggmp/complaints/export.csv` | 导出 CSV |
-| **Gennaro DKG** | GET | `/api/gennaro/dkg/start` | 启动 DKG 任务 |
-| | POST | `/api/gennaro/dkg/status` | 查询 DKG 状态 |
-| | POST | `/api/gennaro/dkg/public-key` | 获取聚合公钥 |
+| 模块                | 方法   | 路径                                 | 说明        |
+|-------------------|------|------------------------------------|-----------|
+| **CGGMP AUX**     | GET  | `/api/cggmp/aux/start`             | 启动 AUX 任务 |
+|                   | POST | `/api/cggmp/aux/status`            | 查询 AUX 状态 |
+| **CGGMP DKG**     | GET  | `/api/cggmp/dkg/start`             | 启动 DKG 任务 |
+|                   | POST | `/api/cggmp/dkg/status`            | 查询 DKG 状态 |
+|                   | POST | `/api/cggmp/dkg/public-key`        | 获取聚合公钥    |
+| **CGGMP Sign**    | POST | `/api/cggmp/sign/start`            | 启动签名任务    |
+|                   | POST | `/api/cggmp/sign/status`           | 查询签名状态    |
+|                   | POST | `/api/cggmp/sign/result`           | 获取签名结果    |
+| **CGGMP Refresh** | POST | `/api/cggmp/refresh/start`         | 启动刷新任务    |
+|                   | POST | `/api/cggmp/refresh/status`        | 查询刷新状态    |
+| **诊断**            | GET  | `/api/cggmp/proof/self-check`      | 零知识证明自检   |
+| **投诉**            | POST | `/api/cggmp/complaints`            | 查询投诉记录    |
+|                   | POST | `/api/cggmp/complaints/export`     | 导出 JSONL  |
+|                   | POST | `/api/cggmp/complaints/export.csv` | 导出 CSV    |
+| **Gennaro DKG**   | GET  | `/api/gennaro/dkg/start`           | 启动 DKG 任务 |
+|                   | POST | `/api/gennaro/dkg/status`          | 查询 DKG 状态 |
+|                   | POST | `/api/gennaro/dkg/public-key`      | 获取聚合公钥    |

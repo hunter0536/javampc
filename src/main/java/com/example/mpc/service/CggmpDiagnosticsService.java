@@ -88,13 +88,13 @@ public class CggmpDiagnosticsService {
             BigInteger rho2 = BigIntegerUtils.randomZnStar(pk0.n(), rnd);
             BigInteger mu2 = BigIntegerUtils.randomZnStar(pk1.n(), rnd);
             BigInteger D2 = BigIntegerUtils.modMul(
-                BigIntegerUtils.modMul(
-                    BigIntegerUtils.powSigned(C, x2, pk0.nSquared()),
-                    BigIntegerUtils.powSigned(BigInteger.ONE.add(pk0.n()), y2, pk0.nSquared()),
+                    BigIntegerUtils.modMul(
+                            BigIntegerUtils.powSigned(C, x2, pk0.nSquared()),
+                            BigIntegerUtils.powSigned(BigInteger.ONE.add(pk0.n()), y2, pk0.nSquared()),
+                            pk0.nSquared()
+                    ),
+                    BigIntegerUtils.modPow(rho2, pk0.n(), pk0.nSquared()),
                     pk0.nSquared()
-                ),
-                BigIntegerUtils.modPow(rho2, pk0.n(), pk0.nSquared()),
-                pk0.nSquared()
             );
             BigInteger Y2 = pk1.encryptWithRandom(y2, mu2);
             ECPoint X2 = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x2);
