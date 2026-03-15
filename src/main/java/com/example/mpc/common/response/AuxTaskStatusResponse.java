@@ -11,6 +11,7 @@ public class AuxTaskStatusResponse {
     private int receivedEcho;
     private int receivedReveal;
     private int receivedProofs;
+    private int receivedSaved;
 
     public String getTaskId() {
         return taskId;
@@ -90,5 +91,13 @@ public class AuxTaskStatusResponse {
 
     public void setReceivedProofs(int receivedProofs) {
         this.receivedProofs = receivedProofs;
+    }
+
+    public int getReceivedSaved() {
+        return receivedSaved;
+    }
+
+    public void setReceivedSaved(int receivedSaved) {
+        this.receivedSaved = receivedSaved;
     }
 }

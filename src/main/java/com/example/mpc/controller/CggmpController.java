@@ -209,6 +209,9 @@ public class CggmpController {
                 if (message == null || message.isEmpty()) {
                     return ApiResponse.badRequest("message cannot be null or empty");
                 }
+                if (!cggmpSignatureService.hasGroupPublicKey(groupPublicKey)) {
+                    return ApiResponse.badRequest("groupPublicKey not found");
+                }
 
                 if (isHotWallet && presignPoolService.isEnabled()) {
                     logger.info("Hot wallet sign request, presign pool enabled, trying to consume presign");

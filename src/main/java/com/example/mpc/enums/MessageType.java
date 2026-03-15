@@ -97,6 +97,10 @@ public enum MessageType {
      */
     CGGMP_AUX_STATUS,
     /**
+     * CGGMP辅助信息保存完成确认
+     */
+    CGGMP_AUX_SAVED,
+    /**
      * CGGMP辅助信息投诉
      */
     CGGMP_AUX_COMPLAINT,

@@ -369,7 +369,7 @@ public final class CggmpSignaturePresignHandler {
             return;
         }
         if (!task.participants.contains(svc.nodeId)) {
-            logger.info("Skip CGGMP_PRESIGN_R2 for task {} on node {} (not a participant, participants={})",
+            logger.debug("Skip CGGMP_PRESIGN_R2 for task {} on node {} (not a participant, participants={})",
                     task.taskId, svc.nodeId, task.participants);
             return;
         }
@@ -404,7 +404,7 @@ public final class CggmpSignaturePresignHandler {
         BigIntIndexMap Fhat = BigIntIndexMap.of(CggmpCodecUtils.decodeBigIntegerMap(fhMap));
         BigInteger dForNode = D.get(svc.nodeId).orElse(null);
         BigInteger dhatForNode = Dhat.get(svc.nodeId).orElse(null);
-        logger.info("Presign R2 received for task {} from {}: D keys={}, Dhat keys={}, D[node]={}, Dhat[node]={}",
+        logger.debug("Presign R2 received for task {} from {}: D keys={}, Dhat keys={}, D[node]={}, Dhat[node]={}",
                 task.taskId,
                 senderId,
                 D.values().keySet(),
@@ -644,7 +644,7 @@ public final class CggmpSignaturePresignHandler {
 
         try {
             task.r2VerifyLatch.await();
-            logger.info("R2 verification completed for task {}, processing {} results", task.taskId, task.r2VerifyResults.size());
+            logger.debug("R2 verification completed for task {}, processing {} results", task.taskId, task.r2VerifyResults.size());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return;

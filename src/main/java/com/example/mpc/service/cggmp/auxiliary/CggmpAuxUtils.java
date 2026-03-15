@@ -49,10 +49,12 @@ public final class CggmpAuxUtils {
         ev.put("echoReceived", task.echoReceived.size());
         ev.put("revealReceived", task.peerHatN.size());
         ev.put("proofsReceived", task.peerModProofs.size());
+        ev.put("savedReceived", task.savedReceived.size());
         ev.put("commitLatch", task.commitLatch.getCount());
         ev.put("echoLatch", task.echoLatch.getCount());
         ev.put("revealLatch", task.revealLatch.getCount());
         ev.put("proofLatch", task.proofLatch.getCount());
+        ev.put("savedLatch", task.savedLatch.getCount());
         return ev;
     }
 

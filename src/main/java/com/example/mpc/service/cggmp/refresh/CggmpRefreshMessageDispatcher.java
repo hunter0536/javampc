@@ -31,7 +31,7 @@ public final class CggmpRefreshMessageDispatcher {
                 logTaskId = map.get("signatureTaskId");
             }
         }
-        logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
+        logger.debug("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
                 senderId, message.type(), logTaskId);
         Executor executor = ThreadPoolUtil.getRefreshDispatchThreadPool();
         return CompletableFuture.runAsync(() -> {
@@ -43,7 +43,7 @@ public final class CggmpRefreshMessageDispatcher {
                         data = decoded;
                     }
                 }
-                logger.info("=== CGGMP processing: type={} ===", message.type());
+                logger.debug("=== CGGMP processing: type={} ===", message.type());
                 switch (message.type()) {
                     case CGGMP_REFRESH_INIT:
                         svc.refreshMessageHandler.onRefreshInit(senderId, data);

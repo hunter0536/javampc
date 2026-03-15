@@ -155,6 +155,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return createSignatureTaskWithGroupKey(groupPublicKey, message, false);
     }
 
+    public boolean hasGroupPublicKey(String groupPublicKey) {
+        if (groupPublicKey == null || groupPublicKey.isEmpty()) {
+            return false;
+        }
+        String fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
+        fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
+        return keyShareService.findByGroupPublicKeySync(nodeId, fixedGroupPublicKey) != null;
+    }
+
     public String createSignatureTaskWithGroupKey(String groupPublicKey, String message, boolean isHotWallet) {
         int auxCount = auxInfoDao.countAuxSync(nodeId);
         if (auxCount == 0) {

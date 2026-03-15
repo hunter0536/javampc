@@ -243,6 +243,23 @@ public final class CggmpAuxProtocolHandler {
                         .thenApply(v -> ctx))
                 .thenRunAsync(() -> {
                     CggmpAuxUtils.saveAuxInfo(svc, task);
+                    task.savedReceived.put(svc.nodeId, Boolean.TRUE);
+                    task.savedLatch.countDown();
+                    Map<String, Object> saved = new HashMap<>();
+                    saved.put("taskId", task.taskId);
+                    saved.put("executionId", task.executionId);
+                    saved.put("senderId", svc.nodeId);
+                    CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.auxScheduler, logger,
+                                    () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_SAVED, saved)),
+                                    Constants.BROADCAST_RETRY_COUNT,
+                                    Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                    "CGGMP_AUX_SAVED"),
+                            logger, "CGGMP_AUX_SAVED");
+                    logger.debug("AUX saved broadcast: taskId={}, executionId={}, senderId={}",
+                            task.taskId, task.executionId, svc.nodeId);
+                }, auxExecutorService)
+                .thenCompose(v -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.savedLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX SAVED"))
+                .thenRunAsync(() -> {
                     logger.debug("AUX protocol completed in {} ms", (System.nanoTime() - auxStartNs) / 1_000_000);
                 }, auxExecutorService);
     }

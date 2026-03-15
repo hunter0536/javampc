@@ -1,7 +1,7 @@
 package com.example.mpc.config;
 
-import com.example.mpc.constant.Constants;
 import com.example.mpc.cggmp.util.NativeBigInteger;
+import com.example.mpc.constant.Constants;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
@@ -120,10 +120,7 @@ public class ApplicationInitializer implements CommandLineRunner {
                                 });
                         logger.info("Initializing CGGMP signature service...");
                         cggmpSignatureService.init(Constants.NODES_COUNT)
-                                .thenRun(() -> {
-                                    cggmpAuxService.ensureAuxProvisionedAfterNetworkReady();
-                                    logger.info("CGGMP services initialized successfully");
-                                })
+                                .thenRun(() -> logger.info("CGGMP services initialized successfully"))
                                 .exceptionally(ex -> {
                                     logger.error("Failed to initialize CGGMP signature service", ex);
                                     return null;

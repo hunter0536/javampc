@@ -147,7 +147,7 @@ public final class CggmpSignatureOnlineHandler {
                 }, ThreadPoolUtil.getIoThreadPool()))
                 .thenCompose(ctx -> {
                     if (svc.nodeId == ctx.task().initiatorId) {
-                        logger.info("Initiator branch: waiting for sShareLatch (count={})", ctx.task().sShareLatch.getCount());
+                        logger.debug("Initiator branch: waiting for sShareLatch (count={})", ctx.task().sShareLatch.getCount());
                         if (!verifySigmaShare(ctx.task(), svc.nodeId, ctx.sigma_i())) {
                             svc.failSignatureTask(ctx.task(), "Local signature share verification failed");
                             svc.signatureInProgress.set(false);
@@ -155,10 +155,10 @@ public final class CggmpSignatureOnlineHandler {
                             return CompletableFuture.completedFuture(null);
                         }
                         ctx.task().sShares.put(svc.nodeId, ctx.sigma_i());
-                        logger.info("Initiator stored own sigma_i, waiting for sShareLatch (count={})", ctx.task().sShareLatch.getCount());
+                        logger.debug("Initiator stored own sigma_i, waiting for sShareLatch (count={})", ctx.task().sShareLatch.getCount());
                         return svc.waitForLatchAsync(ctx.task().sShareLatch, Constants.SIGNATURE_SHARE_TIMEOUT_SECONDS, "signature shares")
                                 .thenRunAsync(() -> {
-                                    logger.info("sShareLatch completed, calling finalizeSignatureAsInitiator for task {}", ctx.task().taskId);
+                                    logger.debug("sShareLatch completed, calling finalizeSignatureAsInitiator for task {}", ctx.task().taskId);
                                     finalizeSignatureAsInitiator(ctx);
                                 }, ThreadPoolUtil.getIoThreadPool());
                     }
@@ -203,7 +203,7 @@ public final class CggmpSignatureOnlineHandler {
         CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
 
         if (task == null) {
-            logger.info("Signature task {} not found in local cache, creating from ONLINE_INIT", signatureTaskId);
+            logger.debug("Signature task {} not found in local cache, creating from ONLINE_INIT", signatureTaskId);
             @SuppressWarnings("unchecked")
             java.util.List<Integer> participantsList = (java.util.List<Integer>) dataMap.get("participants");
             if (groupPublicKey == null || participantsList == null) {
@@ -230,10 +230,10 @@ public final class CggmpSignatureOnlineHandler {
             }
 
             svc.signatureTasks.put(signatureTaskId, task);
-            logger.info("Created signature task {} from ONLINE_INIT, participants={}", signatureTaskId, task.participants);
+            logger.debug("Created signature task {} from ONLINE_INIT, participants={}", signatureTaskId, task.participants);
 
             if (presignId != null) {
-                logger.info("Received presignId {} from ONLINE_INIT, looking up in presign pool", presignId);
+                logger.debug("Received presignId {} from ONLINE_INIT, looking up in presign pool", presignId);
                 Optional<PresignData> presignOpt = svc.presignPoolService.getPresignById(groupPublicKey, presignId);
                 if (presignOpt.isPresent()) {
                     task.presignature = presignOpt.get().toPresignature();
@@ -246,7 +246,7 @@ public final class CggmpSignatureOnlineHandler {
                     task.offlineDoneLatch.countDown();
                     task.presignatureLatch.countDown();
                     task.offlineDoneLatch.countDown();
-                    logger.info("Found presign {} for task {} and pre-countdown latches", presignId, signatureTaskId);
+                    logger.debug("Found presign {} for task {} and pre-countdown latches", presignId, signatureTaskId);
                 } else {
                     logger.error("Failed to find presign {} in pool for task {}", presignId, signatureTaskId);
                     task.offlineDoneLatch.countDown();
@@ -281,7 +281,7 @@ public final class CggmpSignatureOnlineHandler {
 
         if (task.offlineReadyLatch.getCount() > 0) {
             task.offlineReadyLatch.countDown();
-            logger.info("Participant {} countdown offlineReadyLatch for hot wallet task {}", svc.nodeId, signatureTaskId);
+            logger.debug("Participant {} countdown offlineReadyLatch for hot wallet task {}", svc.nodeId, signatureTaskId);
         }
 
         logProgress(task, "online_init");
@@ -301,7 +301,7 @@ public final class CggmpSignatureOnlineHandler {
 
         if (task.presignature != null && task.presignature.presignId() != null) {
             data.put("presignId", task.presignature.presignId());
-            logger.info("Including presignId {} in CGGMP_SIGN_ONLINE_INIT for task {}", task.presignature.presignId(), task.taskId);
+            logger.debug("Including presignId {} in CGGMP_SIGN_ONLINE_INIT for task {}", task.presignature.presignId(), task.taskId);
         }
 
         return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
@@ -945,7 +945,7 @@ public final class CggmpSignatureOnlineHandler {
     }
 
     private void finalizeSignatureAsInitiator(CggmpOnlineContext ctx) {
-        logger.info("finalizeSignatureAsInitiator called for task {}", ctx.task().taskId);
+        logger.debug("finalizeSignatureAsInitiator called for task {}", ctx.task().taskId);
         if (ctx == null) {
             return;
         }
@@ -989,7 +989,7 @@ public final class CggmpSignatureOnlineHandler {
         if (ctx.task().isHotWallet) {
             AtomicInteger lock = svc.hotWalletSignatureLocks.get(ctx.task().groupPublicKey);
             if (lock != null) {
-                logger.info("Releasing hotWalletSignatureLocks after signature completion for task {}", ctx.task().taskId);
+                logger.debug("Releasing hotWalletSignatureLocks after signature completion for task {}", ctx.task().taskId);
                 lock.set(0);
             }
         }

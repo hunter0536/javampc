@@ -610,7 +610,7 @@ public final class CggmpSignatureOfflineHandler {
                             return;
                         }
                         if (!task.participants.contains(svc.nodeId)) {
-                            logger.info("Node {} not selected for CGGMP signature task {}, participants={}, skipping", svc.nodeId, signatureTaskId, task.participants);
+                            logger.debug("Node {} not selected for CGGMP signature task {}, participants={}, skipping", svc.nodeId, signatureTaskId, task.participants);
                             svc.signatureInProgress.set(false);
                             return;
                         }
@@ -638,7 +638,7 @@ public final class CggmpSignatureOfflineHandler {
                         });
                     }, ThreadPoolUtil.getIoThreadPool());
                 } else {
-                    logger.info("Signature task {} already exists, ignoring OFFLINE_INIT", signatureTaskId);
+                    logger.debug("Signature task {} already exists, ignoring OFFLINE_INIT", signatureTaskId);
                 }
             } else {
                 logger.warn("Invalid OFFLINE_INIT payload from node {}", senderId);
@@ -704,7 +704,7 @@ public final class CggmpSignatureOfflineHandler {
                             BigInteger oldChi = chi_i;
                             delta_i = delta_i.add(alpha).add(beta).mod(ctx.curveOrder());
                             chi_i = chi_i.add(alphaHat).add(betaHat).mod(ctx.curveOrder());
-                            logger.info("Presign R3 accumulate task {} peer {}: updated delta_i/chi_i (values redacted)",
+                            logger.debug("Presign R3 accumulate task {} peer {}: updated delta_i/chi_i (values redacted)",
                                     ctx.task().taskId,
                                     peerId);
                         }
@@ -844,7 +844,7 @@ public final class CggmpSignatureOfflineHandler {
 
         if (ctx.task().taskId.startsWith("presign-offline-") && ctx.task().presignature != null) {
             svc.presignPoolService.addPresignToPool(ctx.task().groupPublicKey, ctx.task().presignature);
-            logger.info("Added presignature to pool for task {} (nodeId={})", ctx.task().taskId, svc.nodeId);
+            logger.debug("Added presignature to pool for task {} (nodeId={})", ctx.task().taskId, svc.nodeId);
         }
 
         if (svc.nodeId == ctx.task().initiatorId) {

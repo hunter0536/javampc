@@ -99,7 +99,7 @@ public final class CggmpDkgMessageHandler {
                         taskId, participants.size(), nodesCount);
                 return;
             }
-            logger.info("Received CGGMP_DKG_INIT from node {} for task: {}, nodesCount: {}, initiatorId={}, participants={}",
+            logger.debug("Received CGGMP_DKG_INIT from node {} for task: {}, nodesCount: {}, initiatorId={}, participants={}",
                     senderId, taskId, nodesCount, initiatorId, participants == null ? "default" : participants.size());
 
             if (executionId == null || executionId.isBlank()) {
@@ -113,12 +113,12 @@ public final class CggmpDkgMessageHandler {
             CggmpDkgTask existingTask = svc.dkgTasks.putIfAbsent(taskId, task);
 
             if (existingTask != null) {
-                logger.info("DKG task {} already exists, skipping creation", taskId);
+                logger.debug("DKG task {} already exists, skipping creation", taskId);
                 drainPendingRound1(existingTask);
                 return;
             }
 
-            logger.info("Created DKG task {} on node {}", taskId, svc.nodeId);
+            logger.debug("Created DKG task {} on node {}", taskId, svc.nodeId);
             drainPendingRound1(task);
 
             svc.dkgProtocolHandler.startDkgProcessInternal(taskId, false);
@@ -377,7 +377,7 @@ public final class CggmpDkgMessageHandler {
             return;
         }
         if (task.round2Received.containsKey(senderNodeId)) {
-            logger.info("Already received Round2 from node {}, skipping", senderNodeId);
+            logger.debug("Already received Round2 from node {}, skipping", senderNodeId);
             return;
         }
         Map<?, ?> shares = (Map<?, ?>) dataMap.get("shares");
@@ -621,7 +621,7 @@ public final class CggmpDkgMessageHandler {
         if (pending == null || pending.isEmpty()) {
             return;
         }
-        logger.info("Replaying {} pending DKG Round1 messages for task {}", pending.size(), task.taskId);
+        logger.debug("Replaying {} pending DKG Round1 messages for task {}", pending.size(), task.taskId);
         for (Map.Entry<Integer, Map<String, Object>> entry : pending.entrySet()) {
             try {
                 onDkgRound1(entry.getKey(), entry.getValue());

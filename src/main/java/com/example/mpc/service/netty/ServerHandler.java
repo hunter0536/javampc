@@ -33,12 +33,12 @@ public class ServerHandler extends SimpleChannelInboundHandler<Object> {
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
-        logger.info("Client connected: {}", ctx.channel().remoteAddress());
+        logger.debug("Client connected: {}", ctx.channel().remoteAddress());
     }
 
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
-        logger.info("Client disconnected: {}", ctx.channel().remoteAddress());
+        logger.debug("Client disconnected: {}", ctx.channel().remoteAddress());
     }
 
     @Override

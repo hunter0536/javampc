@@ -44,7 +44,7 @@ public class KeyShareService {
                 cachedHotWalletKeyShares.put(ks.getGroupPublicKey(), ks);
             }
             cachedKeyShareTime = now;
-            logger.info("Cached {} hot wallet key shares", cachedHotWalletKeyShares.size());
+            logger.debug("Cached {} hot wallet key shares", cachedHotWalletKeyShares.size());
             return keyShares.get(0);
         }
         return null;
@@ -64,7 +64,7 @@ public class KeyShareService {
                 cachedHotWalletKeyShares.put(ks.getGroupPublicKey(), ks);
             }
             cachedKeyShareTime = now;
-            logger.info("Cached {} hot wallet key shares", cachedHotWalletKeyShares.size());
+            logger.debug("Cached {} hot wallet key shares", cachedHotWalletKeyShares.size());
         }
         return cachedHotWalletKeyShares;
     }

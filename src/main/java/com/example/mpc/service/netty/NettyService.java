@@ -168,7 +168,7 @@ public class NettyService {
             ChannelFuture f = b.connect(host, port).addListener((ChannelFutureListener) future1 -> {
                 if (future1.isSuccess()) {
                     nodeChannels.put(nodeId, future1.channel());
-                    logger.info("Connected to node {} at {}:{}", nodeId, host, port);
+                    logger.debug("Connected to node {} at {}:{}", nodeId, host, port);
                     future.complete(null);
                 } else {
                     logger.error("Failed to connect to node {}: {}", nodeId, future1.cause().getMessage());
@@ -193,7 +193,7 @@ public class NettyService {
         CompletableFuture<Void> future = new CompletableFuture<>();
 
         Channel channel = nodeChannels.get(nodeId);
-        logger.info("sendMessage: to node {} type {} channelActive={}", nodeId, message.type(), channel != null && channel.isActive());
+        logger.debug("sendMessage: to node {} type {} channelActive={}", nodeId, message.type(), channel != null && channel.isActive());
         if (channel != null && channel.isActive()) {
             Object payload = wrapSigned(message);
             channel.writeAndFlush(payload).addListener((ChannelFutureListener) future1 -> {

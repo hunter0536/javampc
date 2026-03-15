@@ -104,7 +104,7 @@ public final class CggmpRefreshProtocolHandler {
                     return CompletableFuture.supplyAsync(() -> {
                         try {
                             BigInteger q = Secp256k1CurveUtils.n();
-                            logger.info("Refresh {} network ready", task.taskId);
+                            logger.debug("Refresh {} network ready", task.taskId);
                             if (!task.participants.contains(svc.nodeId)) {
                                 return null;
                             }
@@ -380,7 +380,7 @@ public final class CggmpRefreshProtocolHandler {
             KeyShare prev = svc.keyShareDao.findByGroupPublicKeySync(svc.nodeId, task.groupPublicKey);
             String oldHash = HexUtils.sha256Hex(oldShare.toString(16));
             String newHash = HexUtils.sha256Hex(newShare.toString(16));
-            logger.info("Refresh key share computed (taskId={}, nodeId={}, groupPublicKey={}, oldShareHash={}, newShareHash={})",
+            logger.debug("Refresh key share computed (taskId={}, nodeId={}, groupPublicKey={}, oldShareHash={}, newShareHash={})",
                     task.taskId, svc.nodeId, task.groupPublicKey, oldHash, newHash);
             KeyShare keyShare = new KeyShare(svc.nodeId, newShare.toString(16), task.groupPublicKey, task.taskId);
             String prevPublicShares = prev == null ? null : prev.getPublicShares();
@@ -399,7 +399,7 @@ public final class CggmpRefreshProtocolHandler {
                 return false;
             }
             svc.keyShareDao.save(keyShare);
-            logger.info("Refresh key share persisted (taskId={}, nodeId={}, groupPublicKey={}, newShareHash={})",
+            logger.debug("Refresh key share persisted (taskId={}, nodeId={}, groupPublicKey={}, newShareHash={})",
                     task.taskId, svc.nodeId, task.groupPublicKey, newHash);
         } catch (Exception e) {
             logger.error("Failed to save refreshed key share", e);

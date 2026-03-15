@@ -71,7 +71,7 @@ public final class CggmpDkgProtocolHandler {
         }
 
         logger.info("Starting CGGMP DKG process for task: {}", taskId);
-        logger.info("Waiting for network ready...");
+        logger.debug("Waiting for network ready...");
         long waitNetStart = System.nanoTime();
 
         Map<String, Object> initData = new HashMap<>();
@@ -89,7 +89,7 @@ public final class CggmpDkgProtocolHandler {
                     if (networkSize < svc.nodesCount) {
                         throw new RuntimeException("Not enough nodes in network. Expected: " + svc.nodesCount + ", found: " + networkSize);
                     }
-                    logger.info("Network ready with {} nodes", networkSize);
+                    logger.debug("Network ready with {} nodes", networkSize);
                 })
                 .thenCompose(v -> {
                     if (!broadcastInit) {
@@ -161,7 +161,7 @@ public final class CggmpDkgProtocolHandler {
                     .whenComplete((v, ex) -> logger.debug("DKG executeDkgRounds total took {} ms",
                             (System.nanoTime() - roundsStart) / 1_000_000));
         }
-        logger.info("Node {} executing CGGMP24 DKG Round 1 (t-of-n)", svc.nodeId);
+        logger.debug("Node {} executing CGGMP24 DKG Round 1 (t-of-n)", svc.nodeId);
 
         CompletableFuture<CggmpDkgContext> r1Future = CompletableFuture.supplyAsync(() -> {
             BigInteger q = Secp256k1CurveUtils.n();
@@ -199,7 +199,7 @@ public final class CggmpDkgProtocolHandler {
             BiPrimeBlumProof biPrimeProof = biPrimeProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
             NoSmallFactorProof factorProof = noSmallFactorProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
 
-            logger.info("Generated ZK proofs for DKG Round 1, BiPrimeProof bits: {}",
+            logger.debug("Generated ZK proofs for DKG Round 1, BiPrimeProof bits: {}",
                     task.paillier.getPublicKeyInfo().n().bitLength());
 
             Map<String, Object> r1Open = new LinkedHashMap<>();
@@ -384,7 +384,7 @@ public final class CggmpDkgProtocolHandler {
      * 执行非阈值模式DKG协议
      */
     private CompletableFuture<Void> executeDkgRoundsNonThreshold(CggmpDkgTask task) {
-        logger.info("Node {} executing CGGMP24 DKG Round 1 (n-of-n)", svc.nodeId);
+        logger.debug("Node {} executing CGGMP24 DKG Round 1 (n-of-n)", svc.nodeId);
         return CompletableFuture.supplyAsync(() -> {
                     BigInteger q = Secp256k1CurveUtils.n();
                     ECPoint g = Secp256k1CurveUtils.G();

@@ -638,7 +638,7 @@ public class NodeService {
                             nodes.size(), Math.max(0, nodesCount - 1));
                 }
                 if (nodes.size() < nodesCount - 1) {
-                    logger.info("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
+                    logger.debug("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
                     return;
                 }
 
@@ -662,7 +662,7 @@ public class NodeService {
                 }
 
                 if (!allConnected) {
-                    logger.info("Waiting for all peer connections to be active...");
+                logger.debug("Waiting for all peer connections to be active...");
                     return;
                 }
 
@@ -868,7 +868,7 @@ public class NodeService {
                 nettyService.connectToNode(peerId, host, port)
                         .whenComplete((v, ex) -> {
                             if (ex == null) {
-                                logger.info("Successfully connected to peer {} on attempt {}", peerDesc, attempt);
+                                logger.debug("Successfully connected to peer {} on attempt {}", peerDesc, attempt);
                             } else if (attempt < maxAttempts) {
                                 logger.warn("Failed to connect to {} (attempt {}/{}): {}, scheduling retry in {}ms",
                                         peerDesc, attempt, maxAttempts, ex.getMessage(), retryDelayMs);
@@ -907,7 +907,7 @@ public class NodeService {
 
                         NodeInfo nodeInfo = new NodeInfo(nodeId, address.getHostAddress(), nodePort);
                         nodes.put(nodeId, nodeInfo);
-                        logger.info("Discovered node: {} at {}:{}", nodeId, address.getHostAddress(), nodePort);
+                        logger.debug("Discovered node: {} at {}:{}", nodeId, address.getHostAddress(), nodePort);
 
                         // 自动连接到新发现的节点（带重试）
                         if (nettyService != null) {

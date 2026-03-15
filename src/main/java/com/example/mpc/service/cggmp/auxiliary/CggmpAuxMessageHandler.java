@@ -477,6 +477,33 @@ public final class CggmpAuxMessageHandler {
     }
 
     /**
+     * 处理辅助密钥保存完成确认消息
+     */
+    void handleCggmpAuxSaved(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
+        }
+        String taskId = (String) dataMap.get("taskId");
+        String executionId = (String) dataMap.get("executionId");
+        Object senderValue = dataMap.get("senderId");
+        if (taskId == null || executionId == null || senderValue == null) {
+            return;
+        }
+        int senderNodeId = senderValue instanceof Number n ? n.intValue() : senderId;
+        CggmpAuxTask task = svc.auxTasks.get(taskId);
+        if (task == null || !task.status.get().isRunning()) {
+            enqueuePending(taskId, new PendingMsg(senderId, data, MessageType.CGGMP_AUX_SAVED));
+            return;
+        }
+        if (!executionId.equals(task.executionId)) {
+            return;
+        }
+        if (task.savedReceived.putIfAbsent(senderNodeId, Boolean.TRUE) == null) {
+            task.savedLatch.countDown();
+        }
+    }
+
+    /**
      * 将消息加入待处理队列
      */
     void enqueuePending(String taskId, PendingMsg msg) {
@@ -499,6 +526,7 @@ public final class CggmpAuxMessageHandler {
                 case CGGMP_AUX_R1_ECHO -> handleCggmpAuxR1Echo(msg.senderId, msg.data);
                 case CGGMP_AUX_R2 -> handleCggmpAuxR2(msg.senderId, msg.data);
                 case CGGMP_AUX_R3 -> handleCggmpAuxR3(msg.senderId, msg.data);
+                case CGGMP_AUX_SAVED -> handleCggmpAuxSaved(msg.senderId, msg.data);
                 default -> {
                 }
             }
