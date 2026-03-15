@@ -2,6 +2,7 @@ package com.example.mpc.cggmp.proof;
 
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
+import com.example.mpc.cggmp.util.NativeBigInteger;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.SecureRandomUtils;
@@ -173,9 +174,6 @@ public final class PresignProofs {
         BigInteger onePlusN0 = BigInteger.ONE.add(N0);
         BigInteger onePlusN1 = BigInteger.ONE.add(N1);
 
-        BigInteger[] rPowN0 = BigIntegerUtils.batchModPow(rArr, N0, N0sq);
-        BigInteger[] sPowN1 = BigIntegerUtils.batchModPow(sArr, N1, N1sq);
-
         BigInteger[] betaForN0Arr = new BigInteger[effectiveKappa];
         for (int i = 0; i < effectiveKappa; i++) {
             betaForN0Arr[i] = negY ? betaArr[i].negate() : betaArr[i];
@@ -183,34 +181,70 @@ public final class PresignProofs {
 
         BigInteger[] onePlusN0Arr = new BigInteger[effectiveKappa];
         BigInteger[] onePlusN1Arr = new BigInteger[effectiveKappa];
+        BigInteger[] cArr = new BigInteger[effectiveKappa];
+        BigInteger[] n0ExpArr = new BigInteger[effectiveKappa];
+        BigInteger[] n1ExpArr = new BigInteger[effectiveKappa];
         for (int i = 0; i < effectiveKappa; i++) {
             onePlusN0Arr[i] = onePlusN0;
             onePlusN1Arr[i] = onePlusN1;
+            cArr[i] = C;
+            n0ExpArr[i] = N0;
+            n1ExpArr[i] = N1;
         }
 
-        BigInteger[] onePlusN0PowBeta = BigIntegerUtils.batchModPow(onePlusN0Arr, betaForN0Arr, N0sq);
-        BigInteger[] onePlusN1PowBeta = BigIntegerUtils.batchModPow(onePlusN1Arr, betaArr, N1sq);
-        BigInteger[] CPowAlpha = BigIntegerUtils.batchModPow(
-                java.util.Collections.nCopies(effectiveKappa, C).toArray(new BigInteger[0]),
-                alphaArr,
-                N0sq
-        );
+        BigInteger[] rPowN0, sPowN1, onePlusN0PowBeta, onePlusN1PowBeta, CPowAlpha;
+        boolean useBatchAll = false;
+
+        try {
+            BigInteger[][] batchResults = BigIntegerUtils.batchModPowAll(
+                    rArr, sArr, onePlusN0Arr, onePlusN1Arr, cArr,
+                    n0ExpArr, n1ExpArr, betaForN0Arr, betaArr, alphaArr,
+                    N0sq, N1sq, N0sq, N1sq, N0sq
+            );
+
+            rPowN0 = batchResults[0];
+            sPowN1 = batchResults[1];
+            onePlusN0PowBeta = batchResults[2];
+            onePlusN1PowBeta = batchResults[3];
+            CPowAlpha = batchResults[4];
+            useBatchAll = true;
+        } catch (Exception e) {
+            logger.warn("batchModPowAll failed, falling back: {} - {}", 
+                e.getClass().getSimpleName(), e.getMessage());
+            rPowN0 = BigIntegerUtils.batchModPow(rArr, N0, N0sq);
+            sPowN1 = BigIntegerUtils.batchModPow(sArr, N1, N1sq);
+            onePlusN0PowBeta = BigIntegerUtils.batchModPow(onePlusN0Arr, betaForN0Arr, N0sq);
+            onePlusN1PowBeta = BigIntegerUtils.batchModPow(onePlusN1Arr, betaArr, N1sq);
+            CPowAlpha = BigIntegerUtils.batchModPow(
+                    java.util.Collections.nCopies(effectiveKappa, C).toArray(new BigInteger[0]),
+                    alphaArr,
+                    N0sq
+            );
+        }
+
+        final BigInteger[] finalRPowN0 = rPowN0;
+        final BigInteger[] finalSPowN1 = sPowN1;
+        final BigInteger[] finalOnePlusN0PowBeta = onePlusN0PowBeta;
+        final BigInteger[] finalOnePlusN1PowBeta = onePlusN1PowBeta;
+        final BigInteger[] finalCPowAlpha = CPowAlpha;
+
+        long batchEnd = System.nanoTime();
 
         BigInteger[] AjArr = new BigInteger[effectiveKappa];
         BigInteger[] BjArr = new BigInteger[effectiveKappa];
 
         java.util.stream.IntStream.range(0, effectiveKappa).parallel().forEach(i -> {
             AjArr[i] = BigIntegerUtils.modMul(
-                    BigIntegerUtils.modMul(CPowAlpha[i], onePlusN0PowBeta[i], N0sq),
-                    rPowN0[i],
+                    BigIntegerUtils.modMul(finalCPowAlpha[i], finalOnePlusN0PowBeta[i], N0sq),
+                    finalRPowN0[i],
                     N0sq
             );
 
-            BjArr[i] = BigIntegerUtils.modMul(onePlusN1PowBeta[i], sPowN1[i], N1sq);
+            BjArr[i] = BigIntegerUtils.modMul(finalOnePlusN1PowBeta[i], finalSPowN1[i], N1sq);
         });
 
         logger.debug("PiAffG modPow computed in {} ms",
-                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - batchStart));
+                TimeUnit.NANOSECONDS.toMillis(batchEnd - batchStart));
 
         ECPoint[] Rarr = new ECPoint[effectiveKappa];
         java.util.stream.IntStream.range(0, effectiveKappa).parallel().forEach(i -> {
@@ -287,6 +321,53 @@ public final class PresignProofs {
         return verifyAffGProofDetailed(proof, g, X, N0, N1, C, D, Y, kappa, epsBits, context).ok();
     }
 
+    public static Map<Integer, Boolean> verifyAffGBatchProofs(
+            Map<Integer, PiAffGProof> proofs,
+            Map<Integer, ECPoint> gammaMap,
+            Map<Integer, BigInteger> N0Map,
+            BigInteger N1,
+            Map<Integer, BigInteger> KMap,
+            Map<Integer, BigInteger> DMap,
+            Map<Integer, BigInteger> YMap,
+            int kappa,
+            int epsBits,
+            byte[] context) {
+        
+        if (proofs == null || proofs.isEmpty()) {
+            return java.util.Collections.emptyMap();
+        }
+
+        Map<Integer, Boolean> results = new java.util.concurrent.ConcurrentHashMap<>();
+
+        proofs.entrySet().parallelStream().forEach(entry -> {
+            int nodeId = entry.getKey();
+            PiAffGProof proof = entry.getValue();
+            ECPoint X = gammaMap.get(nodeId);
+            BigInteger N0 = N0Map.get(nodeId);
+            BigInteger C = KMap.get(nodeId);
+            BigInteger D = DMap.get(nodeId);
+            BigInteger Y = YMap.get(nodeId);
+
+            if (X == null || N0 == null || C == null || D == null || Y == null) {
+                results.put(nodeId, false);
+                return;
+            }
+
+            boolean ok = verifyAffGProof(proof, Secp256k1CurveUtils.G(), X, N0, N1, C, D, Y, kappa, epsBits, context);
+            results.put(nodeId, ok);
+        });
+
+        return results;
+    }
+
+    public static boolean verifyAffGBatchProofsAll(
+            Map<Integer, Boolean> results) {
+        if (results == null || results.isEmpty()) {
+            return false;
+        }
+        return results.values().stream().allMatch(Boolean::booleanValue);
+    }
+
     public static AffGVerifyResult verifyAffGProofDetailed(PiAffGProof proof,
                                                            ECPoint g,
                                                            ECPoint X,
@@ -353,14 +434,26 @@ public final class PresignProofs {
         boolean[] zInRangeResults = new boolean[n];
         boolean[] zPrimeInRangeResults = new boolean[n];
 
+        BigInteger[] z_arr = proof.z().toArray(new BigInteger[0]);
+        BigInteger[] zPrime_arr = proof.zPrime().toArray(new BigInteger[0]);
+        BigInteger[] zPrimeForN0_arr = new BigInteger[n];
+        for (int i = 0; i < n; i++) {
+            zPrimeForN0_arr[i] = negY ? zPrime_arr[i].negate() : zPrime_arr[i];
+        }
+        BigInteger[] w_arr = proof.w().toArray(new BigInteger[0]);
+        BigInteger[] A_arr = proof.A().toArray(new BigInteger[0]);
+        BigInteger[] lambda_arr = proof.lambda().toArray(new BigInteger[0]);
+        BigInteger[] B_arr = proof.B().toArray(new BigInteger[0]);
+
         java.util.stream.IntStream.range(0, n).parallel().forEach(i -> {
             BigInteger ei = e[i] ? BigInteger.ONE : BigInteger.ZERO;
-            BigInteger zi = proof.z().get(i);
-            BigInteger zpi = proof.zPrime().get(i);
-            BigInteger wi = proof.w().get(i);
-            BigInteger li = proof.lambda().get(i);
+            BigInteger zi = z_arr[i];
+            BigInteger zpi = zPrime_arr[i];
+            BigInteger wi = w_arr[i];
+            BigInteger li = lambda_arr[i];
 
-            BigInteger zPrimeForN0 = negY ? zpi.negate() : zpi;
+            // eq1
+            BigInteger zPrimeForN0 = zPrimeForN0_arr[i];
             BigInteger left1 = BigIntegerUtils.modMul(
                     BigIntegerUtils.modMul(
                             BigIntegerUtils.powSigned(C, zi, N0sq),
@@ -370,19 +463,21 @@ public final class PresignProofs {
                     BigIntegerUtils.modPow(wi, N0, N0sq),
                     N0sq
             );
-            BigInteger right1 = BigIntegerUtils.modMul(proof.A().get(i), BigIntegerUtils.modPow(D, ei, N0sq), N0sq);
+            BigInteger right1 = BigIntegerUtils.modMul(A_arr[i], BigIntegerUtils.modPow(D, ei, N0sq), N0sq);
             eq1Results[i] = left1.equals(right1);
 
+            // eq2
             ECPoint left2 = ecMulSigned(g, zi).normalize();
             ECPoint right2 = proof.R().get(i).add(X.multiply(ei)).normalize();
             eq2Results[i] = left2.equals(right2);
 
+            // eq3
             BigInteger left3 = BigIntegerUtils.modMul(
                     BigIntegerUtils.powSigned(onePlusN1, zpi, N1sq),
                     BigIntegerUtils.modPow(li, N1, N1sq),
                     N1sq
             );
-            BigInteger right3 = BigIntegerUtils.modMul(proof.B().get(i), BigIntegerUtils.modPow(Y, ei, N1sq), N1sq);
+            BigInteger right3 = BigIntegerUtils.modMul(B_arr[i], BigIntegerUtils.modPow(Y, ei, N1sq), N1sq);
             eq3Results[i] = left3.equals(right3);
 
             zInRangeResults[i] = zi.abs().compareTo(rangeBound) <= 0;
@@ -648,14 +743,45 @@ public final class PresignProofs {
 
         BigInteger onePlusN0 = N0.add(BigInteger.ONE);
 
+        BigInteger[] negAlphaArr = new BigInteger[effectiveKappa];
+        BigInteger[] onePlusN0Arr = new BigInteger[effectiveKappa];
+        BigInteger[] n0ExpArr = new BigInteger[effectiveKappa];
+        for (int i = 0; i < effectiveKappa; i++) {
+            negAlphaArr[i] = alphaArr[i].negate();
+            onePlusN0Arr[i] = onePlusN0;
+            n0ExpArr[i] = N0;
+        }
+
+        BigInteger[][] batchResults;
+        try {
+            batchResults = BigIntegerUtils.batchModPowAll(
+                    negAlphaArr, onePlusN0Arr, rArr, null, null,
+                    negAlphaArr, betaArr, n0ExpArr, null, null,
+                    N0sq, N0sq, N0sq, null, null
+            );
+        } catch (Exception ex) {
+            logger.warn("batchModPowAll failed for PiDec, falling back: {}", ex.getMessage());
+            BigInteger[] kPowNegAlpha = BigIntegerUtils.batchModPow(
+                    java.util.Collections.nCopies(effectiveKappa, K).toArray(new BigInteger[0]),
+                    negAlphaArr, N0sq);
+            BigInteger[] onePlusN0PowBeta = BigIntegerUtils.batchModPow(
+                    java.util.Collections.nCopies(effectiveKappa, onePlusN0).toArray(new BigInteger[0]),
+                    betaArr, N0sq);
+            BigInteger[] rPowN0 = BigIntegerUtils.batchModPow(rArr, N0, N0sq);
+            batchResults = new BigInteger[5][];
+            batchResults[0] = kPowNegAlpha;
+            batchResults[1] = onePlusN0PowBeta;
+            batchResults[2] = rPowN0;
+        }
+
+        BigInteger[] kPowNegAlpha = batchResults[0];
+        BigInteger[] onePlusN0PowBeta = batchResults[1];
+        BigInteger[] rPowN0 = batchResults[2];
+
         for (int i = 0; i < effectiveKappa; i++) {
             BigInteger Ai = BigIntegerUtils.modMul(
-                    BigIntegerUtils.modMul(
-                            BigIntegerUtils.powSigned(K, alphaArr[i].negate(), N0sq),
-                            BigIntegerUtils.powSigned(onePlusN0, betaArr[i], N0sq),
-                            N0sq
-                    ),
-                    BigIntegerUtils.modPow(rArr[i], N0, N0sq),
+                    BigIntegerUtils.modMul(kPowNegAlpha[i], onePlusN0PowBeta[i], N0sq),
+                    rPowN0[i],
                     N0sq
             );
             A.add(Ai);

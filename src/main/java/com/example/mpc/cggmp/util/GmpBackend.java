@@ -61,6 +61,20 @@ public final class GmpBackend implements BigIntegerBackend {
         return NativeBigInteger.batchModPow(bases, exps, mod);
     }
 
+    @Override
+    public BigInteger[][] batchModPowAll(
+            BigInteger[] bases1, BigInteger[] bases2, BigInteger[] bases3,
+            BigInteger[] bases4, BigInteger[] bases5,
+            BigInteger[] exps1, BigInteger[] exps2, BigInteger[] exps3,
+            BigInteger[] exps4, BigInteger[] exps5,
+            BigInteger mod1, BigInteger mod2, BigInteger mod3,
+            BigInteger mod4, BigInteger mod5) {
+        return NativeBigInteger.batchModPowAll(
+                bases1, bases2, bases3, bases4, bases5,
+                exps1, exps2, exps3, exps4, exps5,
+                mod1, mod2, mod3, mod4, mod5);
+    }
+
     /**
      * 批量模运算: 对多个val取模
      * vals[i] mod mod

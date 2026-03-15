@@ -126,6 +126,115 @@ public final class NativeBigInteger {
 
     private static native byte[][] nativeBatchModPowOptimized(byte[][] baseBytes, byte[] expBytes, byte[] modBytes);
 
+    public static boolean[] verifyAffGBatch(
+            BigInteger C, BigInteger[] z_arr,
+            BigInteger onePlusN0, BigInteger[] zPrimeForN0_arr,
+            BigInteger[] w_arr, BigInteger N0,
+            BigInteger D, boolean[] e_arr,
+            BigInteger[] A_arr, BigInteger N0sq) {
+
+        int n = z_arr.length;
+        boolean[] results = new boolean[n];
+
+        try {
+            byte[] C_bytes = C.toByteArray();
+            byte[][] z_bytes = toByteArrays(z_arr);
+            byte[] onePlusN0_bytes = onePlusN0.toByteArray();
+            byte[][] zPrimeForN0_bytes = toByteArrays(zPrimeForN0_arr);
+            byte[][] w_bytes = toByteArrays(w_arr);
+            byte[] N0_bytes = N0.toByteArray();
+            byte[] D_bytes = D.toByteArray();
+            byte[][] A_bytes = toByteArrays(A_arr);
+            byte[] N0sq_bytes = N0sq.toByteArray();
+
+            byte[] nativeResults = nativeVerifyAffGBatchV3(
+                    C_bytes, z_bytes, onePlusN0_bytes, zPrimeForN0_bytes,
+                    w_bytes, N0_bytes, D_bytes, e_arr, A_bytes, N0sq_bytes, n);
+
+            if (nativeResults != null && nativeResults.length == n) {
+                for (int i = 0; i < n; i++) {
+                    results[i] = (nativeResults[i] != 0);
+                }
+            } else {
+                for (int i = 0; i < n; i++) {
+                    results[i] = false;
+                }
+            }
+        } catch (Exception ex) {
+            for (int i = 0; i < n; i++) {
+                results[i] = false;
+            }
+        }
+
+        return results;
+    }
+
+    private static byte[][] toByteArrays(BigInteger[] arr) {
+        byte[][] result = new byte[arr.length][];
+        for (int i = 0; i < arr.length; i++) {
+            result[i] = arr[i].toByteArray();
+        }
+        return result;
+    }
+
+    private static native byte[] nativeVerifyAffGBatchV3(
+            byte[] C, byte[][] z_arr, byte[] onePlusN0,
+            byte[][] zPrimeForN0_arr, byte[][] w_arr, byte[] N0,
+            byte[] D, boolean[] e_arr, byte[][] A_arr, byte[] N0sq, int n);
+
+    private static native byte[] nativeVerifyAffGBatchV2(
+            byte[] C, byte[] z_packed, byte[] onePlusN0,
+            byte[] zPrimeForN0_packed, byte[] w_packed, byte[] N0,
+            byte[] D, boolean[] e_arr, byte[] A_packed, byte[] N0sq, int n);
+
+    private static native byte[] nativeVerifyAffGBatch(
+            byte[] C, byte[][] z_arr, byte[] onePlusN0,
+            byte[][] zPrimeForN0_arr, byte[][] w_arr, byte[] N0,
+            byte[] D, boolean[] e_arr, byte[][] A_arr, byte[] N0sq);
+
+    public static BigInteger[][] batchModPowAll(
+            BigInteger[] bases1, BigInteger[] bases2, BigInteger[] bases3,
+            BigInteger[] bases4, BigInteger[] bases5,
+            BigInteger[] exps1, BigInteger[] exps2, BigInteger[] exps3,
+            BigInteger[] exps4, BigInteger[] exps5,
+            BigInteger mod1, BigInteger mod2, BigInteger mod3,
+            BigInteger mod4, BigInteger mod5) {
+        
+        BigInteger[][] results = new BigInteger[5][];
+        
+        BigInteger[] r0 = (bases1 != null && exps1 != null && mod1 != null) ? batchModPow(bases1, exps1, mod1) : null;
+        BigInteger[] r1 = (bases2 != null && exps2 != null && mod2 != null) ? batchModPow(bases2, exps2, mod2) : null;
+        BigInteger[] r2 = (bases3 != null && exps3 != null && mod3 != null) ? batchModPow(bases3, exps3, mod3) : null;
+        BigInteger[] r3 = (bases4 != null && exps4 != null && mod4 != null) ? batchModPow(bases4, exps4, mod4) : null;
+        BigInteger[] r4 = (bases5 != null && exps5 != null && mod5 != null) ? batchModPow(bases5, exps5, mod5) : null;
+        
+        results[0] = r0;
+        results[1] = r1;
+        results[2] = r2;
+        results[3] = r3;
+        results[4] = r4;
+        
+        return results;
+    }
+
+    private static BigInteger[] computeBatch(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
+        return IntStream.range(0, bases.length)
+                .parallel()
+                .mapToObj(i -> bases[i].modPow(exps[i], mod))
+                .toArray(BigInteger[]::new);
+    }
+
+    private static byte[][] toByteArray(BigInteger[] arr) {
+        byte[][] result = new byte[arr.length][];
+        for (int i = 0; i < arr.length; i++) {
+            result[i] = arr[i].toByteArray();
+        }
+        return result;
+    }
+
+    private static native byte[][][] nativeBatchModPowAll(
+            byte[][][] baseBytes, byte[][][] expBytes, byte[][] modBytes);
+
     private static native int nativeJacobi(byte[] aBytes, byte[] nBytes);
 
     private static native int[] nativeBatchJacobi(byte[][] aBytes, byte[] nBytes);

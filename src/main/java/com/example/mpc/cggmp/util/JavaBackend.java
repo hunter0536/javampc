@@ -72,6 +72,24 @@ public final class JavaBackend implements BigIntegerBackend {
                 .toArray(BigInteger[]::new);
     }
 
+    @Override
+    public BigInteger[][] batchModPowAll(
+            BigInteger[] bases1, BigInteger[] bases2, BigInteger[] bases3,
+            BigInteger[] bases4, BigInteger[] bases5,
+            BigInteger[] exps1, BigInteger[] exps2, BigInteger[] exps3,
+            BigInteger[] exps4, BigInteger[] exps5,
+            BigInteger mod1, BigInteger mod2, BigInteger mod3,
+            BigInteger mod4, BigInteger mod5) {
+
+        BigInteger[][] results = new BigInteger[5][];
+        results[0] = (bases1 != null && exps1 != null && mod1 != null) ? batchModPow(bases1, exps1, mod1) : null;
+        results[1] = (bases2 != null && exps2 != null && mod2 != null) ? batchModPow(bases2, exps2, mod2) : null;
+        results[2] = (bases3 != null && exps3 != null && mod3 != null) ? batchModPow(bases3, exps3, mod3) : null;
+        results[3] = (bases4 != null && exps4 != null && mod4 != null) ? batchModPow(bases4, exps4, mod4) : null;
+        results[4] = (bases5 != null && exps5 != null && mod5 != null) ? batchModPow(bases5, exps5, mod5) : null;
+        return results;
+    }
+
     /**
      * 批量模运算: 对多个val取模
      * 使用并行流提高性能

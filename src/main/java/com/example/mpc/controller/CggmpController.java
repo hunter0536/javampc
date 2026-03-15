@@ -234,7 +234,7 @@ public class CggmpController {
 
                 cggmpSignatureService.startSignatureTask(signatureTaskId)
                         .exceptionally(ex -> {
-                            logger.error("Async GG20 signature process failed for task {}: {}", signatureTaskId, ex.getMessage(), ex);
+                            logger.error("Async CGGMP signature process failed for task {}: {}", signatureTaskId, ex.getMessage(), ex);
                             return null;
                         });
 

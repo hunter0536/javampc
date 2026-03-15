@@ -370,6 +370,17 @@ public final class CggmpSignatureEvidenceHandler {
                 if (allPeersPresent(task, senderId, proofs, D, F)) {
                     return false;
                 }
+                ECPoint Gamma = task.presignGamma.get(senderId);
+                BigInteger N1 = task.paillier.getPublicKeyInfo().n();
+                if (Gamma == null) {
+                    return false;
+                }
+                Map<Integer, PiAffGProof> proofMap = new java.util.HashMap<>();
+                Map<Integer, ECPoint> gammaMap = new java.util.HashMap<>();
+                Map<Integer, BigInteger> N0Map = new java.util.HashMap<>();
+                Map<Integer, BigInteger> KMap = new java.util.HashMap<>();
+                Map<Integer, BigInteger> DMap = new java.util.HashMap<>();
+                Map<Integer, BigInteger> YMap = new java.util.HashMap<>();
                 for (Map.Entry<Integer, BigInteger> e : D.entrySet()) {
                     int peerId = e.getKey();
                     if (peerId == senderId) {
@@ -378,23 +389,22 @@ public final class CggmpSignatureEvidenceHandler {
                     PiAffGProof proof = CggmpCodecUtils.decodePiAffGProof((Map<?, ?>) proofs.get(peerId));
                     BigInteger K_peer = task.presignK.get(peerId);
                     PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(peerId);
-                    ECPoint Gamma = task.presignGamma.get(senderId);
-                    if (Gamma == null || K_peer == null || pk == null) {
+                    if (K_peer == null || pk == null) {
                         return false;
                     }
-                    if (!PresignProofs.verifyAffGProof(proof,
-                            Secp256k1CurveUtils.G(),
-                            Gamma,
-                            pk.n(),
-                            task.paillier.getPublicKeyInfo().n(),
-                            K_peer,
-                            e.getValue(),
-                            F.get(peerId),
-                            svc.proofKappa,
-                            svc.proofEpsBits,
-                            CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2"))) {
-                        return false;
-                    }
+                    proofMap.put(peerId, proof);
+                    gammaMap.put(peerId, Gamma);
+                    N0Map.put(peerId, pk.n());
+                    KMap.put(peerId, K_peer);
+                    DMap.put(peerId, e.getValue());
+                    YMap.put(peerId, F.get(peerId));
+                }
+                byte[] context = CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2");
+                Map<Integer, Boolean> results = PresignProofs.verifyAffGBatchProofs(
+                        proofMap, gammaMap, N0Map, N1, KMap, DMap, YMap,
+                        svc.proofKappa, svc.proofEpsBits, context);
+                if (!PresignProofs.verifyAffGBatchProofsAll(results)) {
+                    return false;
                 }
             }
             if (proofsHat != null) {
@@ -408,6 +418,17 @@ public final class CggmpSignatureEvidenceHandler {
                 if (allPeersPresent(task, senderId, proofsHat, D, F)) {
                     return false;
                 }
+                ECPoint X = task.presignSTilde.get(senderId);
+                BigInteger N1 = task.paillier.getPublicKeyInfo().n();
+                if (X == null) {
+                    return false;
+                }
+                Map<Integer, PiAffGProof> proofMapHat = new java.util.HashMap<>();
+                Map<Integer, ECPoint> gammaMapHat = new java.util.HashMap<>();
+                Map<Integer, BigInteger> N0MapHat = new java.util.HashMap<>();
+                Map<Integer, BigInteger> KMapHat = new java.util.HashMap<>();
+                Map<Integer, BigInteger> DMapHat = new java.util.HashMap<>();
+                Map<Integer, BigInteger> YMapHat = new java.util.HashMap<>();
                 for (Map.Entry<Integer, BigInteger> e : D.entrySet()) {
                     int peerId = e.getKey();
                     if (peerId == senderId) {
@@ -416,23 +437,22 @@ public final class CggmpSignatureEvidenceHandler {
                     PiAffGProof proof = CggmpCodecUtils.decodePiAffGProof((Map<?, ?>) proofsHat.get(peerId));
                     BigInteger K_peer = task.presignK.get(peerId);
                     PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(peerId);
-                    ECPoint X = task.presignSTilde.get(senderId);
-                    if (X == null || K_peer == null || pk == null) {
+                    if (K_peer == null || pk == null) {
                         return false;
                     }
-                    if (!PresignProofs.verifyAffGProof(proof,
-                            Secp256k1CurveUtils.G(),
-                            X,
-                            pk.n(),
-                            task.paillier.getPublicKeyInfo().n(),
-                            K_peer,
-                            e.getValue(),
-                            F.get(peerId),
-                            svc.proofKappa,
-                            svc.proofEpsBits,
-                            CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2H"))) {
-                        return false;
-                    }
+                    proofMapHat.put(peerId, proof);
+                    gammaMapHat.put(peerId, X);
+                    N0MapHat.put(peerId, pk.n());
+                    KMapHat.put(peerId, K_peer);
+                    DMapHat.put(peerId, e.getValue());
+                    YMapHat.put(peerId, F.get(peerId));
+                }
+                byte[] contextHat = CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2H");
+                Map<Integer, Boolean> resultsHat = PresignProofs.verifyAffGBatchProofs(
+                        proofMapHat, gammaMapHat, N0MapHat, N1, KMapHat, DMapHat, YMapHat,
+                        svc.proofKappa, svc.proofEpsBits, contextHat);
+                if (!PresignProofs.verifyAffGBatchProofsAll(resultsHat)) {
+                    return false;
                 }
             }
             return true;

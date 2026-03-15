@@ -7,6 +7,13 @@
 #include <time.h>
 #include <fcntl.h>
 
+#ifdef __APPLE__
+#include <dispatch/dispatch.h>
+#define USE_GCD 1
+#else
+#define USE_GCD 0
+#endif
+
 static jclass bigIntegerClass = NULL;
 static jmethodID bigIntegerConstructor = NULL;
 static jmethodID bigIntegerToByteArray = NULL;
@@ -16,6 +23,64 @@ static pthread_once_t jni_ids_once = PTHREAD_ONCE_INIT;
 static JNIEnv *jni_env_for_once = NULL;
 static pthread_mutex_t jni_ids_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void throw_npe(JNIEnv *env, const char *message);
+
+// ==================== 预分配 mpz_t 池 ====================
+#define MAX_THREADS 16
+#define CACHE_LINE_SIZE 64
+
+// 预分配的 mpz_t 池（每个线程一组，避免 False Sharing）
+typedef struct {
+    mpz_t z, zP0, w, A, zP1, lam, B, t1, t2, t3, lv, rv;
+    char padding[CACHE_LINE_SIZE];
+} MpzPool;
+
+static MpzPool mpz_pools[MAX_THREADS];
+static int mpz_pools_initialized = 0;
+static pthread_mutex_t pool_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// 初始化预分配的 mpz_t 池
+static void init_mpz_pools(void) {
+    pthread_mutex_lock(&pool_init_mutex);
+    if (mpz_pools_initialized) {
+        pthread_mutex_unlock(&pool_init_mutex);
+        return;
+    }
+    for (int i = 0; i < MAX_THREADS; i++) {
+        mpz_inits(mpz_pools[i].z, mpz_pools[i].zP0, mpz_pools[i].w, mpz_pools[i].A,
+                  mpz_pools[i].zP1, mpz_pools[i].lam, mpz_pools[i].B,
+                  mpz_pools[i].t1, mpz_pools[i].t2, mpz_pools[i].t3,
+                  mpz_pools[i].lv, mpz_pools[i].rv, NULL);
+    }
+    mpz_pools_initialized = 1;
+    pthread_mutex_unlock(&pool_init_mutex);
+}
+
+// 程序启动时初始化
+__attribute__((constructor))
+static void init_native_lib(void) {
+    init_mpz_pools();
+}
+
+// 程序退出时清理
+__attribute__((destructor))
+static void cleanup_native_lib(void) {
+    if (mpz_pools_initialized) {
+        for (int i = 0; i < MAX_THREADS; i++) {
+            mpz_clears(mpz_pools[i].z, mpz_pools[i].zP0, mpz_pools[i].w, mpz_pools[i].A,
+                      mpz_pools[i].zP1, mpz_pools[i].lam, mpz_pools[i].B,
+                      mpz_pools[i].t1, mpz_pools[i].t2, mpz_pools[i].t3,
+                      mpz_pools[i].lv, mpz_pools[i].rv, NULL);
+        }
+    }
+}
+
+// 获取当前线程的 mpz_t 池
+static MpzPool* get_mpz_pool(int thread_id) {
+    if (thread_id >= 0 && thread_id < MAX_THREADS && mpz_pools_initialized) {
+        return &mpz_pools[thread_id];
+    }
+    return NULL;
+}
 
 static void init_two_pow_table_once(void) {
     for (int i = 0; i < 2048; i++) {
@@ -1059,5 +1124,332 @@ JNIEXPORT jbyteArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_na
     
     mpz_clears(prime, random_base, NULL);
     
+    return resultArray;
+}
+
+// ==================== 合并 eq1 和 eq3 的批量验证 ====================
+
+typedef struct {
+    jsize z_len, zPrimeForN0_len, w_len, A_len;
+    jsize zPrime_len, lambda_len, B_len;
+    jbyte* z_data, *zPrimeForN0_data, *w_data, *A_data;
+    jbyte* zPrime_data, *lambda_data, *B_data;
+} AllEqTaskItem;
+
+typedef struct {
+    AllEqTaskItem* tasks;
+    jsize start, end;
+    int thread_id;
+    mpz_t *C, *onePlusN0, *N0, *D, *N0sq;
+    mpz_t *onePlusN1, *N1, *Y, *N1sq;
+    jboolean* e_values;
+    jbyte* eq1_results, *eq3_results;
+} AllEqTaskArg;
+
+static void* verify_all_eq_worker(void* arg) {
+    AllEqTaskArg* t = (AllEqTaskArg*)arg;
+    mpz_t z, zP0, w, A, zP1, lam, B, t1, t2, t3, lv, rv;
+    mpz_inits(z, zP0, w, A, zP1, lam, B, t1, t2, t3, lv, rv, NULL);
+    
+    for (jsize i = t->start; i < t->end; i++) {
+        if (t->tasks[i].z_len > 0) bytes_to_mpz_direct(t->tasks[i].z_data, t->tasks[i].z_len, z); else mpz_set_ui(z, 0);
+        if (t->tasks[i].zPrimeForN0_len > 0) bytes_to_mpz_direct(t->tasks[i].zPrimeForN0_data, t->tasks[i].zPrimeForN0_len, zP0); else mpz_set_ui(zP0, 0);
+        if (t->tasks[i].w_len > 0) bytes_to_mpz_direct(t->tasks[i].w_data, t->tasks[i].w_len, w); else mpz_set_ui(w, 0);
+        if (t->tasks[i].A_len > 0) bytes_to_mpz_direct(t->tasks[i].A_data, t->tasks[i].A_len, A); else mpz_set_ui(A, 0);
+        
+        mpz_powm_signed(t1, *t->C, z, *t->N0sq);
+        mpz_powm_signed(t2, *t->onePlusN0, zP0, *t->N0sq);
+        mpz_powm(t3, w, *t->N0, *t->N0sq);
+        mpz_mul(lv, t1, t2); mpz_mod(lv, lv, *t->N0sq);
+        mpz_mul(lv, lv, t3); mpz_mod(lv, lv, *t->N0sq);
+        if (t->e_values[i]) { mpz_mul(rv, A, *t->D); mpz_mod(rv, rv, *t->N0sq); }
+        else mpz_mod(rv, A, *t->N0sq);
+        t->eq1_results[i] = (mpz_cmp(lv, rv) == 0) ? 1 : 0;
+        
+        if (t->tasks[i].zPrime_len > 0) bytes_to_mpz_direct(t->tasks[i].zPrime_data, t->tasks[i].zPrime_len, zP1); else mpz_set_ui(zP1, 0);
+        if (t->tasks[i].lambda_len > 0) bytes_to_mpz_direct(t->tasks[i].lambda_data, t->tasks[i].lambda_len, lam); else mpz_set_ui(lam, 0);
+        if (t->tasks[i].B_len > 0) bytes_to_mpz_direct(t->tasks[i].B_data, t->tasks[i].B_len, B); else mpz_set_ui(B, 0);
+        
+        mpz_powm_signed(t1, *t->onePlusN1, zP1, *t->N1sq);
+        mpz_powm(t2, lam, *t->N1, *t->N1sq);
+        mpz_mul(lv, t1, t2); mpz_mod(lv, lv, *t->N1sq);
+        if (t->e_values[i]) { mpz_mul(rv, B, *t->Y); mpz_mod(rv, rv, *t->N1sq); }
+        else mpz_mod(rv, B, *t->N1sq);
+        t->eq3_results[i] = (mpz_cmp(lv, rv) == 0) ? 1 : 0;
+    }
+    mpz_clears(z, zP0, w, A, zP1, lam, B, t1, t2, t3, lv, rv, NULL);
+    return NULL;
+}
+
+JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeVerifyAffGAllBatch(
+        JNIEnv *env, jclass cls,
+        jbyteArray C_bytes, jobjectArray z_arr, jbyteArray onePlusN0_bytes, jobjectArray zPrimeForN0_arr,
+        jobjectArray w_arr, jbyteArray N0_bytes, jbyteArray D_bytes, jobjectArray A_arr, jbyteArray N0sq_bytes,
+        jbyteArray onePlusN1_bytes, jobjectArray zPrime_arr, jobjectArray lambda_arr,
+        jbyteArray N1_bytes, jobjectArray B_arr, jbyteArray Y_bytes, jbyteArray N1sq_bytes,
+        jbooleanArray e_arr, jint n) {
+    
+    if (!C_bytes || !z_arr || !onePlusN0_bytes || !w_arr || !N0_bytes || !D_bytes || !A_arr || !N0sq_bytes ||
+        !onePlusN1_bytes || !zPrime_arr || !lambda_arr || !N1_bytes || !B_arr || !Y_bytes || !N1sq_bytes || !e_arr) {
+        throw_npe(env, "Null parameter"); return NULL;
+    }
+    init_two_pow_table();
+    if (n == 0) {
+        jclass baCls = (*env)->FindClass(env, "[B");
+        jobjectArray empty = (*env)->NewObjectArray(env, 2, baCls, NULL);
+        jbyteArray row = (*env)->NewByteArray(env, 0);
+        (*env)->SetObjectArrayElement(env, empty, 0, row);
+        (*env)->SetObjectArrayElement(env, empty, 1, row);
+        return empty;
+    }
+    
+    mpz_t C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq;
+    mpz_inits(C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq, NULL);
+    
+    jbyte* d; jsize dl;
+    #define LOAD_CONST(b, v) d = (*env)->GetByteArrayElements(env, b, NULL); dl = (*env)->GetArrayLength(env, b); bytes_to_mpz_direct(d, dl, v); (*env)->ReleaseByteArrayElements(env, b, d, JNI_ABORT)
+    LOAD_CONST(C_bytes, C);
+    LOAD_CONST(onePlusN0_bytes, onePlusN0);
+    LOAD_CONST(N0_bytes, N0);
+    LOAD_CONST(D_bytes, D);
+    LOAD_CONST(N0sq_bytes, N0sq);
+    LOAD_CONST(onePlusN1_bytes, onePlusN1);
+    LOAD_CONST(N1_bytes, N1);
+    LOAD_CONST(Y_bytes, Y);
+    LOAD_CONST(N1sq_bytes, N1sq);
+    #undef LOAD_CONST
+    
+    jboolean* e_values = (*env)->GetBooleanArrayElements(env, e_arr, NULL);
+    
+    AllEqTaskItem* tasks = (AllEqTaskItem*)malloc(n * sizeof(AllEqTaskItem));
+    if (!tasks) { mpz_clears(C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq, NULL); (*env)->ReleaseBooleanArrayElements(env, e_arr, e_values, JNI_ABORT); throw_npe(env, "OOM"); return NULL; }
+    
+    size_t sz_z=0, sz_zp0=0, sz_w=0, sz_A=0, sz_zp1=0, sz_lam=0, sz_B=0;
+    for (jsize i = 0; i < n; i++) {
+        jbyteArray a;
+        #define GET_LEN2(arr, len_field, sz_var) a = (jbyteArray)(*env)->GetObjectArrayElement(env, arr, i); tasks[i].len_field = (*env)->GetArrayLength(env, a); sz_var += tasks[i].len_field; (*env)->DeleteLocalRef(env, a)
+        GET_LEN2(z_arr, z_len, sz_z);
+        GET_LEN2(zPrimeForN0_arr, zPrimeForN0_len, sz_zp0);
+        GET_LEN2(w_arr, w_len, sz_w);
+        GET_LEN2(A_arr, A_len, sz_A);
+        GET_LEN2(zPrime_arr, zPrime_len, sz_zp1);
+        GET_LEN2(lambda_arr, lambda_len, sz_lam);
+        GET_LEN2(B_arr, B_len, sz_B);
+        #undef GET_LEN2
+    }
+    
+    jbyte *pool_z = malloc(sz_z?:1), *pool_zp0 = malloc(sz_zp0?:1), *pool_w = malloc(sz_w?:1), *pool_A = malloc(sz_A?:1);
+    jbyte *pool_zp1 = malloc(sz_zp1?:1), *pool_lam = malloc(sz_lam?:1), *pool_B = malloc(sz_B?:1);
+    if (!pool_z || !pool_zp0 || !pool_w || !pool_A || !pool_zp1 || !pool_lam || !pool_B) {
+        free(pool_z); free(pool_zp0); free(pool_w); free(pool_A); free(pool_zp1); free(pool_lam); free(pool_B);
+        free(tasks); mpz_clears(C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq, NULL);
+        (*env)->ReleaseBooleanArrayElements(env, e_arr, e_values, JNI_ABORT); throw_npe(env, "OOM"); return NULL;
+    }
+    
+    size_t off_z=0, off_zp0=0, off_w=0, off_A=0, off_zp1=0, off_lam=0, off_B=0;
+    for (jsize i = 0; i < n; i++) {
+        jbyteArray a;
+        #define COPY_DATA2(arr, len_field, data_field, pool, off) \
+            a = (jbyteArray)(*env)->GetObjectArrayElement(env, arr, i); \
+            if (tasks[i].len_field > 0) { (*env)->GetByteArrayRegion(env, a, 0, tasks[i].len_field, pool + off); tasks[i].data_field = pool + off; off += tasks[i].len_field; } \
+            else tasks[i].data_field = NULL; \
+            (*env)->DeleteLocalRef(env, a)
+        COPY_DATA2(z_arr, z_len, z_data, pool_z, off_z);
+        COPY_DATA2(zPrimeForN0_arr, zPrimeForN0_len, zPrimeForN0_data, pool_zp0, off_zp0);
+        COPY_DATA2(w_arr, w_len, w_data, pool_w, off_w);
+        COPY_DATA2(A_arr, A_len, A_data, pool_A, off_A);
+        COPY_DATA2(zPrime_arr, zPrime_len, zPrime_data, pool_zp1, off_zp1);
+        COPY_DATA2(lambda_arr, lambda_len, lambda_data, pool_lam, off_lam);
+        COPY_DATA2(B_arr, B_len, B_data, pool_B, off_B);
+        #undef COPY_DATA2
+    }
+    
+    jbyte *eq1_res = malloc(n), *eq3_res = malloc(n);
+    if (!eq1_res || !eq3_res) {
+        free(pool_z); free(pool_zp0); free(pool_w); free(pool_A); free(pool_zp1); free(pool_lam); free(pool_B);
+        free(eq1_res); free(eq3_res); free(tasks);
+        mpz_clears(C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq, NULL);
+        (*env)->ReleaseBooleanArrayElements(env, e_arr, e_values, JNI_ABORT); throw_npe(env, "OOM"); return NULL;
+    }
+    
+    // 使用预分配的 mpz_t 池和 pthread 并行
+    int nth = sysconf(_SC_NPROCESSORS_ONLN);
+    if (nth < 1) nth = 1;
+    if (nth > n) nth = n;
+    if (nth > MAX_THREADS) nth = MAX_THREADS;
+    
+    pthread_t* ths = malloc(nth * sizeof(pthread_t));
+    AllEqTaskArg* args = malloc(nth * sizeof(AllEqTaskArg));
+    jsize chunk = (n + nth - 1) / nth;
+    
+    for (int t = 0; t < nth; t++) {
+        args[t].tasks = tasks; args[t].start = t * chunk; args[t].end = (t+1) * chunk; if (args[t].end > n) args[t].end = n;
+        args[t].thread_id = t;
+        args[t].C = &C; args[t].onePlusN0 = &onePlusN0; args[t].N0 = &N0; args[t].D = &D; args[t].N0sq = &N0sq;
+        args[t].onePlusN1 = &onePlusN1; args[t].N1 = &N1; args[t].Y = &Y; args[t].N1sq = &N1sq;
+        args[t].e_values = e_values; args[t].eq1_results = eq1_res; args[t].eq3_results = eq3_res;
+        if (args[t].start < args[t].end) pthread_create(&ths[t], NULL, verify_all_eq_worker, &args[t]);
+    }
+    for (int t = 0; t < nth; t++) {
+        if (args[t].start < args[t].end) pthread_join(ths[t], NULL);
+    }
+    free(ths); free(args);
+    free(pool_z); free(pool_zp0); free(pool_w); free(pool_A); free(pool_zp1); free(pool_lam); free(pool_B);
+    free(tasks);
+    mpz_clears(C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq, NULL);
+    (*env)->ReleaseBooleanArrayElements(env, e_arr, e_values, JNI_ABORT);
+    
+    jclass baCls = (*env)->FindClass(env, "[B");
+    jobjectArray resultArray = (*env)->NewObjectArray(env, 2, baCls, NULL);
+    jbyteArray r1 = (*env)->NewByteArray(env, n); (*env)->SetByteArrayRegion(env, r1, 0, n, eq1_res);
+    jbyteArray r3 = (*env)->NewByteArray(env, n); (*env)->SetByteArrayRegion(env, r3, 0, n, eq3_res);
+    (*env)->SetObjectArrayElement(env, resultArray, 0, r1);
+    (*env)->SetObjectArrayElement(env, resultArray, 1, r3);
+    free(eq1_res); free(eq3_res);
+    return resultArray;
+}
+
+// ==================== 优化版本：使用 DirectByteBuffer ====================
+
+static int read_int_from_buffer(jbyte** ptr) {
+    int val = ((*ptr)[0] & 0xFF) << 24 | ((*ptr)[1] & 0xFF) << 16 | ((*ptr)[2] & 0xFF) << 8 | ((*ptr)[3] & 0xFF);
+    *ptr += 4;
+    return val;
+}
+
+static void read_mpz_from_buffer(jbyte** ptr, mpz_t dest) {
+    int len = read_int_from_buffer(ptr);
+    if (len > 0) {
+        bytes_to_mpz_direct(*ptr, len, dest);
+        *ptr += len;
+    } else {
+        mpz_set_ui(dest, 0);
+    }
+}
+
+JNIEXPORT jobjectArray JNICALL Java_com_example_mpc_cggmp_util_NativeBigInteger_nativeVerifyAffGAllBatchOptimized(
+        JNIEnv *env, jclass cls, jobject buffer, jint n) {
+    
+    init_two_pow_table();
+    
+    if (n == 0) {
+        jclass baCls = (*env)->FindClass(env, "[B");
+        jobjectArray empty = (*env)->NewObjectArray(env, 2, baCls, NULL);
+        jbyteArray row = (*env)->NewByteArray(env, 0);
+        (*env)->SetObjectArrayElement(env, empty, 0, row);
+        (*env)->SetObjectArrayElement(env, empty, 1, row);
+        return empty;
+    }
+    
+    jbyte* data = (*env)->GetDirectBufferAddress(env, buffer);
+    if (!data) {
+        throw_npe(env, "Invalid buffer");
+        return NULL;
+    }
+    
+    jbyte* ptr = data;
+    int n_read = read_int_from_buffer(&ptr);
+    (void)n_read;
+    
+    mpz_t C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq;
+    mpz_inits(C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq, NULL);
+    
+    read_mpz_from_buffer(&ptr, C);
+    read_mpz_from_buffer(&ptr, onePlusN0);
+    read_mpz_from_buffer(&ptr, N0);
+    read_mpz_from_buffer(&ptr, D);
+    read_mpz_from_buffer(&ptr, N0sq);
+    read_mpz_from_buffer(&ptr, onePlusN1);
+    read_mpz_from_buffer(&ptr, N1);
+    read_mpz_from_buffer(&ptr, Y);
+    read_mpz_from_buffer(&ptr, N1sq);
+    
+    AllEqTaskItem* tasks = (AllEqTaskItem*)malloc(n * sizeof(AllEqTaskItem));
+    if (!tasks) {
+        mpz_clears(C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq, NULL);
+        throw_npe(env, "OOM");
+        return NULL;
+    }
+    
+    // 第一遍：计算总大小
+    size_t sz_z=0, sz_zp0=0, sz_w=0, sz_A=0, sz_zp1=0, sz_lam=0, sz_B=0;
+    jbyte* ptr_save = ptr;
+    for (int i = 0; i < n; i++) {
+        int len;
+        len = read_int_from_buffer(&ptr); tasks[i].z_len = len; sz_z += len; ptr += len;
+        len = read_int_from_buffer(&ptr); tasks[i].zPrimeForN0_len = len; sz_zp0 += len; ptr += len;
+        len = read_int_from_buffer(&ptr); tasks[i].w_len = len; sz_w += len; ptr += len;
+        len = read_int_from_buffer(&ptr); tasks[i].A_len = len; sz_A += len; ptr += len;
+        len = read_int_from_buffer(&ptr); tasks[i].zPrime_len = len; sz_zp1 += len; ptr += len;
+        len = read_int_from_buffer(&ptr); tasks[i].lambda_len = len; sz_lam += len; ptr += len;
+        len = read_int_from_buffer(&ptr); tasks[i].B_len = len; sz_B += len; ptr += len;
+    }
+    ptr = ptr_save;
+    
+    jbyte *pool_z = malloc(sz_z?:1), *pool_zp0 = malloc(sz_zp0?:1), *pool_w = malloc(sz_w?:1), *pool_A = malloc(sz_A?:1);
+    jbyte *pool_zp1 = malloc(sz_zp1?:1), *pool_lam = malloc(sz_lam?:1), *pool_B = malloc(sz_B?:1);
+    
+    // 第二遍：复制数据
+    size_t off_z=0, off_zp0=0, off_w=0, off_A=0, off_zp1=0, off_lam=0, off_B=0;
+    for (int i = 0; i < n; i++) {
+        tasks[i].z_len = read_int_from_buffer(&ptr);
+        if (tasks[i].z_len > 0) { tasks[i].z_data = pool_z + off_z; memcpy(tasks[i].z_data, ptr, tasks[i].z_len); ptr += tasks[i].z_len; off_z += tasks[i].z_len; }
+        else tasks[i].z_data = NULL;
+        tasks[i].zPrimeForN0_len = read_int_from_buffer(&ptr);
+        if (tasks[i].zPrimeForN0_len > 0) { tasks[i].zPrimeForN0_data = pool_zp0 + off_zp0; memcpy(tasks[i].zPrimeForN0_data, ptr, tasks[i].zPrimeForN0_len); ptr += tasks[i].zPrimeForN0_len; off_zp0 += tasks[i].zPrimeForN0_len; }
+        else tasks[i].zPrimeForN0_data = NULL;
+        tasks[i].w_len = read_int_from_buffer(&ptr);
+        if (tasks[i].w_len > 0) { tasks[i].w_data = pool_w + off_w; memcpy(tasks[i].w_data, ptr, tasks[i].w_len); ptr += tasks[i].w_len; off_w += tasks[i].w_len; }
+        else tasks[i].w_data = NULL;
+        tasks[i].A_len = read_int_from_buffer(&ptr);
+        if (tasks[i].A_len > 0) { tasks[i].A_data = pool_A + off_A; memcpy(tasks[i].A_data, ptr, tasks[i].A_len); ptr += tasks[i].A_len; off_A += tasks[i].A_len; }
+        else tasks[i].A_data = NULL;
+        tasks[i].zPrime_len = read_int_from_buffer(&ptr);
+        if (tasks[i].zPrime_len > 0) { tasks[i].zPrime_data = pool_zp1 + off_zp1; memcpy(tasks[i].zPrime_data, ptr, tasks[i].zPrime_len); ptr += tasks[i].zPrime_len; off_zp1 += tasks[i].zPrime_len; }
+        else tasks[i].zPrime_data = NULL;
+        tasks[i].lambda_len = read_int_from_buffer(&ptr);
+        if (tasks[i].lambda_len > 0) { tasks[i].lambda_data = pool_lam + off_lam; memcpy(tasks[i].lambda_data, ptr, tasks[i].lambda_len); ptr += tasks[i].lambda_len; off_lam += tasks[i].lambda_len; }
+        else tasks[i].lambda_data = NULL;
+        tasks[i].B_len = read_int_from_buffer(&ptr);
+        if (tasks[i].B_len > 0) { tasks[i].B_data = pool_B + off_B; memcpy(tasks[i].B_data, ptr, tasks[i].B_len); ptr += tasks[i].B_len; off_B += tasks[i].B_len; }
+        else tasks[i].B_data = NULL;
+    }
+    
+    int e_len = read_int_from_buffer(&ptr);
+    jboolean* e_values = (jboolean*)malloc(e_len * sizeof(jboolean));
+    for (int i = 0; i < e_len; i++) {
+        e_values[i] = ptr[i] != 0;
+    }
+    ptr += e_len;
+    
+    jbyte *eq1_res = malloc(n), *eq3_res = malloc(n);
+    
+    int nth = sysconf(_SC_NPROCESSORS_ONLN); if (nth < 1) nth = 1; if (nth > n) nth = n;
+    pthread_t* ths = malloc(nth * sizeof(pthread_t));
+    AllEqTaskArg* args = malloc(nth * sizeof(AllEqTaskArg));
+    jsize chunk = (n + nth - 1) / nth;
+    
+    for (int t = 0; t < nth; t++) {
+        args[t].tasks = tasks; args[t].start = t * chunk; args[t].end = (t+1) * chunk; if (args[t].end > n) args[t].end = n;
+        args[t].thread_id = t;
+        args[t].C = &C; args[t].onePlusN0 = &onePlusN0; args[t].N0 = &N0; args[t].D = &D; args[t].N0sq = &N0sq;
+        args[t].onePlusN1 = &onePlusN1; args[t].N1 = &N1; args[t].Y = &Y; args[t].N1sq = &N1sq;
+        args[t].e_values = e_values; args[t].eq1_results = eq1_res; args[t].eq3_results = eq3_res;
+        if (args[t].start < args[t].end) pthread_create(&ths[t], NULL, verify_all_eq_worker, &args[t]);
+    }
+    for (int t = 0; t < nth; t++) if (args[t].start < args[t].end) pthread_join(ths[t], NULL);
+    
+    free(ths); free(args);
+    free(pool_z); free(pool_zp0); free(pool_w); free(pool_A); free(pool_zp1); free(pool_lam); free(pool_B);
+    free(tasks); free(e_values);
+    mpz_clears(C, onePlusN0, N0, D, N0sq, onePlusN1, N1, Y, N1sq, NULL);
+    
+    jclass baCls = (*env)->FindClass(env, "[B");
+    jobjectArray resultArray = (*env)->NewObjectArray(env, 2, baCls, NULL);
+    jbyteArray r1 = (*env)->NewByteArray(env, n); (*env)->SetByteArrayRegion(env, r1, 0, n, eq1_res);
+    jbyteArray r3 = (*env)->NewByteArray(env, n); (*env)->SetByteArrayRegion(env, r3, 0, n, eq3_res);
+    (*env)->SetObjectArrayElement(env, resultArray, 0, r1);
+    (*env)->SetObjectArrayElement(env, resultArray, 1, r3);
+    free(eq1_res); free(eq3_res);
     return resultArray;
 }

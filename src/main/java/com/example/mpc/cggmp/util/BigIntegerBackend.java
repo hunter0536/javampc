@@ -14,6 +14,14 @@ public interface BigIntegerBackend {
 
     BigInteger[] batchModPow(BigInteger[] bases, BigInteger[] exps, BigInteger mod);
 
+    BigInteger[][] batchModPowAll(
+            BigInteger[] bases1, BigInteger[] bases2, BigInteger[] bases3,
+            BigInteger[] bases4, BigInteger[] bases5,
+            BigInteger[] exps1, BigInteger[] exps2, BigInteger[] exps3,
+            BigInteger[] exps4, BigInteger[] exps5,
+            BigInteger mod1, BigInteger mod2, BigInteger mod3,
+            BigInteger mod4, BigInteger mod5);
+
     BigInteger[] batchMod(BigInteger[] vals, BigInteger mod);
 
     BigInteger crt(BigInteger a, BigInteger p, BigInteger b, BigInteger q, BigInteger n);

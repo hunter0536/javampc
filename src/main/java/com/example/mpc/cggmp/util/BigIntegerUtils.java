@@ -54,6 +54,19 @@ public final class BigIntegerUtils {
         return BACKEND.batchModPow(bases, exps, mod);
     }
 
+    public static BigInteger[][] batchModPowAll(
+            BigInteger[] bases1, BigInteger[] bases2, BigInteger[] bases3,
+            BigInteger[] bases4, BigInteger[] bases5,
+            BigInteger[] exps1, BigInteger[] exps2, BigInteger[] exps3,
+            BigInteger[] exps4, BigInteger[] exps5,
+            BigInteger mod1, BigInteger mod2, BigInteger mod3,
+            BigInteger mod4, BigInteger mod5) {
+        return BACKEND.batchModPowAll(
+                bases1, bases2, bases3, bases4, bases5,
+                exps1, exps2, exps3, exps4, exps5,
+                mod1, mod2, mod3, mod4, mod5);
+    }
+
     public static BigInteger randomZnStar(BigInteger n, SecureRandom rnd) {
         if (n.compareTo(BigInteger.valueOf(3)) <= 0) {
             throw new IllegalArgumentException("n must be greater than 3");

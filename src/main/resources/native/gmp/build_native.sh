@@ -40,7 +40,7 @@ elif [ "$OS" = "Linux" ]; then
     LIB_NAME="libmpc_gmp.so"
     JAVA_HOME="${JAVA_HOME:-$(dirname $(dirname $(readlink -f $(which java))))}"
     INCLUDES="-I$JAVA_HOME/include -I$JAVA_HOME/include/linux"
-    FLAGS="-shared -fPIC -O3"
+    FLAGS="-shared -fPIC -O3 -fopenmp"
 else
     echo "Unsupported OS: $OS"
     echo "Native acceleration will be disabled, using Java BigInteger fallback."
