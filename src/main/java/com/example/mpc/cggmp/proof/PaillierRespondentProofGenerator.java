@@ -11,6 +11,7 @@ import java.security.SecureRandom;
 import java.util.Objects;
 
 public class PaillierRespondentProofGenerator implements RespondentProofGenerator {
+    @Override
     public PaillierRespondentProof createProof(PaillierRespondentEncryptionWitness witness, byte[] context) {
         Objects.requireNonNull(witness, "witness");
 
@@ -40,27 +41,27 @@ public class PaillierRespondentProofGenerator implements RespondentProofGenerato
 
         var gPowGamma = onePlusN(gamma, n, nsq);
 
-        var betaPowN = beta.modPow(n, nsq);
-        var ciPowAlpha = witness.c_i().modPow(alpha, nsq);
+        var betaPowN = BigIntegerUtils.modPow(beta, n, nsq);
+        var ciPowAlpha = BigIntegerUtils.modPow(witness.c_i(), alpha, nsq);
 
-        var h1b = h1.modPow(witness.b(), hatN);
-        var h2rho = h2.modPow(rho, hatN);
-        var h1alpha = h1.modPow(alpha, hatN);
-        var h2sigma = h2.modPow(sigma, hatN);
+        var h1b = BigIntegerUtils.modPow(h1, witness.b(), hatN);
+        var h2rho = BigIntegerUtils.modPow(h2, rho, hatN);
+        var h1alpha = BigIntegerUtils.modPow(h1, alpha, hatN);
+        var h2sigma = BigIntegerUtils.modPow(h2, sigma, hatN);
 
-        var h2tau = h2.modPow(tau, hatN);
-        var h1y = h1.modPow(witness.y(), hatN);
-        var h1gamma = h1.modPow(gamma, hatN);
+        var h2tau = BigIntegerUtils.modPow(h2, tau, hatN);
+        var h1y = BigIntegerUtils.modPow(h1, witness.y(), hatN);
+        var h1gamma = BigIntegerUtils.modPow(h1, gamma, hatN);
 
-        var z = h1b.multiply(h2rho).mod(hatN);
-        var zPrime = h1alpha.multiply(h2sigma).mod(hatN);
+        var z = BigIntegerUtils.modMul(h1b, h2rho, hatN);
+        var zPrime = BigIntegerUtils.modMul(h1alpha, h2sigma, hatN);
 
-        var t = h1y.multiply(h2tau).mod(hatN);
+        var t = BigIntegerUtils.modMul(h1y, h2tau, hatN);
 
-        var v = ciPowAlpha.multiply(gPowGamma).mod(nsq);
-        v = v.multiply(betaPowN).mod(nsq);
+        var v = BigIntegerUtils.modMul(ciPowAlpha, gPowGamma, nsq);
+        v = BigIntegerUtils.modMul(v, betaPowN, nsq);
 
-        var w = h1gamma.multiply(h2tau).mod(hatN);
+        var w = BigIntegerUtils.modMul(h1gamma, h2tau, hatN);
 
         var ctx = (context == null) ? new byte[0] : context;
 
@@ -81,7 +82,7 @@ public class PaillierRespondentProofGenerator implements RespondentProofGenerato
         var t1 = e.multiply(witness.y()).add(gamma);
         var t2 = e.multiply(tau).add(tau);
 
-        var s = witness.r().modPow(e, n).multiply(beta).mod(n);
+        var s = BigIntegerUtils.modMul(BigIntegerUtils.modPow(witness.r(), e, n), beta, n);
 
         return new PaillierRespondentProof(
                 z.toByteArray(),

@@ -3,21 +3,24 @@ package com.example.mpc.service.cggmp.dkg;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpDkgTask;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
-import com.example.mpc.common.util.RetryUtils;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -56,6 +59,21 @@ public final class CggmpDkgMessageHandler {
     }
 
     /**
+     * 广播DKG提交确认消息
+     */
+    CompletableFuture<Void> sendDkgCommit(CggmpDkgTask task) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("taskId", task.taskId);
+        data.put("executionId", task.executionId);
+        data.put("senderId", svc.nodeId);
+        return RetryUtils.retryAsync(svc.dkgScheduler, logger,
+                () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_COMMIT, data)),
+                Constants.BROADCAST_RETRY_COUNT,
+                Constants.BROADCAST_RETRY_INTERVAL_MS,
+                "CGGMP_DKG_COMMIT");
+    }
+
+    /**
      * 处理DKG初始化消息
      */
     void onDkgInit(int senderId, Object data) {
@@ -65,8 +83,8 @@ public final class CggmpDkgMessageHandler {
             int nodesCount = (Integer) dataMap.get("nodesCount");
             int initiatorId = dataMap.get("initiatorId") instanceof Number n ? n.intValue() : senderId;
             Set<Integer> participants = null;
-            if (dataMap.get("participants") instanceof java.util.Collection<?> coll) {
-                java.util.LinkedHashSet<Integer> p = new java.util.LinkedHashSet<>();
+            if (dataMap.get("participants") instanceof Collection<?> coll) {
+                LinkedHashSet<Integer> p = new LinkedHashSet<>();
                 for (Object o : coll) {
                     if (o instanceof Number n) {
                         p.add(n.intValue());
@@ -81,22 +99,26 @@ public final class CggmpDkgMessageHandler {
                         taskId, participants.size(), nodesCount);
                 return;
             }
-            logger.info("Received CGGMP_DKG_INIT from node {} for task: {}, nodesCount: {}, initiatorId={}, participants={}",
+            logger.debug("Received CGGMP_DKG_INIT from node {} for task: {}, nodesCount: {}, initiatorId={}, participants={}",
                     senderId, taskId, nodesCount, initiatorId, participants == null ? "default" : participants.size());
 
             if (executionId == null || executionId.isBlank()) {
                 throw new RuntimeException("Missing executionId");
             }
-            CggmpDkgTask task = svc.createDkgTaskInternal(taskId, executionId, nodesCount, svc.threshold, participants, initiatorId);
+
+            Object isHotWalletObj = dataMap.get("isHotWallet");
+            boolean isHotWallet = isHotWalletObj != null && (boolean) isHotWalletObj;
+
+            CggmpDkgTask task = svc.createDkgTaskInternal(taskId, executionId, nodesCount, svc.threshold, participants, initiatorId, isHotWallet);
             CggmpDkgTask existingTask = svc.dkgTasks.putIfAbsent(taskId, task);
 
             if (existingTask != null) {
-                logger.info("DKG task {} already exists, skipping creation", taskId);
+                logger.debug("DKG task {} already exists, skipping creation", taskId);
                 drainPendingRound1(existingTask);
                 return;
             }
 
-            logger.info("Created DKG task {} on node {}", taskId, svc.nodeId);
+            logger.debug("Created DKG task {} on node {}", taskId, svc.nodeId);
             drainPendingRound1(task);
 
             svc.dkgProtocolHandler.startDkgProcessInternal(taskId, false);
@@ -142,6 +164,15 @@ public final class CggmpDkgMessageHandler {
         CggmpDkgTask task = svc.dkgTasks.get(taskId);
         if (task == null) {
             cachePendingRound1(taskId, senderNodeId, dataMap);
+            // 再次检查任务是否已经创建（解决竞态条件问题）
+            // 使用同步块确保原子性
+            synchronized (pendingRound1ByTask) {
+                task = svc.dkgTasks.get(taskId);
+                if (task != null) {
+                    // 任务已创建，处理所有缓存的消息
+                    drainPendingRound1(task);
+                }
+            }
             return;
         }
         if (!executionId.equals(task.executionId)) {
@@ -346,7 +377,7 @@ public final class CggmpDkgMessageHandler {
             return;
         }
         if (task.round2Received.containsKey(senderNodeId)) {
-            logger.info("Already received Round2 from node {}, skipping", senderNodeId);
+            logger.debug("Already received Round2 from node {}, skipping", senderNodeId);
             return;
         }
         Map<?, ?> shares = (Map<?, ?>) dataMap.get("shares");
@@ -479,8 +510,8 @@ public final class CggmpDkgMessageHandler {
         task.fail();
         task.errorMessage = "DKG excluded offender " + offenderId + ": " + (reason == null ? "" : reason);
         if (svc.nodeId != task.initiatorId && dataMap.get("newTaskId") instanceof String newTaskId
-                && dataMap.get("participants") instanceof java.util.Collection<?> coll) {
-            java.util.LinkedHashSet<Integer> participants = new java.util.LinkedHashSet<>();
+                && dataMap.get("participants") instanceof Collection<?> coll) {
+            LinkedHashSet<Integer> participants = new LinkedHashSet<>();
             for (Object o : coll) {
                 if (o instanceof Number n) {
                     participants.add(n.intValue());
@@ -488,12 +519,38 @@ public final class CggmpDkgMessageHandler {
             }
             if (!participants.isEmpty()) {
                 String newExecutionId = dataMap.get("executionId") instanceof String v ? v : UUID.randomUUID().toString();
-                CggmpDkgTask newTask = svc.createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, participants, senderId);
+                CggmpDkgTask newTask = svc.createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, participants, senderId, task.isHotWallet);
                 svc.dkgTasks.putIfAbsent(newTaskId, newTask);
                 drainPendingRound1(newTask);
                 svc.dkgProtocolHandler.startDkgProcessInternal(newTaskId, false);
             }
         }
+    }
+
+    /**
+     * 处理DKG提交确认消息
+     */
+    void onDkgCommit(int senderId, Object data) {
+        if (!(data instanceof Map<?, ?> dataMap)) {
+            return;
+        }
+        String taskId = (String) dataMap.get("taskId");
+        String executionId = (String) dataMap.get("executionId");
+        if (taskId == null || executionId == null) {
+            return;
+        }
+        CggmpDkgTask task = svc.dkgTasks.get(taskId);
+        if (task == null || !task.executionId.equals(executionId)) {
+            return;
+        }
+        if (!task.participants.contains(senderId)) {
+            return;
+        }
+        if (task.commitAcks.putIfAbsent(senderId, Boolean.TRUE) == null && task.commitLatch.getCount() > 0) {
+            task.commitLatch.countDown();
+        }
+        logger.debug("DKG COMMIT received (taskId={}, senderId={}, commitLatch={})",
+                taskId, senderId, task.commitLatch.getCount());
     }
 
     /**
@@ -557,11 +614,14 @@ public final class CggmpDkgMessageHandler {
      * 处理待处理的Round 1消息
      */
     public void drainPendingRound1(CggmpDkgTask task) {
-        ConcurrentHashMap<Integer, Map<String, Object>> pending = pendingRound1ByTask.remove(task.taskId);
+        ConcurrentHashMap<Integer, Map<String, Object>> pending;
+        synchronized (pendingRound1ByTask) {
+            pending = pendingRound1ByTask.remove(task.taskId);
+        }
         if (pending == null || pending.isEmpty()) {
             return;
         }
-        logger.info("Replaying {} pending DKG Round1 messages for task {}", pending.size(), task.taskId);
+        logger.debug("Replaying {} pending DKG Round1 messages for task {}", pending.size(), task.taskId);
         for (Map.Entry<Integer, Map<String, Object>> entry : pending.entrySet()) {
             try {
                 onDkgRound1(entry.getKey(), entry.getValue());
@@ -747,7 +807,7 @@ public final class CggmpDkgMessageHandler {
         data.put("offenderId", offenderId);
         data.put("reason", reason);
         data.put("newTaskId", newTaskId);
-        data.put("participants", new java.util.ArrayList<>(newParticipants));
+        data.put("participants", new ArrayList<>(newParticipants));
         return RetryUtils.retryAsync(svc.dkgScheduler, logger,
                 () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_DKG_EXCLUDE, data)),
                 Constants.BROADCAST_RETRY_COUNT,
@@ -761,7 +821,7 @@ public final class CggmpDkgMessageHandler {
             task.errorMessage = "DKG complaint (offender not participant): " + reason;
             return;
         }
-        Set<Integer> newParticipants = new java.util.LinkedHashSet<>(task.participants);
+        Set<Integer> newParticipants = new LinkedHashSet<>(task.participants);
         newParticipants.remove(offenderId);
         if (newParticipants.isEmpty()) {
             task.fail();
@@ -770,7 +830,7 @@ public final class CggmpDkgMessageHandler {
         }
         String newTaskId = UUID.randomUUID().toString();
         String newExecutionId = UUID.randomUUID().toString();
-        CggmpDkgTask newTask = svc.createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, newParticipants, task.initiatorId);
+        CggmpDkgTask newTask = svc.createDkgTaskInternal(newTaskId, newExecutionId, task.nodesCount, task.threshold, newParticipants, task.initiatorId, task.isHotWallet);
         svc.dkgTasks.putIfAbsent(newTaskId, newTask);
         drainPendingRound1(newTask);
         logger.warn("DKG exclusion: offender {} removed, restarting DKG task {}", offenderId, newTaskId);
@@ -802,15 +862,17 @@ public final class CggmpDkgMessageHandler {
         if (taskId == null) {
             return;
         }
-        ConcurrentHashMap<Integer, Map<String, Object>> pending =
-                pendingRound1ByTask.computeIfAbsent(taskId, ignored -> new ConcurrentHashMap<>());
-        Map<String, Object> normalized = new HashMap<>();
-        for (Map.Entry<?, ?> entry : dataMap.entrySet()) {
-            if (entry.getKey() instanceof String key) {
-                normalized.put(key, entry.getValue());
+        synchronized (pendingRound1ByTask) {
+            ConcurrentHashMap<Integer, Map<String, Object>> pending =
+                    pendingRound1ByTask.computeIfAbsent(taskId, ignored -> new ConcurrentHashMap<>());
+            Map<String, Object> normalized = new HashMap<>();
+            for (Map.Entry<?, ?> entry : dataMap.entrySet()) {
+                if (entry.getKey() instanceof String key) {
+                    normalized.put(key, entry.getValue());
+                }
             }
+            pending.put(senderId, normalized);
         }
-        pending.put(senderId, normalized);
         logger.debug("Cached DKG Round1 from node {} for task {} (waiting for task creation)", senderId, taskId);
     }
 }

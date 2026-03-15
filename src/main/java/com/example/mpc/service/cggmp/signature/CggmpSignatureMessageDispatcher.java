@@ -31,13 +31,13 @@ public final class CggmpSignatureMessageDispatcher {
                 logTaskId = map.get("signatureTaskId");
             }
         }
-        logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
+        logger.debug("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
                 senderId, message.type(), logTaskId);
-        Executor executor = ThreadPoolUtil.getSingleThreadPool();
+        Executor executor = ThreadPoolUtil.getSignatureDispatchThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
                 Object data = message.data();
-                logger.info("=== CGGMP processing: type={} ===", message.type());
+                logger.debug("=== CGGMP processing: type={} ===", message.type());
                 switch (message.type()) {
                     case CGGMP_SIGN_INIT:
                     case CGGMP_SIGN_OFFLINE_INIT:

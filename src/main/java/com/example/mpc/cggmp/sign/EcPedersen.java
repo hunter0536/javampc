@@ -7,27 +7,27 @@ import java.math.BigInteger;
 import java.security.MessageDigest;
 
 public final class EcPedersen {
-    private static final BigInteger N = Secp256k1CurveUtils.n();
-    private static final ECPoint G = Secp256k1CurveUtils.G();
-    private static final ECPoint H = deriveH();
+    private static final BigInteger ORDER = Secp256k1CurveUtils.n();
+    private static final ECPoint BASE_POINT = Secp256k1CurveUtils.G();
+    private static final ECPoint COMMITMENT_POINT = deriveH();
 
     private EcPedersen() {
     }
 
     public static ECPoint G() {
-        return G;
+        return BASE_POINT;
     }
 
     public static ECPoint H() {
-        return H;
+        return COMMITMENT_POINT;
     }
 
     public static BigInteger n() {
-        return N;
+        return ORDER;
     }
 
     public static ECPoint commit(BigInteger value, BigInteger blinding) {
-        return G.multiply(value).add(H.multiply(blinding)).normalize();
+        return BASE_POINT.multiply(value).add(COMMITMENT_POINT.multiply(blinding)).normalize();
     }
 
     private static ECPoint deriveH() {
@@ -39,10 +39,11 @@ public final class EcPedersen {
         } catch (Exception e) {
             throw new RuntimeException("Failed to derive Pedersen H", e);
         }
-        BigInteger scalar = new BigInteger(1, hash).mod(N);
+
+        BigInteger scalar = new BigInteger(1, hash).mod(ORDER);
         if (scalar.signum() == 0) {
             scalar = BigInteger.ONE;
         }
-        return G.multiply(scalar).normalize();
+        return BASE_POINT.multiply(scalar).normalize();
     }
 }

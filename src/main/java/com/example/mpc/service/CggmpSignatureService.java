@@ -1,16 +1,19 @@
 package com.example.mpc.service;
 
 import com.example.mpc.cggmp.PaillierEncryption;
+import com.example.mpc.cggmp.presign.Presignature;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
+import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.AuxInfoDao;
 import com.example.mpc.dao.ComplaintDao;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.AuxInfo;
 import com.example.mpc.dto.CggmpSignatureTask;
+import com.example.mpc.enums.MessageType;
+import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import com.example.mpc.service.cggmp.signature.CggmpSignatureControlHandler;
 import com.example.mpc.service.cggmp.signature.CggmpSignatureEvidenceHandler;
 import com.example.mpc.service.cggmp.signature.CggmpSignatureMessageDispatcher;
@@ -18,7 +21,6 @@ import com.example.mpc.service.cggmp.signature.CggmpSignatureOfflineHandler;
 import com.example.mpc.service.cggmp.signature.CggmpSignatureOnlineHandler;
 import com.example.mpc.service.cggmp.signature.CggmpSignaturePresignHandler;
 import com.example.mpc.util.PresignUsageStore;
-import com.example.mpc.common.util.RetryUtils;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +28,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.Security;
 import java.util.ArrayList;
@@ -44,6 +47,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * CGGMP签名服务核心类
@@ -62,32 +66,35 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     public ComplaintDao complaintDao;
     @Autowired
     public AuxInfoDao auxInfoDao;
+    @Autowired
+    public HotWalletPresignPoolService presignPoolService;
 
     @Value("${node.id}")
     public int nodeId;
 
-    @Value("${app.cggmp.proof.kappa:128}")
+    @Value("${cggmp.proof.kappa:128}")
     public int proofKappa;
 
-    @Value("${app.cggmp.proof.epsBits:16}")
+    @Value("${cggmp.proof.epsBits:16}")
     public int proofEpsBits;
 
-    @Value("${app.cggmp.presign.retentionDays:30}")
+    @Value("${cggmp.presign.retentionDays:30}")
     public long presignRetentionDays;
-    @Value("${app.cggmp.presign.usagePath:databases/node-{nodeId}/presign-usage.jsonl}")
+    @Value("${cggmp.presign.usagePath:databases/node-{nodeId}/presign-usage.jsonl}")
     public String presignUsagePath;
-    @Value("${app.cggmp.presign.echoEnabled:true}")
+    @Value("${cggmp.presign.echoEnabled:true}")
     public boolean presignEchoEnabled;
-    @Value("${app.cggmp.presign.useRbc:false}")
+    @Value("${cggmp.presign.rbcEnabled:false}")
     public boolean presignUseRbc;
-    @Value("${app.cggmp.hdEnabled:false}")
+    @Value("${cggmp.hdEnabled:false}")
     public boolean hdEnabled;
-    @Value("${app.cggmp.complaint.logPath:logs/complaints.jsonl}")
+    @Value("${cggmp.complaint.logPath:logs/complaints.jsonl}")
     public String complaintLogPath;
     public final Map<String, CggmpSignatureTask> signatureTasks = new ConcurrentHashMap<>();
-    public static final ExecutorService signatureExecutorService = ThreadPoolUtil.getComputationThreadPool();
+    public static final ExecutorService signatureExecutorService = ThreadPoolUtil.getSignatureThreadPool();
 
     public final AtomicBoolean signatureInProgress = new AtomicBoolean(false);
+    public final Map<String, AtomicInteger> hotWalletSignatureLocks = new ConcurrentHashMap<>();
     public final int nodesCount = Constants.NODES_COUNT;
     public final int threshold = Constants.THRESHOLD;
     public final ScheduledExecutorService cggmpScheduler = Executors.newSingleThreadScheduledExecutor();
@@ -145,6 +152,133 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     }
 
     public String createSignatureTaskWithGroupKey(String groupPublicKey, String message) {
+        return createSignatureTaskWithGroupKey(groupPublicKey, message, false);
+    }
+
+    public boolean hasGroupPublicKey(String groupPublicKey) {
+        if (groupPublicKey == null || groupPublicKey.isEmpty()) {
+            return false;
+        }
+        String fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
+        fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
+        return keyShareService.findByGroupPublicKeySync(nodeId, fixedGroupPublicKey) != null;
+    }
+
+    public String createSignatureTaskWithGroupKey(String groupPublicKey, String message, boolean isHotWallet) {
+        int auxCount = auxInfoDao.countAuxSync(nodeId);
+        if (auxCount == 0) {
+            throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
+        }
+
+        if (isHotWallet) {
+            AtomicInteger lock = hotWalletSignatureLocks.computeIfAbsent(groupPublicKey, k -> new AtomicInteger(0));
+            int maxConcurrent = 10;
+            if (lock.incrementAndGet() > maxConcurrent) {
+                lock.decrementAndGet();
+                throw new RuntimeException("Too many concurrent signature tasks for hot wallet: " + groupPublicKey);
+            }
+        } else {
+            if (!signatureInProgress.compareAndSet(false, true)) {
+                throw new RuntimeException("Signature process is already in progress");
+            }
+        }
+
+        try {
+            AuxInfo auxInfo = auxInfoDao.loadLatestSync(nodeId);
+
+            String fixedGroupPublicKey;
+            fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
+            fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
+            String taskId = UUID.randomUUID().toString();
+            CggmpSignatureTask task = new CggmpSignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId, null, isHotWallet);
+            task.auxTaskId = auxInfo.getTaskId();
+            initTaskPaillierAndZkSetup(task, auxInfo);
+            signatureTasks.put(taskId, task);
+            return taskId;
+        } catch (RuntimeException e) {
+            if (isHotWallet) {
+                hotWalletSignatureLocks.get(groupPublicKey).decrementAndGet();
+            } else {
+                signatureInProgress.set(false);
+            }
+            throw e;
+        }
+    }
+
+    public void createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants, String auxTaskId) {
+        createSignatureTaskWithIdAndGroupKey(signatureTaskId, groupPublicKey, message, initiatorId, participants, auxTaskId, false);
+    }
+
+    public void createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants, String auxTaskId, boolean isHotWallet) {
+        logger.debug("createSignatureTaskWithIdAndGroupKey called: taskId={}, isHotWallet={}, signatureInProgress={}",
+                signatureTaskId, isHotWallet, signatureInProgress.get());
+        if (!isHotWallet) {
+            if (!signatureInProgress.compareAndSet(false, true)) {
+                logger.warn("createSignatureTaskWithIdAndGroupKey FAILED: signatureInProgress is true, taskId={}", signatureTaskId);
+                throw new RuntimeException("Signature process is already in progress (non-hotwallet)");
+            }
+        } else {
+            AtomicInteger lock = hotWalletSignatureLocks.computeIfAbsent(groupPublicKey, k -> new AtomicInteger(0));
+            int maxConcurrent = 10;
+            if (lock.incrementAndGet() > maxConcurrent) {
+                lock.decrementAndGet();
+                logger.warn("createSignatureTaskWithIdAndGroupKey FAILED: too many concurrent tasks, taskId={}, groupPublicKey={}",
+                        signatureTaskId, groupPublicKey);
+                throw new RuntimeException("Too many concurrent signature tasks for hot wallet: " + groupPublicKey);
+            }
+        }
+
+        AuxInfo auxInfo;
+        boolean isInitiator = (initiatorId == nodeId);
+
+        if (isInitiator) {
+            auxInfo = auxInfoDao.loadLatestSync(nodeId);
+            if (auxInfo == null) {
+                if (!isHotWallet) {
+                    signatureInProgress.set(false);
+                }
+                throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
+            }
+            logger.info("Initiator loaded latest aux info: auxTaskId={}", auxInfo.getTaskId());
+        } else {
+            if (auxTaskId == null || auxTaskId.isEmpty()) {
+                logger.error("Participant received task without auxTaskId, terminating task {}", signatureTaskId);
+                if (!isHotWallet) {
+                    signatureInProgress.set(false);
+                }
+                throw new RuntimeException("Missing auxTaskId from initiator. Task terminated for security.");
+            }
+
+            auxInfo = auxInfoDao.loadLatestSync(nodeId);
+            if (auxInfo == null) {
+                if (!isHotWallet) {
+                    signatureInProgress.set(false);
+                }
+                throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
+            }
+
+            if (!auxTaskId.equals(auxInfo.getTaskId())) {
+                logger.error("Aux task ID mismatch! Received={}, Local latest={}, terminating task {}",
+                        auxTaskId, auxInfo.getTaskId(), signatureTaskId);
+                if (!isHotWallet) {
+                    signatureInProgress.set(false);
+                }
+                throw new RuntimeException("Aux task ID mismatch. Expected: " + auxTaskId +
+                        ", Local latest: " + auxInfo.getTaskId() + ". Task terminated for security.");
+            }
+            logger.info("Participant verified aux task ID: received={}, local latest={}", auxTaskId, auxInfo.getTaskId());
+        }
+
+        String fixedGroupPublicKey;
+        fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
+        fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
+        CggmpSignatureTask task = new CggmpSignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount, threshold, initiatorId, participants, isHotWallet);
+        task.auxTaskId = auxInfo.getTaskId();
+        initTaskPaillierAndZkSetup(task, auxInfo);
+        signatureTasks.put(signatureTaskId, task);
+    }
+
+    public String createPresignTask(String groupPublicKey, String message) {
         if (!signatureInProgress.compareAndSet(false, true)) {
             throw new RuntimeException("Signature process is already in progress");
         }
@@ -154,48 +288,31 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
             signatureInProgress.set(false);
             throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
         }
+        logger.info("Initiator loaded latest aux info for presign task: auxTaskId={}", auxInfo.getTaskId());
 
         String fixedGroupPublicKey;
         fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
         fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
-        String taskId = UUID.randomUUID().toString();
-        CggmpSignatureTask task = new CggmpSignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId);
+        CggmpSignatureTask task = new CggmpSignatureTask(message, message, fixedGroupPublicKey, nodesCount, threshold, nodeId, null, true);
         task.auxTaskId = auxInfo.getTaskId();
         initTaskPaillierAndZkSetup(task, auxInfo);
-        signatureTasks.put(taskId, task);
-        return taskId;
+        signatureTasks.put(message, task);
+        return message;
     }
 
-    public void createSignatureTaskWithIdAndGroupKey(String signatureTaskId, String groupPublicKey, String message, int initiatorId, Set<Integer> participants, String auxTaskId) {
-        if (!signatureInProgress.compareAndSet(false, true)) {
-            throw new RuntimeException("Signature process is already in progress");
+    public String getSignatureString(String taskId) {
+        CggmpSignatureTask task = signatureTasks.get(taskId);
+        if (task == null) {
+            return null;
         }
-
-        AuxInfo auxInfo;
-        if (auxTaskId != null && !auxTaskId.isEmpty()) {
-            auxInfo = auxInfoDao.loadByTaskId(nodeId, auxTaskId);
-        } else {
-            auxInfo = auxInfoDao.loadLatestSync(nodeId);
-        }
-        if (auxInfo == null) {
-            signatureInProgress.set(false);
-            throw new RuntimeException("Missing auxiliary info. Run AUX provisioning before signature.");
-        }
-
-        String fixedGroupPublicKey;
-        fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
-        fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
-        CggmpSignatureTask task = new CggmpSignatureTask(signatureTaskId, message, fixedGroupPublicKey, nodesCount, threshold, initiatorId, participants);
-        task.auxTaskId = auxInfo.getTaskId();
-        initTaskPaillierAndZkSetup(task, auxInfo);
-        signatureTasks.put(signatureTaskId, task);
+        return task.signature;
     }
 
     private void initTaskPaillierAndZkSetup(CggmpSignatureTask task, AuxInfo auxInfo) {
-        java.math.BigInteger p = new java.math.BigInteger(auxInfo.getPaillierP(), 16);
-        java.math.BigInteger q = new java.math.BigInteger(auxInfo.getPaillierQ(), 16);
-        java.math.BigInteger n = new java.math.BigInteger(auxInfo.getPaillierN(), 16);
-        java.math.BigInteger g = new java.math.BigInteger(auxInfo.getPaillierG(), 16);
+        BigInteger p = new BigInteger(auxInfo.getPaillierP(), 16);
+        BigInteger q = new BigInteger(auxInfo.getPaillierQ(), 16);
+        BigInteger n = new BigInteger(auxInfo.getPaillierN(), 16);
+        BigInteger g = new BigInteger(auxInfo.getPaillierG(), 16);
         task.paillier = new PaillierEncryption(p, q);
         if (!task.paillier.getPublicKeyInfo().n().equals(n)) {
             throw new RuntimeException("AUX Paillier n mismatch");
@@ -203,9 +320,9 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (!task.paillier.getPublicKeyInfo().g().equals(g)) {
             throw new RuntimeException("AUX Paillier g mismatch");
         }
-        java.math.BigInteger hatN = new java.math.BigInteger(auxInfo.getPedersenHatN(), 16);
-        java.math.BigInteger s = new java.math.BigInteger(auxInfo.getPedersenS(), 16);
-        java.math.BigInteger t = new java.math.BigInteger(auxInfo.getPedersenT(), 16);
+        BigInteger hatN = new BigInteger(auxInfo.getPedersenHatN(), 16);
+        BigInteger s = new BigInteger(auxInfo.getPedersenS(), 16);
+        BigInteger t = new BigInteger(auxInfo.getPedersenT(), 16);
         task.zkSetup = new ZKSetup(hatN, s, t);
     }
 
@@ -267,13 +384,13 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         if (info == null) {
             String msg = "Missing auxiliary info on local node " + nodeId;
             if (task != null) {
-                broadcastComplaint(task, null, msg, java.util.Map.of("nodeId", nodeId));
+                broadcastComplaint(task, null, msg, Map.of("nodeId", nodeId));
                 failSignatureTask(task, msg);
             }
             throw new RuntimeException(msg);
         }
         try {
-            java.util.Map<String, String> auxParams = com.example.mpc.common.util.DbMapUtils.buildAuxParams(info);
+            Map<String, String> auxParams = com.example.mpc.common.util.DbMapUtils.buildAuxParams(info);
             String auxHash = hashJsonMap(auxParams);
             String taskId = task == null ? "null" : task.taskId;
             logger.debug("Loaded local AUX for signature task {} (nodeId={}, auxHash={})", taskId, nodeId, auxHash);
@@ -283,11 +400,11 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return info;
     }
 
-    public boolean ensurePeerAuxConsistency(CggmpSignatureTask task, int peerId, java.util.Map<String, String> auxParams) {
+    public boolean ensurePeerAuxConsistency(CggmpSignatureTask task, int peerId, Map<String, String> auxParams) {
         if (task == null || auxParams == null) {
             return true;
         }
-        java.util.Map<String, String> existing = task.peerAuxParams.putIfAbsent(peerId, new java.util.HashMap<>(auxParams));
+        Map<String, String> existing = task.peerAuxParams.putIfAbsent(peerId, new HashMap<>(auxParams));
         if (existing == null) {
             String auxHash = hashJsonMap(auxParams);
             logger.debug("Recorded peer AUX params (taskId={}, peerId={}, auxHash={})", task.taskId, peerId, auxHash);
@@ -364,6 +481,12 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         }
         task.fail(reason);
         signatureInProgress.set(false);
+        if (task.isHotWallet) {
+            AtomicInteger lock = hotWalletSignatureLocks.get(task.groupPublicKey);
+            if (lock != null) {
+                lock.decrementAndGet();
+            }
+        }
     }
 
     public CompletableFuture<Void> broadcastComplaint(CggmpSignatureTask task, int offenderId, String reason) {
@@ -484,12 +607,15 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
     public CompletableFuture<Void> waitForLatchAsync(CountDownLatch latch, long timeoutSeconds, String label) {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(timeoutSeconds);
         CompletableFuture<Void> future = new CompletableFuture<>();
+        logger.debug("waitForLatchAsync started: label={}, timeout={}s, initialCount={}", label, timeoutSeconds, latch.getCount());
         ScheduledFuture<?> tick = cggmpScheduler.scheduleAtFixedRate(() -> {
             if (latch.getCount() == 0) {
+                logger.debug("waitForLatchAsync completed: label={}, finalCount=0", label);
                 future.complete(null);
                 return;
             }
             if (System.currentTimeMillis() >= deadline) {
+                logger.warn("waitForLatchAsync timeout: label={}, remainingCount={}, timeout={}s", label, latch.getCount(), timeoutSeconds);
                 future.completeExceptionally(new RuntimeException("Timeout waiting for " + label));
             }
         }, 0, 50, TimeUnit.MILLISECONDS);
@@ -497,4 +623,165 @@ public class CggmpSignatureService implements NodeService.MessageHandler {
         return future;
     }
 
+    public String createPresignTaskOnly(String groupPublicKey) {
+        int auxCount = auxInfoDao.countAuxSync(nodeId);
+        if (auxCount == 0) {
+            throw new RuntimeException("Missing auxiliary info. Run AUX provisioning first.");
+        }
+
+        logger.info("Creating presign-only task for groupPublicKey={}, nodeId={}", groupPublicKey, nodeId);
+
+        try {
+            AuxInfo auxInfo = auxInfoDao.loadLatestSync(nodeId);
+
+            String fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
+            fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
+
+            String taskId = "presign-offline-" + UUID.randomUUID().toString();
+            CggmpSignatureTask task = new CggmpSignatureTask(taskId, "", fixedGroupPublicKey, nodesCount, threshold, nodeId, null, true);
+            task.auxTaskId = auxInfo.getTaskId();
+            initTaskPaillierAndZkSetup(task, auxInfo);
+            signatureTasks.put(taskId, task);
+
+            logger.info("Created presign-only task: {}", taskId);
+            return taskId;
+        } catch (RuntimeException e) {
+            logger.error("Failed to create presign task: {}", e.getMessage());
+            throw e;
+        }
+    }
+
+    public Presignature executePresignOffline(String taskId) {
+        CggmpSignatureTask task = signatureTasks.get(taskId);
+        if (task == null) {
+            throw new RuntimeException("Presign task not found: " + taskId);
+        }
+
+        String groupPublicKey = task.groupPublicKey;
+        try {
+            if (!task.start()) {
+                throw new RuntimeException("Failed to start presign task");
+            }
+
+            offlineHandler.initSignatureContext(task);
+
+            offlineHandler.broadcastOfflineInit(task).get();
+            offlineHandler.runOfflinePhase(task).get();
+
+            waitForLatchAsync(task.offlineReadyLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "offline ready").get();
+
+            waitForLatchAsync(task.presignatureLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "presignature").get();
+
+            Presignature presignature = task.presignature;
+            if (presignature == null) {
+                throw new RuntimeException("Presignature not generated");
+            }
+
+            logger.info("Presign offline completed for task: {}", taskId);
+            return presignature;
+        } catch (Exception e) {
+            logger.error("Failed to execute presign offline: {}", e.getMessage());
+            throw new RuntimeException(e);
+        } finally {
+            signatureTasks.remove(taskId);
+            if (task != null && task.isHotWallet) {
+                AtomicInteger lock = hotWalletSignatureLocks.get(groupPublicKey);
+                if (lock != null) {
+                    lock.decrementAndGet();
+                    logger.debug("Released hotWalletSignatureLocks for groupPublicKey={}", groupPublicKey);
+                }
+            }
+        }
+    }
+
+    public String signWithPresignature(String groupPublicKey, String message, Presignature presignature) {
+        logger.info("signWithPresignature called: groupPublicKey={}, message={}, presignature={}",
+                groupPublicKey, message, presignature != null ? "present" : "null");
+
+        if (!nodeService.areAllPeerConnectionsActive()) {
+            throw new RuntimeException("Network not ready: not all peer connections are active");
+        }
+
+        AtomicInteger lock = hotWalletSignatureLocks.computeIfAbsent(groupPublicKey, k -> new AtomicInteger(0));
+        int maxConcurrent = 10;
+        if (lock.incrementAndGet() > maxConcurrent) {
+            lock.decrementAndGet();
+            throw new RuntimeException("Too many concurrent signature tasks for hot wallet: " + groupPublicKey);
+        }
+
+        String taskId = null;
+        try {
+            String fixedGroupPublicKey = java.net.URLDecoder.decode(groupPublicKey, StandardCharsets.UTF_8);
+            fixedGroupPublicKey = fixedGroupPublicKey.replace(' ', '+');
+
+            taskId = "sign-with-presign-" + UUID.randomUUID().toString();
+            CggmpSignatureTask task = new CggmpSignatureTask(taskId, message, fixedGroupPublicKey, nodesCount, threshold, nodeId, null, true);
+
+            AuxInfo auxInfo = auxInfoDao.loadLatestSync(nodeId);
+            if (auxInfo == null) {
+                throw new RuntimeException("Missing auxiliary info. Run AUX provisioning first.");
+            }
+            task.auxTaskId = auxInfo.getTaskId();
+            initTaskPaillierAndZkSetup(task, auxInfo);
+
+            task.presignature = presignature;
+            if (presignature.deltaTilde() != null) {
+                task.presignDeltaTilde.putAll(presignature.deltaTilde());
+            }
+            if (presignature.sTilde() != null) {
+                task.presignSTilde.putAll(presignature.sTilde());
+            }
+
+            task.groupPublicKeyPoint = com.example.mpc.cggmp.util.Secp256k1CurveUtils.decodePoint(
+                    com.example.mpc.common.util.HexUtils.hexToBytes(fixedGroupPublicKey));
+
+            task.messageHash = CggmpProtocolUtils.hashMessage(task.message);
+            logger.info("Computed messageHash for presign signature (redacted)");
+
+            signatureTasks.put(taskId, task);
+
+            if (!task.start()) {
+                throw new RuntimeException("Failed to start signature task");
+            }
+
+            for (int i = 0; i < task.participants.size() - 1; i++) {
+                task.offlineDoneLatch.countDown();
+            }
+            task.presignatureLatch.countDown();
+            logger.info("Pre-countdown {} offlineDoneLatch and presignatureLatch for presign signature (participants={})", task.participants.size() - 1, task.participants.size());
+
+            String signature;
+            try {
+                onlineHandler.broadcastOnlineInit(task).get();
+
+                for (int i = 0; i < task.participants.size() - 1; i++) {
+                    task.offlineReadyLatch.countDown();
+                }
+                logger.info("Initiator countdown offlineReadyLatch for hot wallet task {}", taskId);
+
+                waitForLatchAsync(task.offlineReadyLatch, Constants.SIGNATURE_COMMITMENT_TIMEOUT_SECONDS, "hot wallet participants ready").get();
+                logger.info("All participants ready for hot wallet task {}", taskId);
+
+                onlineHandler.runOnlinePhase(task).get();
+                signature = getSignatureString(taskId);
+                if (signature == null && task.signature != null) {
+                    signature = task.signature;
+                    logger.warn("getSignatureString returned null, using task.signature directly");
+                }
+                logger.info("Signature with presign completed for task: {} (signature redacted)", taskId);
+            } finally {
+                if (taskId != null) {
+                    signatureTasks.remove(taskId);
+                }
+                AtomicInteger lockRef = hotWalletSignatureLocks.get(groupPublicKey);
+                if (lockRef != null) {
+                    lockRef.decrementAndGet();
+                }
+            }
+            return signature;
+        } catch (Exception e) {
+            logger.error("Failed to sign with presignature: {}", e.getMessage());
+            throw new RuntimeException(e);
+        }
+    }
 }

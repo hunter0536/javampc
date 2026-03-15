@@ -1,5 +1,10 @@
 package com.example.mpc.controller;
 
+import com.example.mpc.common.request.ComplaintsQueryRequest;
+import com.example.mpc.common.request.RefreshStartRequest;
+import com.example.mpc.common.request.SignStartRequest;
+import com.example.mpc.common.request.SignatureTaskIdRequest;
+import com.example.mpc.common.request.TaskIdRequest;
 import com.example.mpc.common.response.ApiResponse;
 import com.example.mpc.common.response.AuxTaskStartResponse;
 import com.example.mpc.common.response.AuxTaskStatusResponse;
@@ -11,21 +16,27 @@ import com.example.mpc.common.response.SignatureResultResponse;
 import com.example.mpc.common.response.SignatureTaskStartResponse;
 import com.example.mpc.common.response.SignatureTaskStatusResponse;
 import com.example.mpc.common.util.JsonCodec;
+import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDiagnosticsService;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.CggmpSignatureService;
+import com.example.mpc.service.HotWalletPresignPoolService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
@@ -43,6 +54,8 @@ public class CggmpController {
     private CggmpAuxService cggmpAuxService;
     @Autowired
     private CggmpRefreshService cggmpRefreshService;
+    @Autowired
+    private HotWalletPresignPoolService presignPoolService;
 
     // ==================== AUX 接口 ====================
 
@@ -73,13 +86,14 @@ public class CggmpController {
     /**
      * 查询 AUX 任务状态
      *
-     * @param taskId 任务ID
+     * @param request 任务ID请求
      * @return 任务状态
      */
     @PostMapping("/aux/status")
-    public CompletableFuture<ApiResponse<AuxTaskStatusResponse>> getAuxStatus(@RequestParam(required = true) String taskId) {
+    public CompletableFuture<ApiResponse<AuxTaskStatusResponse>> getAuxStatus(@RequestBody TaskIdRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String taskId = request.getTaskId();
                 if (taskId == null || taskId.isEmpty()) {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }
@@ -100,11 +114,12 @@ public class CggmpController {
      * @return 任务ID
      */
     @GetMapping("/dkg/start")
-    public CompletableFuture<ApiResponse<DkgTaskStartResponse>> generateKey() {
+    public CompletableFuture<ApiResponse<DkgTaskStartResponse>> generateKey(
+            @RequestParam(required = false, defaultValue = "false") boolean isHotWallet) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                String taskId = cggmpDkgService.createDkgTask();
-                logger.info("Created CGGMP DKG task {}", taskId);
+                String taskId = cggmpDkgService.createDkgTask(isHotWallet);
+                logger.info("Created CGGMP DKG task {} with isHotWallet={}", taskId, isHotWallet);
 
                 cggmpDkgService.startDkgProcess(taskId)
                         .thenAccept(result -> logger.info("DKG process completed for task {}", taskId))
@@ -126,13 +141,14 @@ public class CggmpController {
     /**
      * 查询 DKG 任务状态
      *
-     * @param taskId 任务ID
+     * @param request 任务ID请求
      * @return 任务状态
      */
     @PostMapping("/dkg/status")
-    public CompletableFuture<ApiResponse<DkgTaskStatusResponse>> getTaskStatus(@RequestParam(required = true) String taskId) {
+    public CompletableFuture<ApiResponse<DkgTaskStatusResponse>> getTaskStatus(@RequestBody TaskIdRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String taskId = request.getTaskId();
                 if (taskId == null || taskId.isEmpty()) {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }
@@ -149,13 +165,14 @@ public class CggmpController {
     /**
      * 查询 DKG 生成的聚合公钥
      *
-     * @param taskId 任务ID
+     * @param request 任务ID请求
      * @return 聚合公钥（Hex编码）
      */
     @PostMapping("/dkg/public-key")
-    public CompletableFuture<ApiResponse<String>> getGroupPublicKey(@RequestParam(required = true) String taskId) {
+    public CompletableFuture<ApiResponse<String>> getGroupPublicKey(@RequestBody TaskIdRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String taskId = request.getTaskId();
                 if (taskId == null || taskId.isEmpty()) {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }
@@ -174,27 +191,53 @@ public class CggmpController {
     /**
      * 启动 CGGMP 门限签名任务
      *
-     * @param groupPublicKey 聚合公钥（Hex编码）
-     * @param message        待签名消息（Hex编码）
+     * @param request 签名请求参数
      * @return 签名任务ID
      */
     @PostMapping("/sign/start")
-    public CompletableFuture<ApiResponse<SignatureTaskStartResponse>> sign(@RequestParam(required = true) String groupPublicKey,
-                                                                           @RequestParam(required = true) String message) {
+    public CompletableFuture<ApiResponse<SignatureTaskStartResponse>> sign(@RequestBody SignStartRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String groupPublicKey = request.getGroupPublicKey();
+                String message = request.getMessage();
+                boolean isHotWallet = request.isHotWallet();
+                logger.info("Sign request received: isHotWallet={}, groupPublicKey={}", isHotWallet, groupPublicKey);
+
                 if (groupPublicKey == null || groupPublicKey.isEmpty()) {
                     return ApiResponse.badRequest("groupPublicKey cannot be null or empty");
                 }
                 if (message == null || message.isEmpty()) {
                     return ApiResponse.badRequest("message cannot be null or empty");
                 }
+                if (!cggmpSignatureService.hasGroupPublicKey(groupPublicKey)) {
+                    return ApiResponse.badRequest("groupPublicKey not found");
+                }
 
-                String signatureTaskId = cggmpSignatureService.createSignatureTaskWithGroupKey(groupPublicKey, message);
+                if (isHotWallet && presignPoolService.isEnabled()) {
+                    logger.info("Hot wallet sign request, presign pool enabled, trying to consume presign");
+                    var presigned = presignPoolService.tryConsume(groupPublicKey, isHotWallet);
+                    if (presigned.isPresent()) {
+                        String signature = presignPoolService.signWithPresignData(groupPublicKey, message, presigned.get());
+                        logger.info("Using presigned signature from pool for groupKey: {}", groupPublicKey);
+                        SignatureTaskStartResponse data = new SignatureTaskStartResponse(
+                                "presign-" + System.currentTimeMillis(),
+                                groupPublicKey,
+                                message,
+                                "Hot wallet signature from presign pool"
+                        );
+                        data.setSignature(signature);
+                        return ApiResponse.success(data);
+                    } else {
+                        logger.warn("No presign available for hot wallet signature, groupKey: {}", groupPublicKey);
+                        return ApiResponse.error("No presign available for hot wallet signature");
+                    }
+                }
+
+                String signatureTaskId = cggmpSignatureService.createSignatureTaskWithGroupKey(groupPublicKey, message, isHotWallet);
 
                 cggmpSignatureService.startSignatureTask(signatureTaskId)
                         .exceptionally(ex -> {
-                            logger.error("Async GG20 signature process failed for task {}: {}", signatureTaskId, ex.getMessage(), ex);
+                            logger.error("Async CGGMP signature process failed for task {}: {}", signatureTaskId, ex.getMessage(), ex);
                             return null;
                         });
 
@@ -210,13 +253,14 @@ public class CggmpController {
     /**
      * 查询签名任务状态
      *
-     * @param signatureTaskId 签名任务ID
+     * @param request 签名任务ID请求
      * @return 任务状态
      */
     @PostMapping("/sign/status")
-    public CompletableFuture<ApiResponse<SignatureTaskStatusResponse>> getSignatureTaskStatus(@RequestParam(required = true) String signatureTaskId) {
+    public CompletableFuture<ApiResponse<SignatureTaskStatusResponse>> getSignatureTaskStatus(@RequestBody SignatureTaskIdRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String signatureTaskId = request.getSignatureTaskId();
                 if (signatureTaskId == null || signatureTaskId.isEmpty()) {
                     return ApiResponse.badRequest("signatureTaskId cannot be null or empty");
                 }
@@ -233,13 +277,14 @@ public class CggmpController {
     /**
      * 查询签名结果
      *
-     * @param signatureTaskId 签名任务ID
+     * @param request 签名任务ID请求
      * @return 签名结果（DER编码，Base64）
      */
     @PostMapping("/sign/result")
-    public CompletableFuture<ApiResponse<SignatureResultResponse>> getSignatureResult(@RequestParam(required = true) String signatureTaskId) {
+    public CompletableFuture<ApiResponse<SignatureResultResponse>> getSignatureResult(@RequestBody SignatureTaskIdRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String signatureTaskId = request.getSignatureTaskId();
                 if (signatureTaskId == null || signatureTaskId.isEmpty()) {
                     return ApiResponse.badRequest("signatureTaskId cannot be null or empty");
                 }
@@ -258,13 +303,14 @@ public class CggmpController {
     /**
      * 启动密钥刷新任务，更新各节点的私钥份额
      *
-     * @param groupPublicKey 聚合公钥（Hex编码）
+     * @param request 刷新请求参数
      * @return 刷新任务ID
      */
     @PostMapping("/refresh/start")
-    public CompletableFuture<ApiResponse<RefreshTaskStartResponse>> startRefresh(@RequestParam(required = true) String groupPublicKey) {
+    public CompletableFuture<ApiResponse<RefreshTaskStartResponse>> startRefresh(@RequestBody RefreshStartRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String groupPublicKey = request.getGroupPublicKey();
                 if (groupPublicKey == null || groupPublicKey.isEmpty()) {
                     return ApiResponse.badRequest("groupPublicKey cannot be null or empty");
                 }
@@ -286,13 +332,14 @@ public class CggmpController {
     /**
      * 查询密钥刷新任务状态
      *
-     * @param taskId 任务ID
+     * @param request 任务ID请求
      * @return 任务状态
      */
     @PostMapping("/refresh/status")
-    public CompletableFuture<ApiResponse<RefreshTaskStatusResponse>> getRefreshStatus(@RequestParam(required = true) String taskId) {
+    public CompletableFuture<ApiResponse<RefreshTaskStatusResponse>> getRefreshStatus(@RequestBody TaskIdRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String taskId = request.getTaskId();
                 if (taskId == null || taskId.isEmpty()) {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }
@@ -328,32 +375,25 @@ public class CggmpController {
     /**
      * 查询投诉记录
      *
-     * @param taskId     任务ID（可选）
-     * @param reason     投诉原因（可选）
-     * @param reasonLike 投诉原因模糊匹配（可选）
-     * @param senderId   投诉发送方节点ID（可选）
-     * @param offenderId 被投诉节点ID（可选）
-     * @param fromTs     起始时间戳（可选）
-     * @param toTs       结束时间戳（可选）
-     * @param limit      返回记录数限制（默认50）
-     * @param offset     偏移量（默认0）
+     * @param request 查询参数
      * @return 投诉记录列表
      */
     @PostMapping("/complaints")
-    public CompletableFuture<ApiResponse<java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord>>> getComplaints(
-            @RequestParam(required = false) String taskId,
-            @RequestParam(required = false) String reason,
-            @RequestParam(required = false) String reasonLike,
-            @RequestParam(required = false) Integer senderId,
-            @RequestParam(required = false) Integer offenderId,
-            @RequestParam(required = false) Long fromTs,
-            @RequestParam(required = false) Long toTs,
-            @RequestParam(required = false, defaultValue = "50") int limit,
-            @RequestParam(required = false, defaultValue = "0") int offset) {
+    public CompletableFuture<ApiResponse<List<ComplaintDao.ComplaintRecord>>> getComplaints(
+            @RequestBody ComplaintsQueryRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
-                java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> records =
-                        cggmpSignatureService.getComplaints(taskId, reason, reasonLike, senderId, offenderId, fromTs, toTs, limit, offset);
+                List<ComplaintDao.ComplaintRecord> records =
+                        cggmpSignatureService.getComplaints(
+                                request.getTaskId(),
+                                request.getReason(),
+                                request.getReasonLike(),
+                                request.getSenderId(),
+                                request.getOffenderId(),
+                                request.getFromTs(),
+                                request.getToTs(),
+                                request.getLimit() != null ? request.getLimit() : 50,
+                                request.getOffset() != null ? request.getOffset() : 0);
                 return ApiResponse.success(records);
             } catch (Exception e) {
                 logger.error("Failed to get complaints", e);
@@ -366,22 +406,22 @@ public class CggmpController {
      * 导出投诉记录为 JSONL 格式
      */
     @PostMapping(value = "/complaints/export", produces = "application/x-ndjson")
-    public CompletableFuture<String> exportComplaintsJsonl(
-            @RequestParam(required = false) String taskId,
-            @RequestParam(required = false) String reason,
-            @RequestParam(required = false) String reasonLike,
-            @RequestParam(required = false) Integer senderId,
-            @RequestParam(required = false) Integer offenderId,
-            @RequestParam(required = false) Long fromTs,
-            @RequestParam(required = false) Long toTs,
-            @RequestParam(required = false, defaultValue = "500") int limit,
-            @RequestParam(required = false, defaultValue = "0") int offset) {
+    public CompletableFuture<String> exportComplaintsJsonl(@RequestBody ComplaintsQueryRequest request) {
         return CompletableFuture.supplyAsync(() -> {
-            java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> records =
-                    cggmpSignatureService.getComplaints(taskId, reason, reasonLike, senderId, offenderId, fromTs, toTs, limit, offset);
+            List<ComplaintDao.ComplaintRecord> records =
+                    cggmpSignatureService.getComplaints(
+                            request.getTaskId(),
+                            request.getReason(),
+                            request.getReasonLike(),
+                            request.getSenderId(),
+                            request.getOffenderId(),
+                            request.getFromTs(),
+                            request.getToTs(),
+                            request.getLimit() != null ? request.getLimit() : 500,
+                            request.getOffset() != null ? request.getOffset() : 0);
             StringBuilder sb = new StringBuilder();
             for (com.example.mpc.dao.ComplaintDao.ComplaintRecord r : records) {
-                java.util.Map<String, Object> line = new java.util.LinkedHashMap<>();
+                Map<String, Object> line = new LinkedHashMap<>();
                 line.put("ts", r.ts());
                 line.put("taskId", r.taskId());
                 line.put("senderId", r.senderId());
@@ -404,19 +444,19 @@ public class CggmpController {
      * 导出投诉记录为 CSV 格式
      */
     @PostMapping(value = "/complaints/export.csv", produces = "text/csv")
-    public CompletableFuture<String> exportComplaintsCsv(
-            @RequestParam(required = false) String taskId,
-            @RequestParam(required = false) String reason,
-            @RequestParam(required = false) String reasonLike,
-            @RequestParam(required = false) Integer senderId,
-            @RequestParam(required = false) Integer offenderId,
-            @RequestParam(required = false) Long fromTs,
-            @RequestParam(required = false) Long toTs,
-            @RequestParam(required = false, defaultValue = "500") int limit,
-            @RequestParam(required = false, defaultValue = "0") int offset) {
+    public CompletableFuture<String> exportComplaintsCsv(@RequestBody ComplaintsQueryRequest request) {
         return CompletableFuture.supplyAsync(() -> {
-            java.util.List<com.example.mpc.dao.ComplaintDao.ComplaintRecord> records =
-                    cggmpSignatureService.getComplaints(taskId, reason, reasonLike, senderId, offenderId, fromTs, toTs, limit, offset);
+            List<ComplaintDao.ComplaintRecord> records =
+                    cggmpSignatureService.getComplaints(
+                            request.getTaskId(),
+                            request.getReason(),
+                            request.getReasonLike(),
+                            request.getSenderId(),
+                            request.getOffenderId(),
+                            request.getFromTs(),
+                            request.getToTs(),
+                            request.getLimit() != null ? request.getLimit() : 500,
+                            request.getOffset() != null ? request.getOffset() : 0);
             StringBuilder sb = new StringBuilder();
             sb.append("ts,taskId,senderId,offenderId,reason,evidence\n");
             for (com.example.mpc.dao.ComplaintDao.ComplaintRecord r : records) {
@@ -440,5 +480,28 @@ public class CggmpController {
             return "\"" + v + "\"";
         }
         return v;
+    }
+
+    private Optional<com.example.mpc.dto.PresignData> waitAndConsumePresign(String groupPublicKey, boolean isHotWallet, long timeoutMs) {
+        long startTime = System.currentTimeMillis();
+        long intervalMs = 1000;
+
+        while (System.currentTimeMillis() - startTime < timeoutMs) {
+            var presigned = presignPoolService.tryConsume(groupPublicKey, isHotWallet);
+            if (presigned.isPresent()) {
+                return presigned;
+            }
+
+            logger.info("No presign available for groupKey: {}, waiting {}ms...", groupPublicKey, intervalMs);
+            try {
+                Thread.sleep(intervalMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        logger.warn("Timeout waiting for presign for groupKey: {}, timeout: {}ms", groupPublicKey, timeoutMs);
+        return Optional.empty();
     }
 }

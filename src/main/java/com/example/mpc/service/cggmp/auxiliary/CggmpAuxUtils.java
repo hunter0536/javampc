@@ -6,6 +6,7 @@ import com.example.mpc.service.CggmpAuxService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -40,7 +41,7 @@ public final class CggmpAuxUtils {
     }
 
     public static Map<String, Object> buildAuxEvidence(CggmpAuxTask task) {
-        Map<String, Object> ev = new java.util.HashMap<>();
+        Map<String, Object> ev = new HashMap<>();
         ev.put("taskId", task.taskId);
         ev.put("executionId", task.executionId);
         ev.put("participants", task.participants);
@@ -48,10 +49,12 @@ public final class CggmpAuxUtils {
         ev.put("echoReceived", task.echoReceived.size());
         ev.put("revealReceived", task.peerHatN.size());
         ev.put("proofsReceived", task.peerModProofs.size());
+        ev.put("savedReceived", task.savedReceived.size());
         ev.put("commitLatch", task.commitLatch.getCount());
         ev.put("echoLatch", task.echoLatch.getCount());
         ev.put("revealLatch", task.revealLatch.getCount());
         ev.put("proofLatch", task.proofLatch.getCount());
+        ev.put("savedLatch", task.savedLatch.getCount());
         return ev;
     }
 

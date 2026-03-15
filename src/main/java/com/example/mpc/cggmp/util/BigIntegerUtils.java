@@ -1,75 +1,138 @@
 package com.example.mpc.cggmp.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.math.BigInteger;
 import java.security.SecureRandom;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.IntStream;
 
 public final class BigIntegerUtils {
-    private static final boolean USE_NATIVE = NativeBigInteger.isNativeAvailable();
-    
+    private static final Logger logger = LoggerFactory.getLogger(BigIntegerUtils.class);
+
+    private static final BigIntegerBackend BACKEND;
+
+    static {
+        boolean gmpEnabled = Boolean.parseBoolean(System.getProperty("cggmp.gmp.enabled", "true"));
+        boolean nativeAvailable = false;
+
+        try {
+            nativeAvailable = NativeBigInteger.isNativeAvailable();
+        } catch (Throwable e) {
+            logger.warn("NativeBigInteger not available: {}", e.getMessage());
+        }
+
+        boolean useGmp = gmpEnabled && nativeAvailable;
+        BACKEND = useGmp ? GmpBackend.getInstance() : JavaBackend.getInstance();
+
+        logger.info("BigIntegerUtils initialized: gmpEnabled={}, nativeAvailable={}, useGmp={}",
+                gmpEnabled, nativeAvailable, useGmp);
+    }
+
     private BigIntegerUtils() {
     }
 
+    public static BigInteger modPow(BigInteger base, BigInteger exp, BigInteger mod) {
+        return BACKEND.modPow(base, exp, mod);
+    }
+
+    public static BigInteger modInverse(BigInteger val, BigInteger mod) {
+        return BACKEND.modInverse(val, mod);
+    }
+
+    public static BigInteger modMul(BigInteger a, BigInteger b, BigInteger mod) {
+        return BACKEND.modMul(a, b, mod);
+    }
+
+    public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger exp, BigInteger mod) {
+        return BACKEND.batchModPow(bases, exp, mod);
+    }
+
+    public static BigInteger[] batchModPow(BigInteger[] bases, BigInteger[] exps, BigInteger mod) {
+        return BACKEND.batchModPow(bases, exps, mod);
+    }
+
+    public static BigInteger[][] batchModPowAll(
+            BigInteger[] bases1, BigInteger[] bases2, BigInteger[] bases3,
+            BigInteger[] bases4, BigInteger[] bases5,
+            BigInteger[] exps1, BigInteger[] exps2, BigInteger[] exps3,
+            BigInteger[] exps4, BigInteger[] exps5,
+            BigInteger mod1, BigInteger mod2, BigInteger mod3,
+            BigInteger mod4, BigInteger mod5) {
+        return BACKEND.batchModPowAll(
+                bases1, bases2, bases3, bases4, bases5,
+                exps1, exps2, exps3, exps4, exps5,
+                mod1, mod2, mod3, mod4, mod5);
+    }
+
     public static BigInteger randomZnStar(BigInteger n, SecureRandom rnd) {
+        if (n.compareTo(BigInteger.valueOf(3)) <= 0) {
+            throw new IllegalArgumentException("n must be greater than 3");
+        }
+        BigInteger nMinusOne = n.subtract(BigInteger.ONE);
         BigInteger x;
         do {
-            x = new BigInteger(n.bitLength(), rnd).mod(n);
-        } while (x.signum() == 0 || !x.gcd(n).equals(BigInteger.ONE));
+            x = new BigInteger(nMinusOne.bitLength(), rnd).mod(nMinusOne).add(BigInteger.ONE);
+        } while (!x.gcd(n).equals(BigInteger.ONE));
         return x;
     }
 
     public static BigInteger powSigned(BigInteger base, BigInteger exp, BigInteger mod) {
-        if (USE_NATIVE) {
-            if (exp.signum() >= 0) {
-                return NativeBigInteger.modPow(base, exp, mod);
-            }
-            BigInteger inv = NativeBigInteger.modInverse(base, mod);
-            return NativeBigInteger.modPow(inv, exp.negate(), mod);
-        }
-        if (exp.signum() >= 0) {
-            return base.modPow(exp, mod);
-        }
-        BigInteger inv = base.modInverse(mod);
-        return inv.modPow(exp.negate(), mod);
-    }
-    
-    public static BigInteger powSigned(NativeBigInteger.NativeModPowContext ctx, BigInteger base, BigInteger exp) {
-        if (ctx != null && NativeBigInteger.isNativeAvailable()) {
-            if (exp.signum() >= 0) {
-                return ctx.modPow(base, exp);
-            }
-            BigInteger inv = NativeBigInteger.modInverse(base, ctx.getMod());
-            return ctx.modPow(inv, exp.negate());
-        }
-        if (exp.signum() >= 0) {
-            return base.modPow(exp, BigInteger.ONE);
-        }
-        BigInteger inv = base.modInverse(BigInteger.ONE);
-        return inv.modPow(exp.negate(), BigInteger.ONE);
+        return BACKEND.modPow(base, exp, mod);
     }
 
     public static int jacobi(BigInteger a, BigInteger n) {
-        if (n.signum() <= 0 || !n.testBit(0)) {
-            throw new IllegalArgumentException("n must be positive and odd");
-        }
-        a = a.mod(n);
-        int result = 1;
-        while (a.signum() != 0) {
-            while (!a.testBit(0)) {
-                a = a.shiftRight(1);
-                BigInteger nMod8 = n.and(BigInteger.valueOf(7));
-                if (nMod8.equals(BigInteger.valueOf(3)) || nMod8.equals(BigInteger.valueOf(5))) {
-                    result = -result;
-                }
+        return BACKEND.jacobi(a, n);
+    }
+
+    public static int[] batchJacobi(BigInteger[] as, BigInteger n) {
+        return BACKEND.batchJacobi(as, n);
+    }
+
+    public static BigInteger[] batchMod(BigInteger[] vals, BigInteger mod) {
+        return BACKEND.batchMod(vals, mod);
+    }
+
+    public static BigInteger crt(BigInteger a, BigInteger p, BigInteger b, BigInteger q, BigInteger n) {
+        return BACKEND.crt(a, p, b, q, n);
+    }
+
+    public static BigInteger probablePrime(int bitLength, SecureRandom random) {
+        return BACKEND.probablePrime(bitLength, random);
+    }
+
+    public static BigInteger lcm(BigInteger a, BigInteger b) {
+        return a.multiply(b).divide(a.gcd(b));
+    }
+
+    public static BigInteger positiveModInverse(BigInteger a, BigInteger mod) {
+        BigInteger x = BACKEND.modInverse(a, mod);
+        return x.signum() < 0 ? x.add(mod) : x;
+    }
+
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+    public static BigInteger generateSafePrime(int bits, SecureRandom rnd) {
+        final int batchSize = Runtime.getRuntime().availableProcessors() * 2;
+
+        while (true) {
+            List<BigInteger> candidates = IntStream.range(0, batchSize)
+                    .parallel()
+                    .mapToObj(i -> {
+                        BigInteger q = probablePrime(bits - 1, rnd);
+                        return q.shiftLeft(1).add(BigInteger.ONE);
+                    })
+                    .toList();
+
+            Optional<BigInteger> found = candidates.parallelStream()
+                    .filter(p -> p.isProbablePrime(128))
+                    .findAny();
+
+            if (found.isPresent()) {
+                return found.get();
             }
-            BigInteger temp = a;
-            a = n;
-            n = temp;
-            if (a.and(BigInteger.valueOf(3)).equals(BigInteger.valueOf(3)) && n.and(BigInteger.valueOf(3)).equals(BigInteger.valueOf(3))) {
-                result = -result;
-            }
-            a = a.mod(n);
         }
-        return n.equals(BigInteger.ONE) ? result : 0;
     }
 
     public static byte[] toUnsignedBytes(BigInteger x, int len) {

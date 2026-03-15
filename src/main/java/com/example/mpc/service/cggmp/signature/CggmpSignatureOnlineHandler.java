@@ -3,6 +3,7 @@ package com.example.mpc.service.cggmp.signature;
 import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.mta.MtAInitiatorMessage;
 import com.example.mpc.cggmp.mta.MtAProtocol;
+import com.example.mpc.cggmp.mta.MtAResult;
 import com.example.mpc.cggmp.sign.CggmpIntegrityChecker;
 import com.example.mpc.cggmp.sign.EcChaumPedersenProof;
 import com.example.mpc.cggmp.util.BigIntegerUtils;
@@ -12,8 +13,10 @@ import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.MessageType;
+import com.example.mpc.dto.AuxInfo;
 import com.example.mpc.dto.CggmpSignatureTask;
+import com.example.mpc.dto.PresignData;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -36,8 +39,10 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * CGGMP签名在线阶段处理器
@@ -99,9 +104,8 @@ public final class CggmpSignatureOnlineHandler {
                             throw new RuntimeException("Missing message hash for online phase");
                         }
                         if (logger.isDebugEnabled()) {
-                            logger.debug("Online phase inputs: taskId={}, messageHash={}, presignatureReady={}, offlineDoneLatch={}",
+                            logger.debug("Online phase inputs: taskId={}, messageHash=<redacted>, presignatureReady={}, offlineDoneLatch={}",
                                     task.taskId,
-                                    HexUtils.bytesToHex(task.messageHash),
                                     task.presignature != null,
                                     task.offlineDoneLatch.getCount());
                         }
@@ -113,7 +117,7 @@ public final class CggmpSignatureOnlineHandler {
                         if (task.presignatureUsed) {
                             throw new RuntimeException("Presignature already used");
                         }
-                        if (svc.nodeId == task.initiatorId) {
+                        if (!task.isHotWallet || svc.nodeId == task.initiatorId) {
                             if (!PresignUsageStore.markUsed(task.groupPublicKey, task.presignature.Gamma())) {
                                 throw new RuntimeException("Presignature already used (persistent)");
                             }
@@ -143,6 +147,7 @@ public final class CggmpSignatureOnlineHandler {
                 }, ThreadPoolUtil.getIoThreadPool()))
                 .thenCompose(ctx -> {
                     if (svc.nodeId == ctx.task().initiatorId) {
+                        logger.debug("Initiator branch: waiting for sShareLatch (count={})", ctx.task().sShareLatch.getCount());
                         if (!verifySigmaShare(ctx.task(), svc.nodeId, ctx.sigma_i())) {
                             svc.failSignatureTask(ctx.task(), "Local signature share verification failed");
                             svc.signatureInProgress.set(false);
@@ -150,11 +155,18 @@ public final class CggmpSignatureOnlineHandler {
                             return CompletableFuture.completedFuture(null);
                         }
                         ctx.task().sShares.put(svc.nodeId, ctx.sigma_i());
+                        logger.debug("Initiator stored own sigma_i, waiting for sShareLatch (count={})", ctx.task().sShareLatch.getCount());
                         return svc.waitForLatchAsync(ctx.task().sShareLatch, Constants.SIGNATURE_SHARE_TIMEOUT_SECONDS, "signature shares")
-                                .thenRunAsync(() -> finalizeSignatureAsInitiator(ctx), ThreadPoolUtil.getIoThreadPool());
+                                .thenRunAsync(() -> {
+                                    logger.debug("sShareLatch completed, calling finalizeSignatureAsInitiator for task {}", ctx.task().taskId);
+                                    finalizeSignatureAsInitiator(ctx);
+                                }, ThreadPoolUtil.getIoThreadPool());
                     }
                     return CompletableFuture.runAsync(() -> {
                         CggmpProtocolUtils.fireAndForget(sendSShare(ctx.task(), ctx.sigma_i()), logger, "CGGMP_SIGN_S_SHARE");
+                        if (ctx.task().isHotWallet && ctx.task().presignature != null && ctx.task().presignature.presignId() != null) {
+                            svc.presignPoolService.removePresignById(ctx.task().groupPublicKey, ctx.task().presignature.presignId());
+                        }
                         ctx.task().complete();
                         svc.signatureInProgress.set(false);
                         svc.clearPresignLocal(ctx.task());
@@ -182,19 +194,96 @@ public final class CggmpSignatureOnlineHandler {
         }
         String signatureTaskId = (String) dataMap.get("signatureTaskId");
         Object hashValue = dataMap.get("messageHash");
+        String presignId = (String) dataMap.get("presignId");
+        String groupPublicKey = (String) dataMap.get("groupPublicKey");
+
         if (signatureTaskId == null || !(hashValue instanceof String hashString)) {
             return;
         }
         CggmpSignatureTask task = svc.signatureTasks.get(signatureTaskId);
+
         if (task == null) {
-            return;
+            logger.debug("Signature task {} not found in local cache, creating from ONLINE_INIT", signatureTaskId);
+            @SuppressWarnings("unchecked")
+            java.util.List<Integer> participantsList = (java.util.List<Integer>) dataMap.get("participants");
+            if (groupPublicKey == null || participantsList == null) {
+                logger.error("Cannot create signature task: missing groupPublicKey or participants");
+                return;
+            }
+
+            task = new CggmpSignatureTask(signatureTaskId, "", groupPublicKey, svc.nodesCount, svc.threshold, senderId,
+                    new java.util.HashSet<>(participantsList), true);
+            task.auxTaskId = "online-init-" + signatureTaskId;
+            task.groupPublicKeyPoint = Secp256k1CurveUtils.decodePoint(
+                    HexUtils.hexToBytes(groupPublicKey));
+
+            AuxInfo auxInfo = svc.auxInfoDao.loadLatestSync(svc.nodeId);
+            if (auxInfo != null) {
+                java.math.BigInteger p = new java.math.BigInteger(auxInfo.getPaillierP(), 16);
+                java.math.BigInteger q = new java.math.BigInteger(auxInfo.getPaillierQ(), 16);
+                java.math.BigInteger n = new java.math.BigInteger(auxInfo.getPaillierN(), 16);
+                java.math.BigInteger g = new java.math.BigInteger(auxInfo.getPaillierG(), 16);
+                task.paillier = new PaillierEncryption(p, q);
+                if (!task.paillier.getPublicKeyInfo().n().equals(n)) {
+                    logger.error("Paillier n mismatch: {} vs {}", task.paillier.getPublicKeyInfo().n(), n);
+                }
+            }
+
+            svc.signatureTasks.put(signatureTaskId, task);
+            logger.debug("Created signature task {} from ONLINE_INIT, participants={}", signatureTaskId, task.participants);
+
+            if (presignId != null) {
+                logger.debug("Received presignId {} from ONLINE_INIT, looking up in presign pool", presignId);
+                Optional<PresignData> presignOpt = svc.presignPoolService.getPresignById(groupPublicKey, presignId);
+                if (presignOpt.isPresent()) {
+                    task.presignature = presignOpt.get().toPresignature();
+                    if (task.presignature.deltaTilde() != null) {
+                        task.presignDeltaTilde.putAll(task.presignature.deltaTilde());
+                    }
+                    if (task.presignature.sTilde() != null) {
+                        task.presignSTilde.putAll(task.presignature.sTilde());
+                    }
+                    task.offlineDoneLatch.countDown();
+                    task.presignatureLatch.countDown();
+                    task.offlineDoneLatch.countDown();
+                    logger.debug("Found presign {} for task {} and pre-countdown latches", presignId, signatureTaskId);
+                } else {
+                    logger.error("Failed to find presign {} in pool for task {}", presignId, signatureTaskId);
+                    task.offlineDoneLatch.countDown();
+                    task.presignatureLatch.countDown();
+                    task.offlineDoneLatch.countDown();
+                }
+            } else {
+                task.offlineDoneLatch.countDown();
+                task.presignatureLatch.countDown();
+                task.offlineDoneLatch.countDown();
+            }
         }
+
         task.messageHash = Base64.getDecoder().decode(hashString);
+
+        if (task.presignature == null && presignId != null) {
+            logger.info("Received presignId {} from ONLINE_INIT, looking up in presign pool", presignId);
+            Optional<PresignData> presignOpt = svc.presignPoolService.getPresignById(task.groupPublicKey, presignId);
+            if (presignOpt.isPresent()) {
+                task.presignature = presignOpt.get().toPresignature();
+                logger.info("Found presign {} for task {}", presignId, signatureTaskId);
+            } else {
+                logger.error("Failed to find presign {} in pool for task {}", presignId, signatureTaskId);
+            }
+        }
+
         logger.debug("Received ONLINE_INIT (taskId={}, senderId={}, messageHash={})",
                 signatureTaskId, senderId, HexUtils.bytesToHex(task.messageHash));
         if (!task.participants.contains(svc.nodeId)) {
             return;
         }
+
+        if (task.offlineReadyLatch.getCount() > 0) {
+            task.offlineReadyLatch.countDown();
+            logger.debug("Participant {} countdown offlineReadyLatch for hot wallet task {}", svc.nodeId, signatureTaskId);
+        }
+
         logProgress(task, "online_init");
         runOnlinePhase(task).exceptionally(ex -> {
             logger.error("Failed online phase for signature task {}: {}", signatureTaskId, ex.getMessage());
@@ -207,6 +296,14 @@ public final class CggmpSignatureOnlineHandler {
         data.put("signatureTaskId", task.taskId);
         data.put("senderId", svc.nodeId);
         data.put("messageHash", Base64.getEncoder().encodeToString(task.messageHash));
+        data.put("groupPublicKey", task.groupPublicKey);
+        data.put("participants", new java.util.ArrayList<>(task.participants));
+
+        if (task.presignature != null && task.presignature.presignId() != null) {
+            data.put("presignId", task.presignature.presignId());
+            logger.debug("Including presignId {} in CGGMP_SIGN_ONLINE_INIT for task {}", task.presignature.presignId(), task.taskId);
+        }
+
         return RetryUtils.retryAsync(svc.cggmpScheduler, logger,
                         () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_ONLINE_INIT, data)),
                         Constants.BROADCAST_RETRY_COUNT,
@@ -435,7 +532,7 @@ public final class CggmpSignatureOnlineHandler {
                 return;
             }
 
-            com.example.mpc.cggmp.mta.MtAResult result = protocol.computeCjWithY(publicKey, initiatorMessage.cA(), task.a_i, zkSetup, mtaContext);
+            MtAResult result = protocol.computeCjWithY(publicKey, initiatorMessage.cA(), task.a_i, zkSetup, mtaContext);
             BigInteger beta = protocol.computeBeta(result.y());
             task.kaBetas.put(initiatorId, beta);
             if (task.kaInitLatch.getCount() > 0) {
@@ -449,7 +546,7 @@ public final class CggmpSignatureOnlineHandler {
             resp.put("taskId", taskId);
             resp.put("initiatorId", initiatorId);
             resp.put("responderId", svc.nodeId);
-            com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
+            MtAResult publicResult = new MtAResult(result.c_j(), null, null, result.proof());
             resp.put("result", CggmpCodecUtils.encodeMtAResult(publicResult));
             CggmpProtocolUtils.fireAndForget(svc.nodeService.sendMessage(initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_MTA_KA_RESPONSE, resp)),
                     logger, "CGGMP_SIGN_MTA_KA_RESPONSE");
@@ -485,7 +582,7 @@ public final class CggmpSignatureOnlineHandler {
             if (resultMap == null) {
                 return;
             }
-            com.example.mpc.cggmp.mta.MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
+            MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
             MtAInitiatorMessage initiatorMessage = task.mtaKaInitiatorMessages.get(responderId);
             if (initiatorMessage == null) {
                 return;
@@ -717,7 +814,7 @@ public final class CggmpSignatureOnlineHandler {
                 return;
             }
 
-            com.example.mpc.cggmp.mta.MtAResult result = protocol.computeCjWithY(publicKey, initiatorMessage.cA(), task.t_i, zkSetup, mtaContext);
+            MtAResult result = protocol.computeCjWithY(publicKey, initiatorMessage.cA(), task.t_i, zkSetup, mtaContext);
             BigInteger beta = protocol.computeBeta(result.y());
             task.stBetas.put(initiatorId, beta);
             if (task.stInitLatch.getCount() > 0) {
@@ -731,7 +828,7 @@ public final class CggmpSignatureOnlineHandler {
             resp.put("taskId", taskId);
             resp.put("initiatorId", initiatorId);
             resp.put("responderId", svc.nodeId);
-            com.example.mpc.cggmp.mta.MtAResult publicResult = new com.example.mpc.cggmp.mta.MtAResult(result.c_j(), null, null, result.proof());
+            MtAResult publicResult = new MtAResult(result.c_j(), null, null, result.proof());
             resp.put("result", CggmpCodecUtils.encodeMtAResult(publicResult));
             CggmpProtocolUtils.fireAndForget(svc.nodeService.sendMessage(initiatorId, new NodeService.Message(svc.nodeId, MessageType.CGGMP_SIGN_MTA_ST_RESPONSE, resp)),
                     logger, "CGGMP_SIGN_MTA_ST_RESPONSE");
@@ -767,7 +864,7 @@ public final class CggmpSignatureOnlineHandler {
             if (resultMap == null) {
                 return;
             }
-            com.example.mpc.cggmp.mta.MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
+            MtAResult result = CggmpCodecUtils.decodeMtAResult(resultMap);
             MtAInitiatorMessage initiatorMessage = task.mtaStInitiatorMessages.get(responderId);
             if (initiatorMessage == null) {
                 return;
@@ -848,6 +945,7 @@ public final class CggmpSignatureOnlineHandler {
     }
 
     private void finalizeSignatureAsInitiator(CggmpOnlineContext ctx) {
+        logger.debug("finalizeSignatureAsInitiator called for task {}", ctx.task().taskId);
         if (ctx == null) {
             return;
         }
@@ -883,6 +981,19 @@ public final class CggmpSignatureOnlineHandler {
         ctx.task().verified = verified;
         ctx.task().complete();
         svc.signatureInProgress.set(false);
+
+        if (ctx.task().isHotWallet && ctx.task().presignature != null && ctx.task().presignature.presignId() != null) {
+            svc.presignPoolService.removePresignById(ctx.task().groupPublicKey, ctx.task().presignature.presignId());
+        }
+
+        if (ctx.task().isHotWallet) {
+            AtomicInteger lock = svc.hotWalletSignatureLocks.get(ctx.task().groupPublicKey);
+            if (lock != null) {
+                logger.debug("Releasing hotWalletSignatureLocks after signature completion for task {}", ctx.task().taskId);
+                lock.set(0);
+            }
+        }
+
         svc.clearPresignAll(ctx.task());
         logger.info("CGGMP signature task {} completed successfully, verified: {}", ctx.task().taskId, verified);
     }

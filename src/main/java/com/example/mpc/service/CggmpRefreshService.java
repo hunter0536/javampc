@@ -6,10 +6,10 @@ import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.ComplaintDao;
 import com.example.mpc.dao.KeyShareDao;
-import com.example.mpc.enums.MessageType;
-import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.dto.CggmpRefreshTask;
 import com.example.mpc.dto.KeyShare;
+import com.example.mpc.enums.MessageType;
+import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.service.cggmp.refresh.CggmpRefreshMessageDispatcher;
 import com.example.mpc.service.cggmp.refresh.CggmpRefreshMessageHandler;
 import com.example.mpc.service.cggmp.refresh.CggmpRefreshProtocolHandler;
@@ -23,6 +23,7 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -40,7 +41,7 @@ import java.util.concurrent.ScheduledExecutorService;
 @Service
 public class CggmpRefreshService implements NodeService.MessageHandler {
     public static final Logger logger = LoggerFactory.getLogger(CggmpRefreshService.class);
-    public static final ExecutorService refreshExecutorService = ThreadPoolUtil.getComputationThreadPool();
+    public static final ExecutorService refreshExecutorService = ThreadPoolUtil.getRefreshThreadPool();
 
     public final CggmpRefreshProtocolHandler refreshProtocolHandler = new CggmpRefreshProtocolHandler(this);
     public final CggmpRefreshMessageHandler refreshMessageHandler = new CggmpRefreshMessageHandler(this);
@@ -58,11 +59,11 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
     @Value("${node.id}")
     public int nodeId;
 
-    @Value("${app.cggmp.hdEnabled:false}")
+    @Value("${cggmp.hdEnabled:false}")
     public boolean hdEnabled;
 
 
-    @Value("${app.cggmp.complaint.logPath:logs/complaints.jsonl}")
+    @Value("${cggmp.complaint.logPath:logs/complaints.jsonl}")
     public String complaintLogPath;
 
     public final Map<String, CggmpRefreshTask> refreshTasks = new ConcurrentHashMap<>();
@@ -120,6 +121,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
                             MessageType.CGGMP_REFRESH_R1,
                             MessageType.CGGMP_REFRESH_R2,
                             MessageType.CGGMP_REFRESH_R3,
+                            MessageType.CGGMP_REFRESH_COMMIT,
                             MessageType.CGGMP_REFRESH_COMPLAINT,
                             MessageType.CGGMP_REFRESH_EXCLUDE
                     ), this);
@@ -157,7 +159,7 @@ public class CggmpRefreshService implements NodeService.MessageHandler {
         }
         String indexMapJson = keyShare.getIndexMap();
         if (indexMapJson == null || indexMapJson.isBlank()) {
-            return new java.util.LinkedHashMap<>();
+            return new LinkedHashMap<>();
         }
         return com.example.mpc.common.util.DbMapUtils.parseIndexMap(indexMapJson);
     }

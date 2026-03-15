@@ -13,6 +13,7 @@ import com.example.mpc.enums.TaskStatus;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -28,14 +29,15 @@ public class CggmpDkgTask {
     public final Set<Integer> participants;
     public final int initiatorId;
     public final boolean nonThreshold;
-    public final java.util.Map<Integer, BigInteger> indexMap;
+    public final boolean isHotWallet;
+    public final Map<Integer, BigInteger> indexMap;
 
     public final AtomicReference<TaskStatus> status = new AtomicReference<>(TaskStatus.PENDING);
     public volatile String errorMessage;
     public volatile long startedAtMs = 0L;
     public volatile String lastComplaintReason;
     public volatile Integer lastComplaintOffenderId;
-    public volatile java.util.Map<String, Object> lastComplaintEvidence;
+    public volatile Map<String, Object> lastComplaintEvidence;
 
     public final ConcurrentHashMap<Integer, CGGMP.DkgRound1Output> round1Outputs = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, CGGMP.DkgRound2Output> round2Outputs = new ConcurrentHashMap<>();
@@ -94,15 +96,18 @@ public class CggmpDkgTask {
     public final ConcurrentHashMap<Integer, com.example.mpc.cggmp.proof.PiSchProof> pendingRound3Proofs = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> round2Processing = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> modFacVerified = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, Boolean> commitAcks = new ConcurrentHashMap<>();
 
     public final CountDownLatch round1ReceivedLatch;
     public final CountDownLatch round1EchoReceivedLatch;
     public final CountDownLatch round2ReceivedLatch;
     public final CountDownLatch round2OpenReceivedLatch;
     public final CountDownLatch round3ReceivedLatch;
+    public final CountDownLatch commitLatch;
 
     public CGGMP cggmpInstance;
     public PaillierEncryption paillier;
+    public ZKSetup zkSetup;
     public BigInteger secretShare;
     public ECPoint groupPublicKey;
     public String groupPublicKeyHex;
@@ -110,15 +115,20 @@ public class CggmpDkgTask {
     public final ConcurrentHashMap<Integer, String> round1PayloadHashes = new ConcurrentHashMap<>();
 
     public CggmpDkgTask(String taskId, String executionId, int nodesCount, int threshold) {
-        this(taskId, executionId, nodesCount, threshold, null, 0);
+        this(taskId, executionId, nodesCount, threshold, null, 0, false);
     }
 
     public CggmpDkgTask(String taskId, String executionId, int nodesCount, int threshold, Set<Integer> participantsOverride, int initiatorId) {
+        this(taskId, executionId, nodesCount, threshold, participantsOverride, initiatorId, false);
+    }
+
+    public CggmpDkgTask(String taskId, String executionId, int nodesCount, int threshold, Set<Integer> participantsOverride, int initiatorId, boolean isHotWallet) {
         this.taskId = taskId;
         this.executionId = executionId;
         this.nodesCount = nodesCount;
         this.threshold = threshold;
         this.initiatorId = initiatorId;
+        this.isHotWallet = isHotWallet;
         this.participants = participantsOverride != null && !participantsOverride.isEmpty()
                 ? java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(participantsOverride))
                 : defaultParticipants(nodesCount);
@@ -130,6 +140,7 @@ public class CggmpDkgTask {
         this.round2ReceivedLatch = new CountDownLatch(waitCount);
         this.round2OpenReceivedLatch = new CountDownLatch(waitCount);
         this.round3ReceivedLatch = new CountDownLatch(waitCount);
+        this.commitLatch = new CountDownLatch(waitCount);
     }
 
     private static Set<Integer> defaultParticipants(int nodesCount) {

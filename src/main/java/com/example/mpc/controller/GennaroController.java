@@ -1,5 +1,6 @@
 package com.example.mpc.controller;
 
+import com.example.mpc.common.request.TaskIdRequest;
 import com.example.mpc.common.response.ApiResponse;
 import com.example.mpc.common.response.DkgTaskStartResponse;
 import com.example.mpc.common.response.DkgTaskStatusResponse;
@@ -9,8 +10,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.concurrent.CompletableFuture;
@@ -54,13 +55,14 @@ public class GennaroController {
     /**
      * 查询 Gennaro DKG 任务状态
      *
-     * @param taskId 任务ID
+     * @param request 任务ID请求
      * @return 任务状态
      */
     @PostMapping("/dkg/status")
-    public CompletableFuture<ApiResponse<DkgTaskStatusResponse>> getTaskStatus(@RequestParam(required = true) String taskId) {
+    public CompletableFuture<ApiResponse<DkgTaskStatusResponse>> getTaskStatus(@RequestBody TaskIdRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String taskId = request.getTaskId();
                 if (taskId == null || taskId.isEmpty()) {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }
@@ -77,13 +79,14 @@ public class GennaroController {
     /**
      * 查询 Gennaro DKG 生成的聚合公钥
      *
-     * @param taskId 任务ID
+     * @param request 任务ID请求
      * @return 聚合公钥（Hex编码）
      */
     @PostMapping("/dkg/public-key")
-    public CompletableFuture<ApiResponse<String>> getGroupPublicKey(@RequestParam(required = true) String taskId) {
+    public CompletableFuture<ApiResponse<String>> getGroupPublicKey(@RequestBody TaskIdRequest request) {
         return CompletableFuture.supplyAsync(() -> {
             try {
+                String taskId = request.getTaskId();
                 if (taskId == null || taskId.isEmpty()) {
                     return ApiResponse.badRequest("taskId cannot be null or empty");
                 }

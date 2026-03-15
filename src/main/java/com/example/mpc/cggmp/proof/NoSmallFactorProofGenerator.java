@@ -33,27 +33,75 @@ public final class NoSmallFactorProofGenerator {
         BigInteger s = zk.h1();
         BigInteger t = zk.h2();
 
-        SecureRandom rnd = SecureRandomUtils.getInstance();
-
         BigInteger sqrtNiUp = sqrtUpper(Ni);
         BigInteger twoEll = BigInteger.ONE.shiftLeft(ellBits);
         BigInteger twoEllEps = BigInteger.ONE.shiftLeft(ellBits + epsBits);
 
-        BigInteger alpha = randomSigned(twoEllEps.multiply(sqrtNiUp), rnd);
-        BigInteger beta = randomSigned(twoEllEps.multiply(sqrtNiUp), rnd);
-        BigInteger mu = randomSigned(twoEll.multiply(Nj), rnd);
-        BigInteger nu = randomSigned(twoEll.multiply(Nj), rnd);
-        BigInteger r = randomSigned(twoEllEps.multiply(Nj), rnd);
-        BigInteger x = randomSigned(twoEllEps.multiply(Nj), rnd);
-        BigInteger y = randomSigned(twoEllEps.multiply(Nj), rnd);
+        BigInteger bound1 = twoEllEps.multiply(sqrtNiUp);
+        BigInteger bound2 = twoEll.multiply(Nj);
+        BigInteger bound3 = twoEllEps.multiply(Nj);
+
+        BigInteger[] randomValues = new BigInteger[7];
+        java.util.stream.IntStream.range(0, 7).parallel().forEach(i -> {
+            SecureRandom rnd = SecureRandomUtils.getInstance();
+            switch (i) {
+                case 0:
+                    randomValues[0] = randomSigned(bound1, rnd);
+                    break;
+                case 1:
+                    randomValues[1] = randomSigned(bound1, rnd);
+                    break;
+                case 2:
+                    randomValues[2] = randomSigned(bound2, rnd);
+                    break;
+                case 3:
+                    randomValues[3] = randomSigned(bound2, rnd);
+                    break;
+                case 4:
+                    randomValues[4] = randomSigned(bound3, rnd);
+                    break;
+                case 5:
+                    randomValues[5] = randomSigned(bound3, rnd);
+                    break;
+                case 6:
+                    randomValues[6] = randomSigned(bound3, rnd);
+                    break;
+            }
+        });
+
+        BigInteger alpha = randomValues[0];
+        BigInteger beta = randomValues[1];
+        BigInteger mu = randomValues[2];
+        BigInteger nu = randomValues[3];
+        BigInteger r = randomValues[4];
+        BigInteger x = randomValues[5];
+        BigInteger y = randomValues[6];
 
         BigInteger p = priv.p();
         BigInteger q = priv.q();
 
-        BigInteger P = multiexpSigned(Nj, s, p, t, mu);
-        BigInteger Q = multiexpSigned(Nj, s, q, t, nu);
-        BigInteger A = multiexpSigned(Nj, s, alpha, t, x);
-        BigInteger B = multiexpSigned(Nj, s, beta, t, y);
+        BigInteger[] expResults = new BigInteger[4];
+        java.util.stream.IntStream.range(0, 4).parallel().forEach(i -> {
+            switch (i) {
+                case 0:
+                    expResults[0] = multiexpSigned(Nj, s, p, t, mu);
+                    break;
+                case 1:
+                    expResults[1] = multiexpSigned(Nj, s, q, t, nu);
+                    break;
+                case 2:
+                    expResults[2] = multiexpSigned(Nj, s, alpha, t, x);
+                    break;
+                case 3:
+                    expResults[3] = multiexpSigned(Nj, s, beta, t, y);
+                    break;
+            }
+        });
+
+        BigInteger P = expResults[0];
+        BigInteger Q = expResults[1];
+        BigInteger A = expResults[2];
+        BigInteger B = expResults[3];
         BigInteger T = multiexpSigned(Nj, Q, alpha, t, r);
 
         byte[] ctx = (context == null) ? new byte[0] : context;
@@ -90,6 +138,7 @@ public final class NoSmallFactorProofGenerator {
         return BigInteger.ONE.shiftLeft((bl + 1) >>> 1);
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     private static BigInteger randomSigned(BigInteger bound, SecureRandom rnd) {
         BigInteger x;
         do {
@@ -99,7 +148,7 @@ public final class NoSmallFactorProofGenerator {
     }
 
     private static BigInteger multiexpSigned(BigInteger mod, BigInteger a, BigInteger e1, BigInteger b, BigInteger e2) {
-        return BigIntegerUtils.powSigned(a, e1, mod).multiply(BigIntegerUtils.powSigned(b, e2, mod)).mod(mod);
+        return BigIntegerUtils.modMul(BigIntegerUtils.powSigned(a, e1, mod), BigIntegerUtils.powSigned(b, e2, mod), mod);
     }
 
     private static BigInteger toSigned(BigInteger x, BigInteger twoEll) {

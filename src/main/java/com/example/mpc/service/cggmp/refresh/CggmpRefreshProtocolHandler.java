@@ -2,13 +2,15 @@ package com.example.mpc.service.cggmp.refresh;
 
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
-import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.DbMapUtils;
+import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.JsonCodec;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dto.CggmpRefreshTask;
 import com.example.mpc.dto.KeyShare;
+import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.service.CggmpRefreshService;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import com.example.mpc.service.cggmp.types.BigIntIndexMap;
@@ -21,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -101,7 +104,7 @@ public final class CggmpRefreshProtocolHandler {
                     return CompletableFuture.supplyAsync(() -> {
                         try {
                             BigInteger q = Secp256k1CurveUtils.n();
-                            logger.info("Refresh {} network ready", task.taskId);
+                            logger.debug("Refresh {} network ready", task.taskId);
                             if (!task.participants.contains(svc.nodeId)) {
                                 return null;
                             }
@@ -205,6 +208,18 @@ public final class CggmpRefreshProtocolHandler {
                             .thenRunAsync(() -> {
                                 if (!finalizeRefresh(task)) {
                                     task.fail("Refresh verification failed");
+                                }
+                            }, refreshExecutorService)
+                            .thenCompose(v -> {
+                                if (task.status.get() == TaskStatus.FAILED) {
+                                    return CompletableFuture.completedFuture(null);
+                                }
+                                task.commitAcks.put(svc.nodeId, Boolean.TRUE);
+                                return svc.refreshMessageHandler.sendRefreshCommit(task)
+                                        .thenCompose(x -> waitForLatchAsync(task.commitLatch, "refresh commit"));
+                            })
+                            .thenRunAsync(() -> {
+                                if (task.status.get() == TaskStatus.FAILED) {
                                     return;
                                 }
                                 task.complete();
@@ -241,7 +256,7 @@ public final class CggmpRefreshProtocolHandler {
             BigInteger share = BigInteger.ZERO;
             BigInteger power = BigInteger.ONE;
             for (BigInteger coeff : coeffs) {
-                power = power.multiply(xVal).mod(q);
+                power = BigIntegerUtils.modMul(power, xVal, q);
                 share = share.add(coeff.multiply(power)).mod(q);
             }
             task.xShares.put(peerId, share);
@@ -365,7 +380,7 @@ public final class CggmpRefreshProtocolHandler {
             KeyShare prev = svc.keyShareDao.findByGroupPublicKeySync(svc.nodeId, task.groupPublicKey);
             String oldHash = HexUtils.sha256Hex(oldShare.toString(16));
             String newHash = HexUtils.sha256Hex(newShare.toString(16));
-            logger.info("Refresh key share computed (taskId={}, nodeId={}, groupPublicKey={}, oldShareHash={}, newShareHash={})",
+            logger.debug("Refresh key share computed (taskId={}, nodeId={}, groupPublicKey={}, oldShareHash={}, newShareHash={})",
                     task.taskId, svc.nodeId, task.groupPublicKey, oldHash, newHash);
             KeyShare keyShare = new KeyShare(svc.nodeId, newShare.toString(16), task.groupPublicKey, task.taskId);
             String prevPublicShares = prev == null ? null : prev.getPublicShares();
@@ -384,7 +399,7 @@ public final class CggmpRefreshProtocolHandler {
                 return false;
             }
             svc.keyShareDao.save(keyShare);
-            logger.info("Refresh key share persisted (taskId={}, nodeId={}, groupPublicKey={}, newShareHash={})",
+            logger.debug("Refresh key share persisted (taskId={}, nodeId={}, groupPublicKey={}, newShareHash={})",
                     task.taskId, svc.nodeId, task.groupPublicKey, newHash);
         } catch (Exception e) {
             logger.error("Failed to save refreshed key share", e);
@@ -475,7 +490,7 @@ public final class CggmpRefreshProtocolHandler {
                 }
                 refreshed.put(k, base.add(delta).normalize());
             }
-            Map<String, String> out = new java.util.LinkedHashMap<>();
+            Map<String, String> out = new LinkedHashMap<>();
             for (int k : task.participants) {
                 ECPoint point = refreshed.get(k);
                 if (point == null) {

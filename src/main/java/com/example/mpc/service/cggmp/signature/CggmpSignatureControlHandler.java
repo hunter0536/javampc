@@ -6,6 +6,7 @@ import com.example.mpc.service.CggmpSignatureService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -102,7 +103,7 @@ public final class CggmpSignatureControlHandler {
             if (dir != null) {
                 java.nio.file.Files.createDirectories(dir);
             }
-            java.util.Map<String, Object> line = new java.util.LinkedHashMap<>();
+            Map<String, Object> line = new LinkedHashMap<>();
             line.put("ts", System.currentTimeMillis());
             line.put("taskId", taskId);
             line.put("senderId", senderId);

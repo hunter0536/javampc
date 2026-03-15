@@ -1,5 +1,6 @@
 package com.example.mpc.config;
 
+import com.example.mpc.cggmp.util.NativeBigInteger;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.CggmpDkgService;
@@ -8,7 +9,7 @@ import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.DatabaseService;
 import com.example.mpc.service.GennaroDkgService;
 import com.example.mpc.service.NodeService;
-
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,7 +27,6 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Autowired
     private GennaroDkgService gennaroDkgService;
 
-
     @Autowired
     private CggmpSignatureService cggmpSignatureService;
 
@@ -39,8 +39,6 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Autowired
     private CggmpRefreshService cggmpRefreshService;
 
-
-
     @Autowired
     private NodeService nodeService;
 
@@ -50,13 +48,32 @@ public class ApplicationInitializer implements CommandLineRunner {
     @Value("${app.init.cggmp.enabled:true}")
     private boolean enableCggmp;
 
-    @Value("${app.init.legacy.enabled:true}")
+    @Value("${app.init.gennaro.enabled:true}")
     private boolean enableLegacy;
+
+    @Value("${cggmp.gmp.enabled:true}")
+    private boolean gmpEnabled;
+
+    @PostConstruct
+    public void init() {
+        System.setProperty("cggmp.gmp.enabled", String.valueOf(gmpEnabled));
+        logger.info("Set system property cggmp.gmp.enabled={}", gmpEnabled);
+        
+        if (gmpEnabled) {
+            try {
+                boolean nativeAvailable = NativeBigInteger.isNativeAvailable();
+                logger.info("GMP native library pre-loaded: {}", nativeAvailable);
+            } catch (Exception e) {
+                logger.warn("Failed to pre-load GMP native library: {}", e.getMessage());
+            }
+        }
+    }
 
     @Override
     public void run(String... args) throws Exception {
         logger.info("=".repeat(60));
         logger.info("Initializing application for node {}", nodeId);
+        logger.info("GMP enabled: {}", gmpEnabled);
         logger.info("=".repeat(60));
 
         initializeDatabase();
@@ -103,10 +120,7 @@ public class ApplicationInitializer implements CommandLineRunner {
                                 });
                         logger.info("Initializing CGGMP signature service...");
                         cggmpSignatureService.init(Constants.NODES_COUNT)
-                                .thenRun(() -> {
-                                    cggmpAuxService.ensureAuxProvisionedAfterNetworkReady();
-                                    logger.info("CGGMP services initialized successfully");
-                                })
+                                .thenRun(() -> logger.info("CGGMP services initialized successfully"))
                                 .exceptionally(ex -> {
                                     logger.error("Failed to initialize CGGMP signature service", ex);
                                     return null;

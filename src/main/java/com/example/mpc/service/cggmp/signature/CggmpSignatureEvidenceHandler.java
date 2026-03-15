@@ -4,18 +4,19 @@ import com.example.mpc.cggmp.PaillierEncryption;
 import com.example.mpc.cggmp.proof.PiAffGProof;
 import com.example.mpc.cggmp.proof.PiDecProof;
 import com.example.mpc.cggmp.proof.PresignProofs;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpSignatureTask;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.CggmpSignatureService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
 import com.example.mpc.service.cggmp.types.AffGProofMap;
 import com.example.mpc.service.cggmp.types.BigIntIndexMap;
-import com.example.mpc.common.util.RetryUtils;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,8 +24,10 @@ import org.slf4j.LoggerFactory;
 import java.math.BigInteger;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 /**
  * CGGMP签名证据处理器
@@ -51,7 +54,7 @@ public final class CggmpSignatureEvidenceHandler {
             }
             ECPoint S = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), delta_i);
             BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
-            BigInteger c = task.paillier.getPublicKeyInfo().multiply(K, gamma_i).multiply(D).mod(nSquared);
+            BigInteger c = BigIntegerUtils.modMul(task.paillier.getPublicKeyInfo().multiply(K, gamma_i), D, nSquared);
             BigInteger rho = task.paillier.recoverRandomizer(c, delta_i);
             PiDecProof proof = PresignProofs.createDecProof(
                     Secp256k1CurveUtils.G(),
@@ -94,7 +97,7 @@ public final class CggmpSignatureEvidenceHandler {
             ECPoint X_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x_i);
             ECPoint S = Gamma.multiply(chi_i).normalize();
             BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
-            BigInteger c = task.paillier.getPublicKeyInfo().multiply(K, x_i).multiply(Dhat).mod(nSquared);
+            BigInteger c = BigIntegerUtils.modMul(task.paillier.getPublicKeyInfo().multiply(K, x_i), Dhat, nSquared);
             BigInteger rho = task.paillier.recoverRandomizer(c, chi_i);
             PiDecProof proof = PresignProofs.createDecProof(
                     Secp256k1CurveUtils.G(),
@@ -213,6 +216,7 @@ public final class CggmpSignatureEvidenceHandler {
             return false;
         }
         BigInteger sum = BigInteger.ZERO;
+        BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
         for (int peerId : task.participants) {
             if (peerId == senderId) {
                 continue;
@@ -224,9 +228,8 @@ public final class CggmpSignatureEvidenceHandler {
             }
             sum = sum.add(Dij).add(Fij);
         }
-        sum = sum.add(claimedD);
-        BigInteger nSquared = task.paillier.getPublicKeyInfo().nSquared();
-        return sum.mod(nSquared).equals(BigInteger.ONE);
+        sum = sum.add(claimedD).mod(nSquared);
+        return sum.equals(BigInteger.ONE);
     }
 
     Map<String, Object> buildAffGEvidenceDelta(CggmpSignatureTask task, BigInteger gamma_i) {
@@ -235,39 +238,51 @@ public final class CggmpSignatureEvidenceHandler {
             BigIntIndexMap D = BigIntIndexMap.empty();
             BigIntIndexMap F = BigIntIndexMap.empty();
             AffGProofMap proofs = AffGProofMap.empty();
-            ECPoint Gamma = task.presignGamma.get(svc.nodeId);
-            if (Gamma == null) {
+            final ECPoint Gamma;
+            if (task.presignGamma.get(svc.nodeId) != null) {
+                Gamma = task.presignGamma.get(svc.nodeId);
+            } else {
                 Gamma = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), gamma_i);
             }
-            for (int peerId : task.participants) {
-                if (peerId == svc.nodeId) {
-                    continue;
-                }
-                BigInteger D_ji = task.presignD.get(peerId);
-                BigInteger F_ji = task.presignF.get(peerId);
-                if (D_ji == null || F_ji == null) {
-                    return null;
-                }
-                D = D.put(peerId, D_ji);
-                F = F.put(peerId, F_ji);
-                PiAffGProof proof = PresignProofs.createAffGProofNegY(
-                        Secp256k1CurveUtils.G(),
-                        Gamma,
-                        task.peerPaillierKeys.get(peerId).n(),
-                        task.paillier.getPublicKeyInfo().n(),
-                        task.presignK.get(peerId),
-                        D_ji,
-                        F_ji,
-                        gamma_i,
-                        task.presignBeta.get(peerId),
-                        task.presignRho.get(peerId),
-                        task.presignMu.get(peerId),
-                        svc.proofKappa,
-                        svc.proofEpsBits,
-                        CggmpProtocolUtils.buildPresignContext(task.taskId, svc.nodeId, "R2")
-                );
-                proofs = proofs.put(peerId, proof);
+
+            List<Integer> otherPeers = task.participants.stream()
+                    .filter(id -> id != svc.nodeId)
+                    .collect(Collectors.toList());
+
+            List<CompletableFuture<Map.Entry<Integer, PiAffGProof>>> futures = otherPeers.stream()
+                    .map(peerId -> CompletableFuture.supplyAsync(() -> {
+                        BigInteger D_ji = task.presignD.get(peerId);
+                        BigInteger F_ji = task.presignF.get(peerId);
+                        if (D_ji == null || F_ji == null) {
+                            throw new IllegalStateException("Missing presign data for peer " + peerId);
+                        }
+                        PiAffGProof proof = PresignProofs.createAffGProofNegY(
+                                Secp256k1CurveUtils.G(),
+                                Gamma,
+                                task.peerPaillierKeys.get(peerId).n(),
+                                task.paillier.getPublicKeyInfo().n(),
+                                task.presignK.get(peerId),
+                                D_ji,
+                                F_ji,
+                                gamma_i,
+                                task.presignBeta.get(peerId),
+                                task.presignRho.get(peerId),
+                                task.presignMu.get(peerId),
+                                svc.proofKappa,
+                                svc.proofEpsBits,
+                                CggmpProtocolUtils.buildPresignContext(task.taskId, svc.nodeId, "R2")
+                        );
+                        return Map.entry(peerId, proof);
+                    }))
+                    .collect(Collectors.toList());
+
+            for (CompletableFuture<Map.Entry<Integer, PiAffGProof>> future : futures) {
+                Map.Entry<Integer, PiAffGProof> entry = future.join();
+                D = D.put(entry.getKey(), task.presignD.get(entry.getKey()));
+                F = F.put(entry.getKey(), task.presignF.get(entry.getKey()));
+                proofs = proofs.put(entry.getKey(), entry.getValue());
             }
+
             ev.put("affGProofs", CggmpSignaturePresignHandler.encodeAffGProofMap(proofs.toMap()));
             ev.put("D_map", CggmpCodecUtils.encodeBigIntegerMap(D.toMap()));
             ev.put("F_map", CggmpCodecUtils.encodeBigIntegerMap(F.toMap()));
@@ -284,36 +299,46 @@ public final class CggmpSignatureEvidenceHandler {
             BigIntIndexMap D = BigIntIndexMap.empty();
             BigIntIndexMap F = BigIntIndexMap.empty();
             AffGProofMap proofs = AffGProofMap.empty();
-            ECPoint X_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x_i);
-            for (int peerId : task.participants) {
-                if (peerId == svc.nodeId) {
-                    continue;
-                }
-                BigInteger D_ji = task.presignDhat.get(peerId);
-                BigInteger F_ji = task.presignFhat.get(peerId);
-                if (D_ji == null || F_ji == null) {
-                    return null;
-                }
-                D = D.put(peerId, D_ji);
-                F = F.put(peerId, F_ji);
-                PiAffGProof proof = PresignProofs.createAffGProofNegY(
-                        Secp256k1CurveUtils.G(),
-                        X_i,
-                        task.peerPaillierKeys.get(peerId).n(),
-                        task.paillier.getPublicKeyInfo().n(),
-                        task.presignK.get(peerId),
-                        D_ji,
-                        F_ji,
-                        x_i,
-                        task.presignBetaHat.get(peerId),
-                        task.presignRhoHat.get(peerId),
-                        task.presignMuHat.get(peerId),
-                        svc.proofKappa,
-                        svc.proofEpsBits,
-                        CggmpProtocolUtils.buildPresignContext(task.taskId, svc.nodeId, "R2H")
-                );
-                proofs = proofs.put(peerId, proof);
+            final ECPoint X_i = Secp256k1CurveUtils.multiply(Secp256k1CurveUtils.G(), x_i);
+
+            List<Integer> otherPeers = task.participants.stream()
+                    .filter(id -> id != svc.nodeId)
+                    .collect(Collectors.toList());
+
+            List<CompletableFuture<Map.Entry<Integer, PiAffGProof>>> futures = otherPeers.stream()
+                    .map(peerId -> CompletableFuture.supplyAsync(() -> {
+                        BigInteger D_ji = task.presignDhat.get(peerId);
+                        BigInteger F_ji = task.presignFhat.get(peerId);
+                        if (D_ji == null || F_ji == null) {
+                            throw new IllegalStateException("Missing presign data for peer " + peerId);
+                        }
+                        PiAffGProof proof = PresignProofs.createAffGProofNegY(
+                                Secp256k1CurveUtils.G(),
+                                X_i,
+                                task.peerPaillierKeys.get(peerId).n(),
+                                task.paillier.getPublicKeyInfo().n(),
+                                task.presignK.get(peerId),
+                                D_ji,
+                                F_ji,
+                                x_i,
+                                task.presignBetaHat.get(peerId),
+                                task.presignRhoHat.get(peerId),
+                                task.presignMuHat.get(peerId),
+                                svc.proofKappa,
+                                svc.proofEpsBits,
+                                CggmpProtocolUtils.buildPresignContext(task.taskId, svc.nodeId, "R2H")
+                        );
+                        return Map.entry(peerId, proof);
+                    }))
+                    .collect(Collectors.toList());
+
+            for (CompletableFuture<Map.Entry<Integer, PiAffGProof>> future : futures) {
+                Map.Entry<Integer, PiAffGProof> entry = future.join();
+                D = D.put(entry.getKey(), task.presignDhat.get(entry.getKey()));
+                F = F.put(entry.getKey(), task.presignFhat.get(entry.getKey()));
+                proofs = proofs.put(entry.getKey(), entry.getValue());
             }
+
             ev.put("affGProofsHat", CggmpSignaturePresignHandler.encodeAffGProofMap(proofs.toMap()));
             ev.put("Dhat_map", CggmpCodecUtils.encodeBigIntegerMap(D.toMap()));
             ev.put("Fhat_map", CggmpCodecUtils.encodeBigIntegerMap(F.toMap()));
@@ -345,6 +370,17 @@ public final class CggmpSignatureEvidenceHandler {
                 if (allPeersPresent(task, senderId, proofs, D, F)) {
                     return false;
                 }
+                ECPoint Gamma = task.presignGamma.get(senderId);
+                BigInteger N1 = task.paillier.getPublicKeyInfo().n();
+                if (Gamma == null) {
+                    return false;
+                }
+                Map<Integer, PiAffGProof> proofMap = new java.util.HashMap<>();
+                Map<Integer, ECPoint> gammaMap = new java.util.HashMap<>();
+                Map<Integer, BigInteger> N0Map = new java.util.HashMap<>();
+                Map<Integer, BigInteger> KMap = new java.util.HashMap<>();
+                Map<Integer, BigInteger> DMap = new java.util.HashMap<>();
+                Map<Integer, BigInteger> YMap = new java.util.HashMap<>();
                 for (Map.Entry<Integer, BigInteger> e : D.entrySet()) {
                     int peerId = e.getKey();
                     if (peerId == senderId) {
@@ -353,23 +389,22 @@ public final class CggmpSignatureEvidenceHandler {
                     PiAffGProof proof = CggmpCodecUtils.decodePiAffGProof((Map<?, ?>) proofs.get(peerId));
                     BigInteger K_peer = task.presignK.get(peerId);
                     PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(peerId);
-                    ECPoint Gamma = task.presignGamma.get(senderId);
-                    if (Gamma == null || K_peer == null || pk == null) {
+                    if (K_peer == null || pk == null) {
                         return false;
                     }
-                    if (!PresignProofs.verifyAffGProof(proof,
-                            Secp256k1CurveUtils.G(),
-                            Gamma,
-                            pk.n(),
-                            task.paillier.getPublicKeyInfo().n(),
-                            K_peer,
-                            e.getValue(),
-                            F.get(peerId),
-                            svc.proofKappa,
-                            svc.proofEpsBits,
-                            CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2"))) {
-                        return false;
-                    }
+                    proofMap.put(peerId, proof);
+                    gammaMap.put(peerId, Gamma);
+                    N0Map.put(peerId, pk.n());
+                    KMap.put(peerId, K_peer);
+                    DMap.put(peerId, e.getValue());
+                    YMap.put(peerId, F.get(peerId));
+                }
+                byte[] context = CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2");
+                Map<Integer, Boolean> results = PresignProofs.verifyAffGBatchProofs(
+                        proofMap, gammaMap, N0Map, N1, KMap, DMap, YMap,
+                        svc.proofKappa, svc.proofEpsBits, context);
+                if (!PresignProofs.verifyAffGBatchProofsAll(results)) {
+                    return false;
                 }
             }
             if (proofsHat != null) {
@@ -383,6 +418,17 @@ public final class CggmpSignatureEvidenceHandler {
                 if (allPeersPresent(task, senderId, proofsHat, D, F)) {
                     return false;
                 }
+                ECPoint X = task.presignSTilde.get(senderId);
+                BigInteger N1 = task.paillier.getPublicKeyInfo().n();
+                if (X == null) {
+                    return false;
+                }
+                Map<Integer, PiAffGProof> proofMapHat = new java.util.HashMap<>();
+                Map<Integer, ECPoint> gammaMapHat = new java.util.HashMap<>();
+                Map<Integer, BigInteger> N0MapHat = new java.util.HashMap<>();
+                Map<Integer, BigInteger> KMapHat = new java.util.HashMap<>();
+                Map<Integer, BigInteger> DMapHat = new java.util.HashMap<>();
+                Map<Integer, BigInteger> YMapHat = new java.util.HashMap<>();
                 for (Map.Entry<Integer, BigInteger> e : D.entrySet()) {
                     int peerId = e.getKey();
                     if (peerId == senderId) {
@@ -391,23 +437,22 @@ public final class CggmpSignatureEvidenceHandler {
                     PiAffGProof proof = CggmpCodecUtils.decodePiAffGProof((Map<?, ?>) proofsHat.get(peerId));
                     BigInteger K_peer = task.presignK.get(peerId);
                     PaillierEncryption.PublicKey pk = task.peerPaillierKeys.get(peerId);
-                    ECPoint X = task.presignSTilde.get(senderId);
-                    if (X == null || K_peer == null || pk == null) {
+                    if (K_peer == null || pk == null) {
                         return false;
                     }
-                    if (!PresignProofs.verifyAffGProof(proof,
-                            Secp256k1CurveUtils.G(),
-                            X,
-                            pk.n(),
-                            task.paillier.getPublicKeyInfo().n(),
-                            K_peer,
-                            e.getValue(),
-                            F.get(peerId),
-                            svc.proofKappa,
-                            svc.proofEpsBits,
-                            CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2H"))) {
-                        return false;
-                    }
+                    proofMapHat.put(peerId, proof);
+                    gammaMapHat.put(peerId, X);
+                    N0MapHat.put(peerId, pk.n());
+                    KMapHat.put(peerId, K_peer);
+                    DMapHat.put(peerId, e.getValue());
+                    YMapHat.put(peerId, F.get(peerId));
+                }
+                byte[] contextHat = CggmpProtocolUtils.buildPresignContext(task.taskId, senderId, "R2H");
+                Map<Integer, Boolean> resultsHat = PresignProofs.verifyAffGBatchProofs(
+                        proofMapHat, gammaMapHat, N0MapHat, N1, KMapHat, DMapHat, YMapHat,
+                        svc.proofKappa, svc.proofEpsBits, contextHat);
+                if (!PresignProofs.verifyAffGBatchProofsAll(resultsHat)) {
+                    return false;
                 }
             }
             return true;
@@ -465,8 +510,8 @@ public final class CggmpSignatureEvidenceHandler {
             if (d == null || f == null) {
                 return null;
             }
-            acc = acc.multiply(d).mod(nSquared);
-            acc = acc.multiply(f).mod(nSquared);
+            acc = BigIntegerUtils.modMul(acc, d, nSquared);
+            acc = BigIntegerUtils.modMul(acc, f, nSquared);
         }
         return acc;
     }

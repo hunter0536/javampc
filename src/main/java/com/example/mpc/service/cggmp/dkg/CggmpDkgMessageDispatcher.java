@@ -29,9 +29,9 @@ public final class CggmpDkgMessageDispatcher {
                 logTaskId = map.get("taskId");
             }
         }
-        logger.info("=== CGGMP DKG handleMessage: senderId={}, type={}, taskId={} ===",
+        logger.debug("=== CGGMP DKG handleMessage: senderId={}, type={}, taskId={} ===",
                 senderId, message.type(), logTaskId);
-        Executor executor = ThreadPoolUtil.getComputationThreadPool();
+        Executor executor = ThreadPoolUtil.getDkgThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
                 Object data = message.data();
@@ -41,7 +41,7 @@ public final class CggmpDkgMessageDispatcher {
                         data = decoded;
                     }
                 }
-                logger.info("=== CGGMP DKG processing: type={} ===", message.type());
+                logger.debug("=== CGGMP DKG processing: type={} ===", message.type());
                 switch (message.type()) {
                     case CGGMP_DKG_INIT:
                         svc.dkgMessageHandler.onDkgInit(senderId, data);
@@ -63,6 +63,9 @@ public final class CggmpDkgMessageDispatcher {
                         break;
                     case CGGMP_DKG_ROUND3:
                         svc.dkgMessageHandler.onDkgRound3(senderId, data);
+                        break;
+                    case CGGMP_DKG_COMMIT:
+                        svc.dkgMessageHandler.onDkgCommit(senderId, data);
                         break;
                     case CGGMP_DKG_COMPLAINT:
                         svc.dkgMessageHandler.onDkgComplaint(senderId, data);

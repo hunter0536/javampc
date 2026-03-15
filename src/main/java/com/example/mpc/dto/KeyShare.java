@@ -9,6 +9,7 @@ public class KeyShare {
     private String publicShares;
     private String indexMap;
     private String chainCode;
+    private Boolean isHotWallet;
 
     public KeyShare() {
     }
@@ -45,6 +46,17 @@ public class KeyShare {
         this.publicShares = publicShares;
         this.indexMap = indexMap;
         this.chainCode = chainCode;
+    }
+
+    public KeyShare(Integer shareIndex, String keyShare, String groupPublicKey, String dkgTaskId, String publicShares, String indexMap, String chainCode, Boolean isHotWallet) {
+        this.shareIndex = shareIndex;
+        this.keyShare = keyShare;
+        this.groupPublicKey = groupPublicKey;
+        this.dkgTaskId = dkgTaskId;
+        this.publicShares = publicShares;
+        this.indexMap = indexMap;
+        this.chainCode = chainCode;
+        this.isHotWallet = isHotWallet;
     }
 
     public Long getId() {
@@ -109,5 +121,13 @@ public class KeyShare {
 
     public void setChainCode(String chainCode) {
         this.chainCode = chainCode;
+    }
+
+    public Boolean getIsHotWallet() {
+        return isHotWallet;
+    }
+
+    public void setIsHotWallet(Boolean isHotWallet) {
+        this.isHotWallet = isHotWallet;
     }
 }

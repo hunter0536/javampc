@@ -1,12 +1,16 @@
 package com.example.mpc.service.cggmp.dkg;
 
+import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
+import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
+import com.example.mpc.cggmp.proof.NoSmallFactorProof;
+import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
 import com.example.mpc.cggmp.proof.PiSchProof;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
 import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpDkgTask;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.CggmpDkgService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
@@ -23,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -52,7 +57,7 @@ public final class CggmpDkgProtocolHandler {
         try {
             task = svc.getDkgTask(taskId);
             if (!svc.nodeService.isTlsEnabled()) {
-                throw new RuntimeException("DKG requires TLS-enabled private channels (nodes.ssl.enabled=true).");
+                throw new RuntimeException("DKG requires TLS-enabled private channels (nodes.tls.enabled=true).");
             }
             if (!validateFullParticipation(task)) {
                 throw new RuntimeException("DKG requires full participation");
@@ -66,7 +71,7 @@ public final class CggmpDkgProtocolHandler {
         }
 
         logger.info("Starting CGGMP DKG process for task: {}", taskId);
-        logger.info("Waiting for network ready...");
+        logger.debug("Waiting for network ready...");
         long waitNetStart = System.nanoTime();
 
         Map<String, Object> initData = new HashMap<>();
@@ -75,6 +80,7 @@ public final class CggmpDkgProtocolHandler {
         initData.put("nodesCount", Constants.NODES_COUNT);
         initData.put("initiatorId", svc.nodeId);
         initData.put("participants", new ArrayList<>(task.participants));
+        initData.put("isHotWallet", task.isHotWallet);
 
         CompletableFuture<Void> flow = svc.nodeService.waitForNetworkReady()
                 .thenRun(() -> logger.debug("DKG waitForNetworkReady took {} ms", (System.nanoTime() - waitNetStart) / 1_000_000))
@@ -83,7 +89,7 @@ public final class CggmpDkgProtocolHandler {
                     if (networkSize < svc.nodesCount) {
                         throw new RuntimeException("Not enough nodes in network. Expected: " + svc.nodesCount + ", found: " + networkSize);
                     }
-                    logger.info("Network ready with {} nodes", networkSize);
+                    logger.debug("Network ready with {} nodes", networkSize);
                 })
                 .thenCompose(v -> {
                     if (!broadcastInit) {
@@ -155,7 +161,7 @@ public final class CggmpDkgProtocolHandler {
                     .whenComplete((v, ex) -> logger.debug("DKG executeDkgRounds total took {} ms",
                             (System.nanoTime() - roundsStart) / 1_000_000));
         }
-        logger.info("Node {} executing CGGMP24 DKG Round 1 (t-of-n)", svc.nodeId);
+        logger.debug("Node {} executing CGGMP24 DKG Round 1 (t-of-n)", svc.nodeId);
 
         CompletableFuture<CggmpDkgContext> r1Future = CompletableFuture.supplyAsync(() -> {
             BigInteger q = Secp256k1CurveUtils.n();
@@ -170,11 +176,11 @@ public final class CggmpDkgProtocolHandler {
             for (int k = 0; k < svc.threshold; k++) {
                 S_i = S_i.put(k, g.multiply(coeffs[k]).normalize());
             }
-            task.Xjks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(S_i.toMap()));
+            task.Xjks.put(svc.nodeId, new ConcurrentHashMap<>(S_i.toMap()));
 
             BigInteger alpha = CggmpProtocolUtils.randomNonZero(q);
             ECPoint A_i = g.multiply(alpha).normalize();
-            task.Ajks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(Map.of(0, A_i)));
+            task.Ajks.put(svc.nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
             task.schAlphas.put(0, alpha);
 
             byte[] ridPart = CggmpProtocolUtils.randomBytes(32);
@@ -183,6 +189,18 @@ public final class CggmpDkgProtocolHandler {
             if (chainCodePart != null) {
                 task.chainCodeParts.put(svc.nodeId, chainCodePart);
             }
+
+            String context = CggmpDkgUtils.buildSid(task.executionId, task.taskId);
+            byte[] contextBytes = context.getBytes();
+
+            BiPrimeProofGenerator biPrimeProofGenerator = new BiPrimeProofGenerator();
+            NoSmallFactorProofGenerator noSmallFactorProofGenerator = new NoSmallFactorProofGenerator(task.zkSetup);
+
+            BiPrimeBlumProof biPrimeProof = biPrimeProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
+            NoSmallFactorProof factorProof = noSmallFactorProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
+
+            logger.debug("Generated ZK proofs for DKG Round 1, BiPrimeProof bits: {}",
+                    task.paillier.getPublicKeyInfo().n().bitLength());
 
             Map<String, Object> r1Open = new LinkedHashMap<>();
             r1Open.put("taskId", task.taskId);
@@ -196,6 +214,10 @@ public final class CggmpDkgProtocolHandler {
             if (chainCodePart != null) {
                 r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
             }
+
+            r1Open.put("modProof", CggmpCodecUtils.encodeBiPrimeProof(biPrimeProof));
+            r1Open.put("facProof", CggmpCodecUtils.encodeNoSmallFactorProof(factorProof));
+
             String vCommit = CggmpDkgUtils.computeDkgCommitHash(task.executionId, task.taskId, svc.nodeId, ridPart, S_i.toMap(), A_i, uCommit, chainCodePart);
             task.round1PayloadHashes.put(svc.nodeId, vCommit);
             Map<String, Object> r1Commit = new HashMap<>();
@@ -301,7 +323,7 @@ public final class CggmpDkgProtocolHandler {
                     for (int peerId : task.participants) {
                         BigInteger share = peerId == svc.nodeId
                                 ? CggmpDkgUtils.evaluatePolynomial(ctx.coeffs(), CggmpDkgUtils.getIndexValue(task, svc.nodeId), ctx.q())
-                                : task.xji.getOrDefault(peerId, new java.util.concurrent.ConcurrentHashMap<>()).get(svc.nodeId);
+                                : task.xji.getOrDefault(peerId, new ConcurrentHashMap<>()).get(svc.nodeId);
                         if (share == null) {
                             throw new RuntimeException("Missing share from peer " + peerId);
                         }
@@ -327,7 +349,7 @@ public final class CggmpDkgProtocolHandler {
                 }, dkgExecutorService).thenApply(v -> ctx))
                 .thenCompose(ctx -> waitForDkgLatch(task, task.round3ReceivedLatch, "DKG Round 3 messages")
                         .thenApply(v -> ctx))
-                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                .thenCompose(ctx -> CompletableFuture.supplyAsync(() -> {
                     ECPoint groupPublicKey = ctx.g().getCurve().getInfinity();
                     for (int peerId : task.participants) {
                         Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
@@ -339,10 +361,21 @@ public final class CggmpDkgProtocolHandler {
                     task.groupPublicKey = groupPublicKey;
                     task.groupPublicKeyHex = HexUtils.bytesToHex(groupPublicKey.getEncoded(false));
 
-                    svc.saveKeyShareToDatabase(task);
-                    task.complete();
-                    logger.info("CGGMP24 DKG completed! Group public key: {}", task.groupPublicKeyHex);
-                }, dkgExecutorService))
+                    return svc.saveKeyShareToDatabase(task);
+                }, dkgExecutorService).thenCompose(saved -> {
+                    if (!Boolean.TRUE.equals(saved)) {
+                        task.fail();
+                        task.errorMessage = "Failed to persist DKG key share";
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    task.commitAcks.put(svc.nodeId, Boolean.TRUE);
+                    return svc.dkgMessageHandler.sendDkgCommit(task)
+                            .thenCompose(x -> waitForDkgLatch(task, task.commitLatch, "DKG commit confirmations"))
+                            .thenRun(() -> {
+                                task.complete();
+                                logger.info("CGGMP24 DKG completed! Group public key: {}", task.groupPublicKeyHex);
+                            });
+                }))
                 .whenComplete((v, ex) -> logger.debug("DKG executeDkgRounds total took {} ms",
                         (System.nanoTime() - roundsStart) / 1_000_000));
     }
@@ -351,7 +384,7 @@ public final class CggmpDkgProtocolHandler {
      * 执行非阈值模式DKG协议
      */
     private CompletableFuture<Void> executeDkgRoundsNonThreshold(CggmpDkgTask task) {
-        logger.info("Node {} executing CGGMP24 DKG Round 1 (n-of-n)", svc.nodeId);
+        logger.debug("Node {} executing CGGMP24 DKG Round 1 (n-of-n)", svc.nodeId);
         return CompletableFuture.supplyAsync(() -> {
                     BigInteger q = Secp256k1CurveUtils.n();
                     ECPoint g = Secp256k1CurveUtils.G();
@@ -359,11 +392,11 @@ public final class CggmpDkgProtocolHandler {
                     BigInteger x_i = CggmpProtocolUtils.randomNonZero(q);
                     ECPoint X_i = g.multiply(x_i).normalize();
                     ECPointIndexMap S_i = ECPointIndexMap.empty().put(0, X_i);
-                    task.Xjks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(S_i.toMap()));
+                    task.Xjks.put(svc.nodeId, new ConcurrentHashMap<>(S_i.toMap()));
 
                     BigInteger alpha = CggmpProtocolUtils.randomNonZero(q);
                     ECPoint A_i = g.multiply(alpha).normalize();
-                    task.Ajks.put(svc.nodeId, new java.util.concurrent.ConcurrentHashMap<>(Map.of(0, A_i)));
+                    task.Ajks.put(svc.nodeId, new ConcurrentHashMap<>(Map.of(0, A_i)));
                     task.schAlphas.put(0, alpha);
 
                     byte[] ridPart = CggmpProtocolUtils.randomBytes(32);
@@ -372,6 +405,18 @@ public final class CggmpDkgProtocolHandler {
                     if (chainCodePart != null) {
                         task.chainCodeParts.put(svc.nodeId, chainCodePart);
                     }
+
+                    String context = CggmpDkgUtils.buildSid(task.executionId, task.taskId);
+                    byte[] contextBytes = context.getBytes();
+
+                    BiPrimeProofGenerator biPrimeProofGenerator = new BiPrimeProofGenerator();
+                    NoSmallFactorProofGenerator noSmallFactorProofGenerator = new NoSmallFactorProofGenerator(task.zkSetup);
+
+                    BiPrimeBlumProof biPrimeProof = biPrimeProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
+                    NoSmallFactorProof factorProof = noSmallFactorProofGenerator.createProof(task.paillier.getPrivateKeyInfo(), contextBytes);
+
+                    logger.info("Generated ZK proofs for DKG Round 1 (n-of-n), BiPrimeProof bits: {}",
+                            task.paillier.getPublicKeyInfo().n().bitLength());
 
                     byte[] uCommit = CggmpProtocolUtils.randomBytes(32);
                     Map<String, Object> r1Open = new LinkedHashMap<>();
@@ -385,6 +430,10 @@ public final class CggmpDkgProtocolHandler {
                     if (chainCodePart != null) {
                         r1Open.put("c", HexUtils.bytesToHex(chainCodePart));
                     }
+
+                    r1Open.put("modProof", CggmpCodecUtils.encodeBiPrimeProof(biPrimeProof));
+                    r1Open.put("facProof", CggmpCodecUtils.encodeNoSmallFactorProof(factorProof));
+
                     String vCommit = CggmpDkgUtils.computeDkgCommitHash(task.executionId, task.taskId, svc.nodeId, ridPart, S_i.toMap(), A_i, uCommit, chainCodePart);
                     task.round1PayloadHashes.put(svc.nodeId, vCommit);
                     Map<String, Object> r1Commit = new HashMap<>();
@@ -454,7 +503,7 @@ public final class CggmpDkgProtocolHandler {
                 }, dkgExecutorService).thenApply(v -> ctx))
                 .thenCompose(ctx -> waitForDkgLatch(task, task.round3ReceivedLatch, "DKG Round 3 messages")
                         .thenApply(v -> ctx))
-                .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
+                .thenCompose(ctx -> CompletableFuture.supplyAsync(() -> {
                     ECPoint groupPublicKey = ctx.g().getCurve().getInfinity();
                     for (int peerId : task.participants) {
                         Map<Integer, ECPoint> sVec = task.Xjks.get(peerId);
@@ -466,10 +515,21 @@ public final class CggmpDkgProtocolHandler {
                     task.groupPublicKey = groupPublicKey;
                     task.groupPublicKeyHex = HexUtils.bytesToHex(groupPublicKey.getEncoded(false));
 
-                    svc.saveKeyShareToDatabase(task);
-                    task.complete();
-                    logger.info("CGGMP24 DKG (n-of-n) completed! Group public key: {}", task.groupPublicKeyHex);
-                }, dkgExecutorService));
+                    return svc.saveKeyShareToDatabase(task);
+                }, dkgExecutorService).thenCompose(saved -> {
+                    if (!Boolean.TRUE.equals(saved)) {
+                        task.fail();
+                        task.errorMessage = "Failed to persist DKG key share";
+                        return CompletableFuture.completedFuture(null);
+                    }
+                    task.commitAcks.put(svc.nodeId, Boolean.TRUE);
+                    return svc.dkgMessageHandler.sendDkgCommit(task)
+                            .thenCompose(x -> waitForDkgLatch(task, task.commitLatch, "DKG commit confirmations"))
+                            .thenRun(() -> {
+                                task.complete();
+                                logger.info("CGGMP24 DKG (n-of-n) completed! Group public key: {}", task.groupPublicKeyHex);
+                            });
+                }));
     }
 
     /**

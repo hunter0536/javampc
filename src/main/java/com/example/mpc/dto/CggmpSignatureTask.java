@@ -8,6 +8,7 @@ import com.example.mpc.enums.TaskStatus;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -21,6 +22,7 @@ public class CggmpSignatureTask {
     public final int threshold;
     public final int initiatorId;
     public final Set<Integer> participants;
+    public final boolean isHotWallet;
 
     public String auxTaskId;
     public byte[] messageHash;
@@ -73,6 +75,8 @@ public class CggmpSignatureTask {
     public final ConcurrentHashMap<Integer, java.util.Map<String, Object>> pendingPresignR2 = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> presignDeltaTilde = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, ECPoint> presignSTilde = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, R2VerifyResult> r2VerifyResults = new ConcurrentHashMap<>();
+    public volatile CountDownLatch r2VerifyLatch;
     public Presignature presignature;
     public volatile boolean presignatureUsed = false;
 
@@ -121,16 +125,21 @@ public class CggmpSignatureTask {
     public final AtomicReference<TaskStatus> status = new AtomicReference<>(TaskStatus.PENDING);
 
     public CggmpSignatureTask(String taskId, String message, String groupPublicKey, int nodesCount, int threshold, int initiatorId) {
-        this(taskId, message, groupPublicKey, nodesCount, threshold, initiatorId, null);
+        this(taskId, message, groupPublicKey, nodesCount, threshold, initiatorId, null, false);
     }
 
     public CggmpSignatureTask(String taskId, String message, String groupPublicKey, int nodesCount, int threshold, int initiatorId, Set<Integer> participantsOverride) {
+        this(taskId, message, groupPublicKey, nodesCount, threshold, initiatorId, participantsOverride, false);
+    }
+
+    public CggmpSignatureTask(String taskId, String message, String groupPublicKey, int nodesCount, int threshold, int initiatorId, Set<Integer> participantsOverride, boolean isHotWallet) {
         this.taskId = taskId;
         this.message = message;
         this.groupPublicKey = groupPublicKey;
         this.nodesCount = nodesCount;
         this.threshold = threshold;
         this.initiatorId = initiatorId;
+        this.isHotWallet = isHotWallet;
         this.participants = participantsOverride != null && !participantsOverride.isEmpty()
                 ? java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(participantsOverride))
                 : selectParticipants(initiatorId, nodesCount, threshold);
@@ -179,7 +188,7 @@ public class CggmpSignatureTask {
 
     private static Set<Integer> selectParticipants(int initiatorId, int nodesCount, int threshold) {
         int actualThreshold = Math.min(Math.max(1, threshold), nodesCount);
-        java.util.LinkedHashSet<Integer> result = new java.util.LinkedHashSet<>();
+        LinkedHashSet<Integer> result = new LinkedHashSet<>();
         if (initiatorId >= 1 && initiatorId <= nodesCount) {
             result.add(initiatorId);
         }

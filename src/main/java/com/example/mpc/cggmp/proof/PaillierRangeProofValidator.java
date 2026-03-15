@@ -1,5 +1,6 @@
 package com.example.mpc.cggmp.proof;
 
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.ZkBytes;
 import com.example.mpc.cggmp.util.ZkHash;
 import com.example.mpc.cggmp.zk.RangeProofValidator;
@@ -7,6 +8,7 @@ import com.example.mpc.cggmp.zk.RangeProofValidator;
 import java.math.BigInteger;
 
 public class PaillierRangeProofValidator implements RangeProofValidator {
+    @Override
     public boolean verifyProof(PaillierRangeProof proof, com.example.mpc.cggmp.PaillierEncryption.PublicKey pubKey, PaillierRangeProofContext ctx) {
         var g = pubKey.g();
         var n = pubKey.n();
@@ -37,20 +39,18 @@ public class PaillierRangeProofValidator implements RangeProofValidator {
             return false;
         }
 
-        var left1 = g.modPow(s1, nsq)
-                .multiply(s.modPow(n, nsq))
+        var left1 = BigIntegerUtils.modPow(g, s1, nsq)
+                .multiply(BigIntegerUtils.modPow(s, n, nsq))
                 .mod(nsq);
 
-        var right1 = u.multiply(ctx.c().modPow(e, nsq)).mod(nsq);
+        var right1 = u.multiply(BigIntegerUtils.modPow(ctx.c(), e, nsq)).mod(nsq);
         if (!left1.equals(right1)) {
             return false;
         }
 
-        var left2 = h1.modPow(s1, hatN)
-                .multiply(h2.modPow(s2, hatN))
-                .mod(hatN);
+        var left2 = BigIntegerUtils.modMul(BigIntegerUtils.modPow(h1, s1, hatN), BigIntegerUtils.modPow(h2, s2, hatN), hatN);
 
-        var right2 = z.modPow(e, hatN).multiply(w).mod(hatN);
+        var right2 = BigIntegerUtils.modMul(BigIntegerUtils.modPow(z, e, hatN), w, hatN);
 
         return left2.equals(right2);
     }

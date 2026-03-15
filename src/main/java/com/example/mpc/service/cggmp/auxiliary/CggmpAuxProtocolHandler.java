@@ -9,20 +9,21 @@ import com.example.mpc.cggmp.proof.PiPrmProof;
 import com.example.mpc.cggmp.proof.RefreshProofs;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.RetryUtils;
 import com.example.mpc.constant.Constants;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpAuxTask;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.CggmpAuxService;
 import com.example.mpc.service.NodeService;
 import com.example.mpc.service.cggmp.CggmpCodecUtils;
 import com.example.mpc.service.cggmp.CggmpProtocolUtils;
-import com.example.mpc.common.util.RetryUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -47,15 +48,27 @@ public final class CggmpAuxProtocolHandler {
         logger.debug("AUX protocol starting: taskId={}, executionId={}", task.taskId, task.executionId);
         return CompletableFuture.supplyAsync(() -> {
                     logger.debug("AUX protocol running: taskId={}, executionId={}", task.taskId, task.executionId);
+
+                    // 并行执行Paillier密钥生成和Pedersen/ZK setup
                     long paillierStart = System.nanoTime();
-                    PaillierEncryption paillier = new PaillierEncryption(svc.auxPaillierBits);
-                    logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, svc.auxPaillierBits);
-                    task.paillier = paillier;
+                    CompletableFuture<PaillierEncryption> paillierFuture = CompletableFuture.supplyAsync(() -> {
+                        PaillierEncryption p = new PaillierEncryption(svc.auxPaillierBits);
+                        logger.debug("AUX Paillier generated in {} ms (bits={})", (System.nanoTime() - paillierStart) / 1_000_000, svc.auxPaillierBits);
+                        return p;
+                    }, auxExecutorService);
+
                     long pedStart = System.nanoTime();
-                    logger.debug("AUX Pedersen/ZK setup start: taskId={}, executionId={}, bits={}",
-                            task.taskId, task.executionId, paillier.getPublicKeyInfo().bitLength());
-                    ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(paillier.getPublicKeyInfo().bitLength());
-                    logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, paillier.getPublicKeyInfo().bitLength());
+                    CompletableFuture<ZKSetup.ZKSetupWithLambda> pedFuture = CompletableFuture.supplyAsync(() -> {
+                        ZKSetup.ZKSetupWithLambda ped = ZKSetup.generateWithLambda(svc.auxPaillierBits);
+                        logger.debug("AUX Pedersen/ZK setup generated in {} ms (bits={})", (System.nanoTime() - pedStart) / 1_000_000, svc.auxPaillierBits);
+                        return ped;
+                    }, auxExecutorService);
+
+                    // 等待两个任务完成
+                    PaillierEncryption paillier = paillierFuture.join();
+                    ZKSetup.ZKSetupWithLambda ped = pedFuture.join();
+
+                    task.paillier = paillier;
                     task.hatN = ped.zk().hatN();
                     task.s = ped.zk().h1();
                     task.t = ped.zk().h2();
@@ -130,7 +143,7 @@ public final class CggmpAuxProtocolHandler {
                                     "senderId", svc.nodeId,
                                     "V", task.commitHashes.get(svc.nodeId)
                             ))), logger, "CGGMP_AUX_R1_RBC_RETRY");
-                            throw new java.util.concurrent.CompletionException(ex);
+                            throw new CompletionException(ex);
                         })
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
@@ -157,7 +170,7 @@ public final class CggmpAuxProtocolHandler {
                                     task.taskId, task.executionId, svc.nodeId, echo.length());
                             CggmpProtocolUtils.fireAndForget(svc.nodeService.broadcastRbc(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_R1_ECHO, r1Echo)),
                                     logger, "CGGMP_AUX_R1_ECHO_RETRY");
-                            throw new java.util.concurrent.CompletionException(ex);
+                            throw new CompletionException(ex);
                         })
                         .thenApply(v -> ctx))
                 .thenCompose(ctx -> CompletableFuture.runAsync(() -> {
@@ -230,6 +243,23 @@ public final class CggmpAuxProtocolHandler {
                         .thenApply(v -> ctx))
                 .thenRunAsync(() -> {
                     CggmpAuxUtils.saveAuxInfo(svc, task);
+                    task.savedReceived.put(svc.nodeId, Boolean.TRUE);
+                    task.savedLatch.countDown();
+                    Map<String, Object> saved = new HashMap<>();
+                    saved.put("taskId", task.taskId);
+                    saved.put("executionId", task.executionId);
+                    saved.put("senderId", svc.nodeId);
+                    CggmpProtocolUtils.fireAndForget(RetryUtils.retryAsync(svc.auxScheduler, logger,
+                                    () -> svc.nodeService.broadcastMessage(new NodeService.Message(svc.nodeId, MessageType.CGGMP_AUX_SAVED, saved)),
+                                    Constants.BROADCAST_RETRY_COUNT,
+                                    Constants.BROADCAST_RETRY_INTERVAL_MS,
+                                    "CGGMP_AUX_SAVED"),
+                            logger, "CGGMP_AUX_SAVED");
+                    logger.debug("AUX saved broadcast: taskId={}, executionId={}, senderId={}",
+                            task.taskId, task.executionId, svc.nodeId);
+                }, auxExecutorService)
+                .thenCompose(v -> CggmpAuxUtils.waitForLatchAsync(svc, task, task.savedLatch, Constants.AUX_ROUND_TIMEOUT_SECONDS, "AUX SAVED"))
+                .thenRunAsync(() -> {
                     logger.debug("AUX protocol completed in {} ms", (System.nanoTime() - auxStartNs) / 1_000_000);
                 }, auxExecutorService);
     }

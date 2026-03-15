@@ -1,13 +1,13 @@
 package com.example.mpc.service.cggmp;
 
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
+import com.example.mpc.common.util.SecureRandomUtils;
 import com.example.mpc.dto.CggmpAuxTask;
 import com.example.mpc.dto.CggmpSignatureTask;
 import org.bouncycastle.math.ec.ECPoint;
 import org.slf4j.Logger;
-
-import com.example.mpc.common.util.SecureRandomUtils;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -15,6 +15,8 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Map;
 import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -97,7 +99,7 @@ public final class CggmpProtocolUtils {
             md.update(task.executionId.getBytes(StandardCharsets.UTF_8));
             md.update(task.taskId.getBytes(StandardCharsets.UTF_8));
             int count = 0;
-            java.util.SortedMap<Integer, String> ordered = new java.util.TreeMap<>(task.commitHashes);
+            SortedMap<Integer, String> ordered = new TreeMap<>(task.commitHashes);
             for (Map.Entry<Integer, String> e : ordered.entrySet()) {
                 count++;
                 md.update(String.valueOf(e.getKey()).getBytes(StandardCharsets.UTF_8));
@@ -209,11 +211,11 @@ public final class CggmpProtocolUtils {
      */
     public static BigInteger randomNonZero(BigInteger n) {
         SecureRandom rnd = SecureRandomUtils.getInstance();
-        BigInteger r;
-        do {
-            r = new BigInteger(n.bitLength(), rnd).mod(n);
-        } while (r.signum() == 0);
-        return r;
+        BigInteger nMinusOne = n.subtract(BigInteger.ONE);
+        if (nMinusOne.signum() <= 0) {
+            throw new IllegalArgumentException("n must be greater than 1");
+        }
+        return new BigInteger(nMinusOne.bitLength(), rnd).mod(nMinusOne).add(BigInteger.ONE);
     }
 
     public static Map<?, ?> asMap(Object value) {
@@ -265,11 +267,11 @@ public final class CggmpProtocolUtils {
                 continue;
             }
             BigInteger peerBi = indexMap != null && indexMap.get(peerId) != null ? indexMap.get(peerId) : BigInteger.valueOf(peerId);
-            num = num.multiply(peerBi).mod(mod);
+            num = BigIntegerUtils.modMul(num, peerBi, mod);
             BigInteger diff = peerBi.subtract(idBi).mod(mod);
-            den = den.multiply(diff).mod(mod);
+            den = BigIntegerUtils.modMul(den, diff, mod);
         }
-        return num.multiply(den.modInverse(mod)).mod(mod);
+        return BigIntegerUtils.modMul(num, BigIntegerUtils.modInverse(den, mod), mod);
     }
 
     private static BigInteger lagrangeCoefficientAtZero(int id, Set<Integer> participants, Map<Integer, BigInteger> indexMap, BigInteger mod) {
@@ -284,11 +286,11 @@ public final class CggmpProtocolUtils {
                 continue;
             }
             BigInteger peerBi = indexMap != null && indexMap.get(peerId) != null ? indexMap.get(peerId) : BigInteger.valueOf(peerId);
-            num = num.multiply(peerBi).mod(mod);
+            num = BigIntegerUtils.modMul(num, peerBi, mod);
             BigInteger diff = peerBi.subtract(idBi).mod(mod);
-            den = den.multiply(diff).mod(mod);
+            den = BigIntegerUtils.modMul(den, diff, mod);
         }
-        return num.multiply(den.modInverse(mod)).mod(mod);
+        return BigIntegerUtils.modMul(num, BigIntegerUtils.modInverse(den, mod), mod);
     }
 
     private static String buildSignSid(String taskId) {

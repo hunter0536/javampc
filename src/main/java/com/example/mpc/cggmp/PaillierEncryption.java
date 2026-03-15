@@ -1,14 +1,12 @@
 package com.example.mpc.cggmp;
 
-import com.example.mpc.cggmp.util.NativeBigInteger;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.common.util.SecureRandomUtils;
 
 import java.math.BigInteger;
 import java.security.SecureRandom;
 
 public class PaillierEncryption {
-    private static final boolean USE_NATIVE = NativeBigInteger.isNativeAvailable();
-    
     private BigInteger n;
     private BigInteger nSquared;
     private BigInteger g;
@@ -19,6 +17,7 @@ public class PaillierEncryption {
     private int bitLength;
 
     private static final int KEY_SIZE = 1024;
+    public static final int MAX_KEY_SIZE = 4096;
     private final int keySize;
 
     public PaillierEncryption() {
@@ -41,11 +40,11 @@ public class PaillierEncryption {
         SecureRandom random = SecureRandomUtils.getInstance();
         int half = keySize / 2;
 
-        p = generateSafePrime(half, random);
-        q = generateSafePrime(half, random);
+        p = BigIntegerUtils.generateSafePrime(half, random);
+        q = BigIntegerUtils.generateSafePrime(half, random);
 
         while (p.equals(q)) {
-            q = generateSafePrime(half, random);
+            q = BigIntegerUtils.generateSafePrime(half, random);
         }
 
         initializeFromPQ();
@@ -56,10 +55,10 @@ public class PaillierEncryption {
         nSquared = n.multiply(n);
         bitLength = n.bitLength();
 
-        lambda = lcm(p.subtract(BigInteger.ONE), q.subtract(BigInteger.ONE));
+        lambda = BigIntegerUtils.lcm(p.subtract(BigInteger.ONE), q.subtract(BigInteger.ONE));
         g = n.add(BigInteger.ONE);
 
-        mu = lambda.modInverse(n);
+        mu = BigIntegerUtils.modInverse(lambda, n);
     }
 
     public BigInteger encrypt(BigInteger m) {
@@ -67,16 +66,17 @@ public class PaillierEncryption {
     }
 
     public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
-        if (USE_NATIVE) {
-            BigInteger gm = NativeBigInteger.modPow(g, m, nSquared);
-            BigInteger rn = NativeBigInteger.modPow(r, n, nSquared);
-            return gm.multiply(rn).mod(nSquared);
+        BigInteger gm;
+        if (g.equals(n.add(BigInteger.ONE))) {
+            gm = BigInteger.ONE.add(n.multiply(m)).mod(nSquared);
+        } else {
+            gm = BigIntegerUtils.modPow(g, m, nSquared);
         }
-        BigInteger gm = g.modPow(m, nSquared);
-        BigInteger rn = r.modPow(n, nSquared);
-        return gm.multiply(rn).mod(nSquared);
+        BigInteger rn = BigIntegerUtils.modPow(r, n, nSquared);
+        return BigIntegerUtils.modMul(gm, rn, nSquared);
     }
 
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     public Encryption encryptWithRandomness(BigInteger m) {
         SecureRandom random = SecureRandomUtils.getInstance();
         BigInteger r;
@@ -90,40 +90,25 @@ public class PaillierEncryption {
     }
 
     public BigInteger decrypt(BigInteger c) {
-        if (USE_NATIVE) {
-            BigInteger cLambda = NativeBigInteger.modPow(c, lambda, nSquared);
-            BigInteger l = cLambda.subtract(BigInteger.ONE).divide(n);
-            return l.multiply(mu).mod(n);
-        }
-        BigInteger cLambda = c.modPow(lambda, nSquared);
+        BigInteger cLambda = BigIntegerUtils.modPow(c, lambda, nSquared);
         BigInteger l = cLambda.subtract(BigInteger.ONE).divide(n);
-        return l.multiply(mu).mod(n);
+        return BigIntegerUtils.modMul(l, mu, n);
     }
 
     public BigInteger recoverRandomizer(BigInteger c, BigInteger m) {
-        if (USE_NATIVE) {
-            BigInteger gm = NativeBigInteger.modPow(g, m, nSquared);
-            BigInteger gmInv = NativeBigInteger.modInverse(gm, nSquared);
-            BigInteger cOver = c.multiply(gmInv).mod(nSquared);
-            BigInteger nInv = NativeBigInteger.modInverse(n, lambda);
-            return NativeBigInteger.modPow(cOver, nInv, nSquared).mod(n);
-        }
-        BigInteger gm = g.modPow(m, nSquared);
-        BigInteger gmInv = gm.modInverse(nSquared);
-        BigInteger cOver = c.multiply(gmInv).mod(nSquared);
-        BigInteger nInv = n.modInverse(lambda);
-        return cOver.modPow(nInv, nSquared).mod(n);
+        BigInteger gm = BigIntegerUtils.modPow(g, m, nSquared);
+        BigInteger gmInv = BigIntegerUtils.modInverse(gm, nSquared);
+        BigInteger cOver = BigIntegerUtils.modMul(c, gmInv, nSquared);
+        BigInteger nInv = BigIntegerUtils.modInverse(n, lambda);
+        return BigIntegerUtils.modPow(cOver, nInv, nSquared).mod(n);
     }
 
     public BigInteger add(BigInteger c1, BigInteger c2) {
-        return c1.multiply(c2).mod(nSquared);
+        return BigIntegerUtils.modMul(c1, c2, nSquared);
     }
 
     public BigInteger multiply(BigInteger c, BigInteger k) {
-        if (USE_NATIVE) {
-            return NativeBigInteger.modPow(c, k, nSquared);
-        }
-        return c.modPow(k, nSquared);
+        return BigIntegerUtils.modPow(c, k, nSquared);
     }
 
     public BigInteger getPublicKey() {
@@ -159,21 +144,23 @@ public class PaillierEncryption {
             this(n, n.multiply(n), n.add(BigInteger.ONE), n.bitLength());
         }
 
+        @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
         public BigInteger encrypt(BigInteger m) {
             return encryptWithRandomness(m).c;
         }
 
         public BigInteger encryptWithRandom(BigInteger m, BigInteger r) {
-            if (USE_NATIVE) {
-                BigInteger gm = NativeBigInteger.modPow(g, m, nSquared);
-                BigInteger rn = NativeBigInteger.modPow(r, n, nSquared);
-                return gm.multiply(rn).mod(nSquared);
+            BigInteger gm;
+            if (g.equals(n.add(BigInteger.ONE))) {
+                gm = BigInteger.ONE.add(n.multiply(m)).mod(nSquared);
+            } else {
+                gm = BigIntegerUtils.modPow(g, m, nSquared);
             }
-            BigInteger gm = g.modPow(m, nSquared);
-            BigInteger rn = r.modPow(n, nSquared);
-            return gm.multiply(rn).mod(nSquared);
+            BigInteger rn = BigIntegerUtils.modPow(r, n, nSquared);
+            return BigIntegerUtils.modMul(gm, rn, nSquared);
         }
 
+        @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
         public Encryption encryptWithRandomness(BigInteger m) {
             SecureRandom random = SecureRandomUtils.getInstance();
             BigInteger r;
@@ -187,14 +174,11 @@ public class PaillierEncryption {
         }
 
         public BigInteger add(BigInteger c1, BigInteger c2) {
-            return c1.multiply(c2).mod(nSquared);
+            return BigIntegerUtils.modMul(c1, c2, nSquared);
         }
 
         public BigInteger multiply(BigInteger c, BigInteger k) {
-            if (USE_NATIVE) {
-                return NativeBigInteger.modPow(c, k, nSquared);
-            }
-            return c.modPow(k, nSquared);
+            return BigIntegerUtils.modPow(c, k, nSquared);
         }
     }
 
@@ -203,20 +187,5 @@ public class PaillierEncryption {
     }
 
     public record Encryption(BigInteger c, BigInteger r) {
-    }
-
-    private static BigInteger lcm(BigInteger a, BigInteger b) {
-        return a.multiply(b).divide(a.gcd(b));
-    }
-
-    private static BigInteger generateSafePrime(int bits, SecureRandom rnd) {
-        BigInteger p;
-        while (true) {
-            BigInteger q = BigInteger.probablePrime(bits - 1, rnd);
-            p = q.shiftLeft(1).add(BigInteger.ONE);
-            if (p.isProbablePrime(128)) {
-                return p;
-            }
-        }
     }
 }

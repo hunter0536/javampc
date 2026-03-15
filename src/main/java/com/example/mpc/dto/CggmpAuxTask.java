@@ -37,6 +37,7 @@ public class CggmpAuxTask {
 
     public final ConcurrentHashMap<Integer, String> commitHashes = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, Boolean> echoReceived = new ConcurrentHashMap<>();
+    public final ConcurrentHashMap<Integer, Boolean> savedReceived = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, String> pendingEcho = new ConcurrentHashMap<>();
     public final ConcurrentHashMap<Integer, java.util.Map<String, Object>> pendingReveal = new ConcurrentHashMap<>();
 
@@ -56,6 +57,7 @@ public class CggmpAuxTask {
     public final CountDownLatch echoLatch;
     public final CountDownLatch revealLatch;
     public final CountDownLatch proofLatch;
+    public final CountDownLatch savedLatch;
 
     public CggmpAuxTask(String taskId, String executionId, int nodesCount, int initiatorId, Set<Integer> participants) {
         this.taskId = taskId;
@@ -67,6 +69,7 @@ public class CggmpAuxTask {
         this.echoLatch = new CountDownLatch(participants.size());
         this.revealLatch = new CountDownLatch(participants.size());
         this.proofLatch = new CountDownLatch(participants.size());
+        this.savedLatch = new CountDownLatch(participants.size());
     }
 
     public boolean start() {

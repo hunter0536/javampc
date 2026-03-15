@@ -9,18 +9,13 @@ import java.security.MessageDigest;
 import java.util.Random;
 
 public final class DeterministicRandom extends Random {
-    private final MessageDigest md;
+    private static final long serialVersionUID = 1L;
     private final byte[] seed;
     private long counter;
     private int pos;
     private byte[] buf = new byte[0];
 
     public DeterministicRandom(BigInteger n, BigInteger w, String label, int i, byte[] ctx) {
-        try {
-            this.md = MessageDigest.getInstance("SHA-256");
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
         byte[] lab = label.getBytes(StandardCharsets.UTF_8);
         int nBits = n.bitLength();
         int nLen = (nBits + 7) / 8;
@@ -37,7 +32,12 @@ public final class DeterministicRandom extends Random {
 
         byte[] ib = new byte[]{(byte) (i >>> 24), (byte) (i >>> 16), (byte) (i >>> 8), (byte) i};
         byte[] cb = (ctx == null) ? new byte[0] : ctx;
-        this.seed = md.digest(ZkBytes.encode(lab, nb, wb, ib, cb));
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            this.seed = md.digest(ZkBytes.encode(lab, nb, wb, ib, cb));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Override
@@ -69,13 +69,18 @@ public final class DeterministicRandom extends Random {
     }
 
     private void refill() {
-        md.update(seed);
-        md.update(new byte[]{
-                (byte) (counter >>> 56), (byte) (counter >>> 48), (byte) (counter >>> 40), (byte) (counter >>> 32),
-                (byte) (counter >>> 24), (byte) (counter >>> 16), (byte) (counter >>> 8), (byte) counter
-        });
-        buf = md.digest();
-        pos = 0;
-        counter++;
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            md.update(seed);
+            md.update(new byte[]{
+                    (byte) (counter >>> 56), (byte) (counter >>> 48), (byte) (counter >>> 40), (byte) (counter >>> 32),
+                    (byte) (counter >>> 24), (byte) (counter >>> 16), (byte) (counter >>> 8), (byte) counter
+            });
+            buf = md.digest();
+            pos = 0;
+            counter++;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 }

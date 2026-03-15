@@ -6,15 +6,14 @@ import com.example.mpc.common.response.AuxTaskStatusResponse;
 import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.constant.Constants;
 import com.example.mpc.dao.AuxInfoDao;
-import com.example.mpc.enums.MessageType;
-import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.dto.AuxInfo;
 import com.example.mpc.dto.CggmpAuxTask;
+import com.example.mpc.enums.MessageType;
+import com.example.mpc.enums.TaskStatus;
 import com.example.mpc.service.cggmp.auxiliary.CggmpAuxMessageDispatcher;
 import com.example.mpc.service.cggmp.auxiliary.CggmpAuxMessageHandler;
 import com.example.mpc.service.cggmp.auxiliary.CggmpAuxProtocolHandler;
-import com.example.mpc.service.cggmp.auxiliary.CggmpAuxUtils;
-import com.example.mpc.common.util.RetryUtils;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,24 +21,16 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
-/**
- * CGGMP辅助密钥生成服务
- * 负责生成Paillier公钥和Pedersen承诺所需的密钥材料
- */
 @Service
 public class CggmpAuxService implements NodeService.MessageHandler {
     public static final Logger logger = LoggerFactory.getLogger(CggmpAuxService.class);
@@ -58,14 +49,11 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     @Value("${node.id}")
     public int nodeId;
 
-    @Value("${app.cggmp.aux.paillierBits:3072}")
+    @Value("${cggmp.aux.paillierBits:3072}")
     public int auxPaillierBits;
 
-    @Value("${app.cggmp.aux.minPaillierBitsForProof:2048}")
+    @Value("${cggmp.aux.minPaillierBitsForProof:2048}")
     public int auxMinPaillierBitsForProof;
-
-    @Value("${app.cggmp.aux.autoCheckIntervalSeconds:60}")
-    public long auxAutoCheckIntervalSeconds;
 
     public final Map<String, CggmpAuxTask> auxTasks = new ConcurrentHashMap<>();
 
@@ -73,16 +61,32 @@ public class CggmpAuxService implements NodeService.MessageHandler {
     }
 
     public final ConcurrentHashMap<Integer, AuxStatus> auxStatus = new ConcurrentHashMap<>();
-    private final AtomicBoolean auxAutoTriggered = new AtomicBoolean(false);
-    private final AtomicBoolean auxAutoCheckRunning = new AtomicBoolean(false);
 
     public final int nodesCount = Constants.NODES_COUNT;
-    public final java.util.concurrent.ScheduledExecutorService auxScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+    public final ScheduledExecutorService auxScheduler = Executors.newSingleThreadScheduledExecutor();
 
     public volatile PaillierEncryption auxPaillier;
     public volatile BigInteger auxHatN;
     public volatile BigInteger auxS;
     public volatile BigInteger auxT;
+
+    @PostConstruct
+    public void validateAuxParams() {
+        int max = PaillierEncryption.MAX_KEY_SIZE;
+        if (auxPaillierBits > max) {
+            logger.warn("cggmp.aux.paillierBits={} exceeds max {}, clamping to {}", auxPaillierBits, max, max);
+            auxPaillierBits = max;
+        }
+        if (auxMinPaillierBitsForProof > max) {
+            logger.warn("cggmp.aux.minPaillierBitsForProof={} exceeds max {}, clamping to {}", auxMinPaillierBitsForProof, max, max);
+            auxMinPaillierBitsForProof = max;
+        }
+        if (auxMinPaillierBitsForProof > auxPaillierBits) {
+            logger.warn("cggmp.aux.minPaillierBitsForProof={} exceeds cggmp.aux.paillierBits={}, clamping to {}",
+                    auxMinPaillierBitsForProof, auxPaillierBits, auxPaillierBits);
+            auxMinPaillierBitsForProof = auxPaillierBits;
+        }
+    }
 
     public CompletableFuture<Void> init(int nodesCount) {
         return nodeService.startP2PServer()
@@ -93,7 +97,8 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                             MessageType.CGGMP_AUX_R1_ECHO,
                             MessageType.CGGMP_AUX_R2,
                             MessageType.CGGMP_AUX_R3,
-                            MessageType.CGGMP_AUX_STATUS
+                            MessageType.CGGMP_AUX_STATUS,
+                            MessageType.CGGMP_AUX_SAVED
                     ), this);
                     logger.info("CGGMP AUX service initialized successfully for node {} with {} total nodes", nodeId, nodesCount);
                 })
@@ -103,142 +108,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                 });
     }
 
-    public CompletableFuture<Void> ensureAuxProvisionedAfterNetworkReady() {
-        return ThreadPoolUtil.submitIoTask(() -> {
-            if (!auxAutoTriggered.compareAndSet(false, true)) {
-                return;
-            }
-            logAuxExecutorStats("AUX init");
-            nodeService.waitForNetworkReady()
-                    .thenRun(() -> {
-                        logAuxExecutorStats("AUX network ready");
-                        runAuxAutoCheck();
-                        long interval = Math.max(5, auxAutoCheckIntervalSeconds);
-                        auxScheduler.scheduleWithFixedDelay(this::runAuxAutoCheck, interval, interval, TimeUnit.SECONDS);
-                    })
-                    .exceptionally(ex -> {
-                        logger.error("Auto AUX provisioning failed on node {}: {}", nodeId, ex.getMessage(), ex);
-                        return null;
-                    });
-        });
-    }
-
-    private void runAuxAutoCheck() {
-        if (!auxAutoCheckRunning.compareAndSet(false, true)) {
-            return;
-        }
-        boolean asyncStarted = false;
-        try {
-            logAuxExecutorStats("AUX auto check");
-            int leaderId = resolveAuxAutoLeaderId();
-
-            boolean hasAux = loadLatestAuxInfo(nodeId) != null;
-            broadcastAuxStatus(hasAux);
-
-            if (nodeId != leaderId) {
-                logger.debug("Node {} is not auto leader (leader is {}), skipping AUX trigger", nodeId, leaderId);
-                return;
-            }
-
-            if (hasActiveAuxTask()) {
-                logger.debug("AUX auto check: task already in progress on leader {}, skipping", nodeId);
-                return;
-            }
-
-            broadcastAuxStatus(hasAux);
-
-            asyncStarted = true;
-            waitForAuxStatusAsync()
-                    .thenRun(() -> {
-                        logAuxExecutorStats("AUX status gathered");
-                        long nowMs = System.currentTimeMillis();
-                        List<Integer> missing = new ArrayList<>();
-                        List<Integer> noAux = new ArrayList<>();
-                        for (int id = 1; id <= nodesCount; id++) {
-                            AuxStatus status = auxStatus.get(id);
-                            if (status == null || nowMs - status.tsMs > Constants.AUX_STATUS_WAIT_MS) {
-                                missing.add(id);
-                            } else if (!status.hasAux) {
-                                noAux.add(id);
-                            }
-                        }
-                        if (!missing.isEmpty()) {
-                            logger.warn("AUX status missing from nodes {}, skipping auto trigger this round", missing);
-                            return;
-                        }
-                        if (!noAux.isEmpty()) {
-                            logger.warn("AUX status mismatch detected. Nodes without AUX={}", noAux);
-                            String taskId = createAuxTask();
-                            logger.info("Auto leader {} initiating AUX task {}", nodeId, taskId);
-                            startAuxProcess(taskId).exceptionally(ex -> {
-                                logger.error("Auto AUX failed for task {}: {}", taskId, ex.getMessage(), ex);
-                                return null;
-                            });
-                            return;
-                        }
-
-                        if (hasAux) {
-                            logger.info("All nodes report AUX present; skipping auto provision on leader {}", nodeId);
-                            return;
-                        }
-                        logger.warn("Leader {} missing AUX but peers reported present; initiating AUX to reconcile", nodeId);
-                        String taskId = createAuxTask();
-                        startAuxProcess(taskId).exceptionally(ex -> {
-                            logger.error("Auto AUX failed for task {}: {}", taskId, ex.getMessage(), ex);
-                            return null;
-                        });
-                    })
-                    .exceptionally(ex -> {
-                        logger.error("Auto AUX status wait failed on node {}: {}", nodeId, ex.getMessage(), ex);
-                        return null;
-                    })
-                    .whenComplete((v, ex) -> auxAutoCheckRunning.set(false));
-        } catch (Exception e) {
-            auxAutoCheckRunning.set(false);
-            logger.error("Auto AUX check failed on node {}: {}", nodeId, e.getMessage(), e);
-        } finally {
-            if (!asyncStarted) {
-                auxAutoCheckRunning.set(false);
-            }
-        }
-    }
-
-    private int resolveAuxAutoLeaderId() {
-        int minId = nodeId;
-        for (NodeService.NodeInfo info : nodeService.getNodes()) {
-            if (info != null) {
-                minId = Math.min(minId, info.id);
-            }
-        }
-        return minId;
-    }
-
-    private boolean hasActiveAuxTask() {
-        pruneStaleAuxTasks();
-        for (CggmpAuxTask task : auxTasks.values()) {
-            if (task != null && task.status.get() == TaskStatus.IN_PROGRESS) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void pruneStaleAuxTasks() {
-        for (var it = auxTasks.entrySet().iterator(); it.hasNext(); ) {
-            var entry = it.next();
-            CggmpAuxTask task = entry.getValue();
-            if (task == null) continue;
-            if (task.status.get() == TaskStatus.IN_PROGRESS && task.isTimeout()) {
-                task.fail("AUX task timeout");
-                task.lastErrorEvidence = CggmpAuxUtils.buildAuxEvidence(task);
-                logger.warn("AUX task timed out and will be cleared: taskId={}, executionId={}",
-                        task.taskId, task.executionId);
-                it.remove();
-            }
-        }
-    }
-
-    private AuxInfo loadLatestAuxInfo(int nodeIdVal) {
+    public AuxInfo loadLatestAuxInfo(int nodeIdVal) {
         try {
             AuxInfo info = auxInfoDao.loadLatestSync(nodeIdVal);
             if (info != null && auxPaillier == null) {
@@ -248,46 +118,13 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                 auxHatN = new BigInteger(info.getPedersenHatN(), 16);
                 auxS = new BigInteger(info.getPedersenS(), 16);
                 auxT = new BigInteger(info.getPedersenT(), 16);
-                logger.info("Loaded CGGMP AUX info for node: {}", nodeIdVal);
+                logger.debug("Loaded CGGMP AUX info for node: {}", nodeIdVal);
             }
             return info;
         } catch (Exception e) {
             logger.error("Failed to load CGGMP AUX info", e);
             return null;
         }
-    }
-
-    private void broadcastAuxStatus(boolean hasAux) {
-        auxStatus.put(nodeId, new AuxStatus(hasAux, System.currentTimeMillis()));
-        Map<String, Object> msg = new HashMap<>();
-        msg.put("senderId", nodeId);
-        msg.put("hasAux", hasAux);
-        msg.put("ts", System.currentTimeMillis());
-        RetryUtils.retryAsync(auxScheduler, logger,
-                        () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_STATUS, msg)),
-                        Constants.BROADCAST_RETRY_COUNT,
-                        Constants.BROADCAST_RETRY_INTERVAL_MS,
-                        "CGGMP_AUX_STATUS")
-                .exceptionally(ex -> {
-                    logger.warn("Failed to broadcast AUX status from node {}: {}", nodeId, ex.getMessage());
-                    return null;
-                });
-    }
-
-    private CompletableFuture<Void> waitForAuxStatusAsync() {
-        long deadline = System.currentTimeMillis() + Constants.AUX_STATUS_WAIT_MS;
-        CompletableFuture<Void> future = new CompletableFuture<>();
-        ScheduledFuture<?> tick = auxScheduler.scheduleAtFixedRate(() -> {
-            if (auxStatus.size() >= nodesCount) {
-                future.complete(null);
-                return;
-            }
-            if (System.currentTimeMillis() >= deadline) {
-                future.complete(null);
-            }
-        }, 0, 200, TimeUnit.MILLISECONDS);
-        future.whenComplete((v, ex) -> tick.cancel(false));
-        return future;
     }
 
     public String createAuxTask() {
@@ -321,12 +158,14 @@ public class CggmpAuxService implements NodeService.MessageHandler {
                     if (nodeId != task.initiatorId) {
                         return CompletableFuture.completedFuture(null);
                     }
-                    Map<String, Object> initData = new HashMap<>();
+                    Map<String, Object> initData = new java.util.HashMap<>();
                     initData.put("taskId", task.taskId);
                     initData.put("executionId", task.executionId);
                     initData.put("initiatorId", nodeId);
-                    initData.put("participants", new ArrayList<>(task.participants));
-                    return RetryUtils.retryAsync(auxScheduler, logger,
+                    initData.put("participants", new java.util.ArrayList<>(task.participants));
+                    return com.example.mpc.common.util.RetryUtils.retryAsync(
+                            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(),
+                            logger,
                             () -> nodeService.broadcastMessage(new NodeService.Message(nodeId, MessageType.CGGMP_AUX_INIT, initData)),
                             Constants.BROADCAST_RETRY_COUNT,
                             Constants.BROADCAST_RETRY_INTERVAL_MS,
@@ -371,6 +210,7 @@ public class CggmpAuxService implements NodeService.MessageHandler {
         response.setReceivedEcho(task.echoReceived.size());
         response.setReceivedReveal(task.peerHatN.size());
         response.setReceivedProofs(task.peerModProofs.size());
+        response.setReceivedSaved(task.savedReceived.size());
         return response;
     }
 

@@ -1,17 +1,20 @@
 package com.example.mpc.service.cggmp.dkg;
 
 import com.example.mpc.cggmp.proof.PiSchProof;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.util.Secp256k1CurveUtils;
 import com.example.mpc.common.util.HexUtils;
-import com.example.mpc.enums.MessageType;
 import com.example.mpc.dto.CggmpDkgTask;
+import com.example.mpc.enums.MessageType;
 import com.example.mpc.service.cggmp.CggmpHashUtils;
 import org.bouncycastle.math.ec.ECPoint;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,7 +29,7 @@ public final class CggmpDkgUtils {
     public static byte[] buildDkgContext(String taskId, String executionId, byte[] rid, int senderId, String label) {
         String sid = buildSid(executionId, taskId);
         String base = "DKG:" + label + ":" + sid + ":" + senderId + ":";
-        byte[] prefix = base.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] prefix = base.getBytes(StandardCharsets.UTF_8);
         if (rid == null) {
             return prefix;
         }
@@ -98,7 +101,7 @@ public final class CggmpDkgUtils {
         BigInteger xPower = BigInteger.ONE;
         for (BigInteger coeff : coefficients) {
             result = result.add(coeff.multiply(xPower)).mod(mod);
-            xPower = xPower.multiply(x).mod(mod);
+            xPower = BigIntegerUtils.modMul(xPower, x, mod);
         }
         return result;
     }
@@ -112,7 +115,7 @@ public final class CggmpDkgUtils {
         BigInteger xPower = BigInteger.ONE;
         for (int k = 0; k < threshold; k++) {
             powers[k] = xPower;
-            xPower = xPower.multiply(x).mod(q);
+            xPower = BigIntegerUtils.modMul(xPower, x, q);
         }
         return powers;
     }
@@ -144,7 +147,7 @@ public final class CggmpDkgUtils {
     public static BigInteger schChallenge(byte[] context, ECPoint g, ECPoint X, ECPoint A) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            md.update("PI_SCH".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            md.update("PI_SCH".getBytes(StandardCharsets.UTF_8));
             if (context != null) {
                 md.update(context);
             }
@@ -188,7 +191,7 @@ public final class CggmpDkgUtils {
         }
         Map<Integer, ECPoint> XkStar = task.XkStar;
         if (XkStar.isEmpty()) {
-            Map<Integer, ECPoint> merged = new java.util.HashMap<>();
+            Map<Integer, ECPoint> merged = new HashMap<>();
             for (int peerId : task.participants) {
                 Map<Integer, ECPoint> Xjk = task.Xjks.get(peerId);
                 if (Xjk == null) {

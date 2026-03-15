@@ -42,20 +42,29 @@ public class NodeService {
     @Value("${discovery.port}")
     private int discoveryPort;
 
-    @Value("${nodes.sharedSecret:}")
+    @Value("${nodes.hmacSecret:}")
     private String sharedSecret;
 
-    @Value("${nodes.ssl.enabled:false}")
+    @Value("${nodes.tls.enabled:false}")
     private boolean sslEnabled;
 
-    @Value("${nodes.ssl.cert:}")
+    @Value("${nodes.tls.cert:}")
     private String sslCertPath;
 
-    @Value("${nodes.ssl.key:}")
+    @Value("${nodes.tls.key:}")
     private String sslKeyPath;
 
-    @Value("${nodes.ssl.trustCert:}")
+    @Value("${nodes.tls.trustCert:}")
     private String sslTrustCertPath;
+
+    @Value("${nodes.replay.windowMs:300000}")
+    private long replayWindowMs;
+
+    @Value("${nodes.replay.maxSkewMs:30000}")
+    private long replayMaxSkewMs;
+
+    @Value("${nodes.replay.maxCacheSize:200000}")
+    private int replayMaxCacheSize;
 
     @Value("#{'${discovery.broadcast.ports}'.split(',')}")
     private List<String> discoveryBroadcastPorts;
@@ -63,16 +72,16 @@ public class NodeService {
     @Value("#{'${nodes.peers:}'.isEmpty() ? null : '${nodes.peers:}'.split(',')}")
     private List<String> peerNodes;
 
-    @Value("${nodes.reliableBroadcast.enabled:true}")
+    @Value("${nodes.rbc.enabled:true}")
     private boolean reliableBroadcastEnabled;
 
-    @Value("${nodes.reliableBroadcast.retryCount:3}")
+    @Value("${nodes.rbc.retryCount:3}")
     private int reliableBroadcastRetryCount;
 
-    @Value("${nodes.reliableBroadcast.retryIntervalMs:200}")
+    @Value("${nodes.rbc.retryIntervalMs:200}")
     private long reliableBroadcastRetryIntervalMs;
 
-    @Value("${nodes.reliableBroadcast.quorum:0}")
+    @Value("${nodes.rbc.quorum:0}")
     private int reliableBroadcastQuorum;
 
     @Value("${nodes.chaos.enabled:false}")
@@ -87,7 +96,7 @@ public class NodeService {
     @Value("${nodes.chaos.duplicateChance:0}")
     private double chaosDuplicateChance;
 
-    @Value("#{'${nodes.chaos.types:}'.isEmpty() ? null : '${nodes.chaos.types:}'.split(',')}")
+    @Value("#{'${nodes.chaos.messageTypes:}'.isEmpty() ? null : '${nodes.chaos.messageTypes:}'.split(',')}")
     private List<String> chaosTypes;
 
     // 使用Constants中的常量
@@ -131,9 +140,13 @@ public class NodeService {
             running.set(true);
 
             try {
+                enforceSecureTransport();
+
                 // 启动Netty服务器
                 nettyService = new NettyService(nodeId, nodePort, sharedSecret,
-                        sslEnabled, sslCertPath, sslKeyPath, sslTrustCertPath, this::handleAck,
+                        sslEnabled, sslCertPath, sslKeyPath, sslTrustCertPath,
+                        replayWindowMs, replayMaxSkewMs, replayMaxCacheSize,
+                        this::handleAck,
                         (sender, msg) -> {
                             try {
                                 return handleInboundMessage(sender, msg);
@@ -157,6 +170,18 @@ public class NodeService {
                 running.set(false);
             }
         });
+    }
+
+    private void enforceSecureTransport() {
+        if (!sslEnabled) {
+            throw new RuntimeException("TLS is required for node-to-node communication (nodes.tls.enabled=true).");
+        }
+        if (sharedSecret == null || sharedSecret.isBlank()) {
+            throw new RuntimeException("HMAC shared secret is required for node-to-node communication (nodes.hmacSecret).");
+        }
+        if (sslCertPath == null || sslCertPath.isBlank() || sslKeyPath == null || sslKeyPath.isBlank()) {
+            throw new RuntimeException("TLS cert/key are required (nodes.tls.cert/nodes.tls.key).");
+        }
     }
 
     public boolean isTlsEnabled() {
@@ -613,7 +638,7 @@ public class NodeService {
                             nodes.size(), Math.max(0, nodesCount - 1));
                 }
                 if (nodes.size() < nodesCount - 1) {
-                    logger.info("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
+                    logger.debug("Waiting for all nodes to be discovered... Current count: {}", nodes.size());
                     return;
                 }
 
@@ -637,7 +662,7 @@ public class NodeService {
                 }
 
                 if (!allConnected) {
-                    logger.info("Waiting for all peer connections to be active...");
+                logger.debug("Waiting for all peer connections to be active...");
                     return;
                 }
 
@@ -660,6 +685,22 @@ public class NodeService {
         return nodes.size() >= nodesCount - 1;
     }
 
+    public boolean areAllPeerConnectionsActive() {
+        if (nettyService == null) {
+            return false;
+        }
+        for (NodeInfo nodeInfo : nodes.values()) {
+            if (nodeInfo.id == nodeId) {
+                continue;
+            }
+            var channel = nettyService.getNodeChannel(nodeInfo.id);
+            if (channel == null || !channel.isActive()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * 获取线程池状态
      *
@@ -673,6 +714,7 @@ public class NodeService {
         if (completedTaskCount.get() > 0) {
             status.put("averageTaskTime", totalTaskTime.get() / completedTaskCount.get() + "ms");
         }
+        status.put("threadPools", ThreadPoolUtil.getThreadPoolStats());
         return status;
     }
 
@@ -826,7 +868,7 @@ public class NodeService {
                 nettyService.connectToNode(peerId, host, port)
                         .whenComplete((v, ex) -> {
                             if (ex == null) {
-                                logger.info("Successfully connected to peer {} on attempt {}", peerDesc, attempt);
+                                logger.debug("Successfully connected to peer {} on attempt {}", peerDesc, attempt);
                             } else if (attempt < maxAttempts) {
                                 logger.warn("Failed to connect to {} (attempt {}/{}): {}, scheduling retry in {}ms",
                                         peerDesc, attempt, maxAttempts, ex.getMessage(), retryDelayMs);
@@ -865,7 +907,7 @@ public class NodeService {
 
                         NodeInfo nodeInfo = new NodeInfo(nodeId, address.getHostAddress(), nodePort);
                         nodes.put(nodeId, nodeInfo);
-                        logger.info("Discovered node: {} at {}:{}", nodeId, address.getHostAddress(), nodePort);
+                        logger.debug("Discovered node: {} at {}:{}", nodeId, address.getHostAddress(), nodePort);
 
                         // 自动连接到新发现的节点（带重试）
                         if (nettyService != null) {

@@ -4,6 +4,7 @@ import com.example.mpc.cggmp.proof.BiPrimeBlumProof;
 import com.example.mpc.cggmp.proof.BiPrimeProofGenerator;
 import com.example.mpc.cggmp.proof.NoSmallFactorProof;
 import com.example.mpc.cggmp.proof.NoSmallFactorProofGenerator;
+import com.example.mpc.cggmp.util.BigIntegerUtils;
 import com.example.mpc.cggmp.zk.ZKSetup;
 import com.example.mpc.common.util.SecureRandomUtils;
 import org.bouncycastle.math.ec.ECPoint;
@@ -80,19 +81,26 @@ public class CGGMP {
     public DkgRound1Output dkgRound1(byte[] context) {
         logger.info("Node {} starting DKG Round 1", nodeId);
 
-        BigInteger[] coefficients = new BigInteger[threshold];
         BigInteger curveOrder = pedersen.getCurveOrder();
-        do {
-            coefficients[0] = new BigInteger(curveOrder.bitLength() - 1, random).mod(curveOrder);
-        } while (coefficients[0].signum() == 0);
+        BigInteger[] coefficients = new BigInteger[threshold];
 
-        for (int i = 1; i < threshold; i++) {
-            coefficients[i] = new BigInteger(curveOrder.bitLength() - 1, random).mod(curveOrder);
-        }
+        java.util.stream.IntStream.range(0, threshold).parallel().forEach(i -> {
+            BigInteger coeff;
+            do {
+                coeff = new BigInteger(curveOrder.bitLength() - 1, random).mod(curveOrder);
+            } while (i == 0 && coeff.signum() == 0);
+            coefficients[i] = coeff;
+        });
+
+        ECPoint g = pedersen.getG();
+        ECPoint[] commitmentArray = new ECPoint[threshold];
+        java.util.stream.IntStream.range(0, threshold).parallel().forEach(i -> {
+            commitmentArray[i] = g.multiply(coefficients[i]).normalize();
+        });
 
         List<ECPoint> commitments = new ArrayList<>();
-        for (BigInteger coeff : coefficients) {
-            commitments.add(pedersen.getG().multiply(coeff).normalize());
+        for (int i = 0; i < threshold; i++) {
+            commitments.add(commitmentArray[i]);
         }
 
         ECPoint publicKeyCommitment = commitments.get(0);
@@ -101,10 +109,28 @@ public class CGGMP {
         BiPrimeProofGenerator biPrimeProofGenerator = new BiPrimeProofGenerator();
         NoSmallFactorProofGenerator noSmallFactorProofGenerator = new NoSmallFactorProofGenerator(zkSetup);
 
-        BiPrimeBlumProof biPrimeProof = biPrimeProofGenerator.createProof(paillier.getPrivateKeyInfo(), context);
-        NoSmallFactorProof factorProof = noSmallFactorProofGenerator.createProof(paillier.getPrivateKeyInfo(), context);
+        BiPrimeBlumProof[] biPrimeProofHolder = new BiPrimeBlumProof[1];
+        NoSmallFactorProof[] factorProofHolder = new NoSmallFactorProof[1];
 
-        return new DkgRound1Output(nodeId, coefficients, commitments, paillierPublicKey, zkSetup, biPrimeProof, factorProof);
+        Thread biPrimeThread = new Thread(() -> {
+            biPrimeProofHolder[0] = biPrimeProofGenerator.createProof(paillier.getPrivateKeyInfo(), context);
+        });
+        Thread factorProofThread = new Thread(() -> {
+            factorProofHolder[0] = noSmallFactorProofGenerator.createProof(paillier.getPrivateKeyInfo(), context);
+        });
+
+        biPrimeThread.start();
+        factorProofThread.start();
+
+        try {
+            biPrimeThread.join();
+            factorProofThread.join();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Proof generation interrupted", e);
+        }
+
+        return new DkgRound1Output(nodeId, coefficients, commitments, paillierPublicKey, zkSetup, biPrimeProofHolder[0], factorProofHolder[0]);
     }
 
     public DkgRound2Output dkgRound2(Map<Integer, DkgRound1Output> round1Outputs) throws Exception {
@@ -218,7 +244,7 @@ public class CGGMP {
 
         for (BigInteger coeff : coefficients) {
             result = result.add(coeff.multiply(xPower)).mod(pedersen.getCurveOrder());
-            xPower = xPower.multiply(x).mod(pedersen.getCurveOrder());
+            xPower = BigIntegerUtils.modMul(xPower, x, pedersen.getCurveOrder());
         }
 
         return result;
@@ -230,7 +256,7 @@ public class CGGMP {
 
         for (ECPoint commitment : commitments) {
             result = result.add(commitment.multiply(xPower)).normalize();
-            xPower = xPower.multiply(x).mod(pedersen.getCurveOrder());
+            xPower = BigIntegerUtils.modMul(xPower, x, pedersen.getCurveOrder());
         }
 
         return result;

@@ -5,6 +5,7 @@ public class SignatureTaskStartResponse {
     private String groupPublicKey;
     private String message;
     private String status;
+    private String signature;
 
     public SignatureTaskStartResponse() {
     }
@@ -46,5 +47,13 @@ public class SignatureTaskStartResponse {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getSignature() {
+        return signature;
+    }
+
+    public void setSignature(String signature) {
+        this.signature = signature;
     }
 }

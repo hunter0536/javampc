@@ -45,6 +45,9 @@ public class NettyService {
     private final String certPath;
     private final String keyPath;
     private final String trustCertPath;
+    private final long replayWindowMs;
+    private final long replayMaxSkewMs;
+    private final int replayMaxCacheSize;
 
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -60,6 +63,9 @@ public class NettyService {
                         String certPath,
                         String keyPath,
                         String trustCertPath,
+                        long replayWindowMs,
+                        long replayMaxSkewMs,
+                        int replayMaxCacheSize,
                         java.util.function.BiConsumer<Integer, String> ackHandler,
                         java.util.function.BiFunction<Integer, NodeService.Message, CompletableFuture<Void>> inboundHandler) {
         this.nodeId = nodeId;
@@ -69,6 +75,9 @@ public class NettyService {
         this.certPath = certPath;
         this.keyPath = keyPath;
         this.trustCertPath = trustCertPath;
+        this.replayWindowMs = replayWindowMs;
+        this.replayMaxSkewMs = replayMaxSkewMs;
+        this.replayMaxCacheSize = replayMaxCacheSize;
         this.ackHandler = ackHandler;
         this.inboundHandler = inboundHandler;
         int cpuCores = Runtime.getRuntime().availableProcessors();
@@ -96,7 +105,8 @@ public class NettyService {
                             }
                             pipeline.addLast(new ObjectEncoder());
                             pipeline.addLast(new ObjectDecoder(10 * 1024 * 1024, ClassResolvers.weakCachingConcurrentResolver(null)));
-                            pipeline.addLast(new ServerHandler(NettyService.this, sharedSecret, sslEnabled));
+                            pipeline.addLast(new ServerHandler(NettyService.this, sharedSecret, sslEnabled,
+                                    replayWindowMs, replayMaxSkewMs, replayMaxCacheSize));
                         }
                     })
                     .option(ChannelOption.SO_BACKLOG, 128)
@@ -158,7 +168,7 @@ public class NettyService {
             ChannelFuture f = b.connect(host, port).addListener((ChannelFutureListener) future1 -> {
                 if (future1.isSuccess()) {
                     nodeChannels.put(nodeId, future1.channel());
-                    logger.info("Connected to node {} at {}:{}", nodeId, host, port);
+                    logger.debug("Connected to node {} at {}:{}", nodeId, host, port);
                     future.complete(null);
                 } else {
                     logger.error("Failed to connect to node {}: {}", nodeId, future1.cause().getMessage());
@@ -183,7 +193,7 @@ public class NettyService {
         CompletableFuture<Void> future = new CompletableFuture<>();
 
         Channel channel = nodeChannels.get(nodeId);
-        logger.info("sendMessage: to node {} type {} channelActive={}", nodeId, message.type(), channel != null && channel.isActive());
+        logger.debug("sendMessage: to node {} type {} channelActive={}", nodeId, message.type(), channel != null && channel.isActive());
         if (channel != null && channel.isActive()) {
             Object payload = wrapSigned(message);
             channel.writeAndFlush(payload).addListener((ChannelFutureListener) future1 -> {
@@ -309,12 +319,29 @@ public class NettyService {
     }
 
     private Object wrapSigned(NodeService.Message message) {
-        if (sslEnabled || sharedSecret == null || sharedSecret.isBlank()) {
-            return message;
+        if (!sslEnabled) {
+            throw new RuntimeException("TLS is required for node-to-node communication.");
         }
-        String payload = MessageSigner.canonicalPayload(message);
+        if (sharedSecret == null || sharedSecret.isBlank()) {
+            throw new RuntimeException("HMAC shared secret is required for node-to-node communication.");
+        }
+        NodeService.Message signedMessage = message;
+        if (message.messageId() == null || message.messageId().isBlank()) {
+            String newId = java.util.UUID.randomUUID().toString();
+            signedMessage = new NodeService.Message(
+                    message.senderId(),
+                    message.type(),
+                    message.data(),
+                    newId,
+                    message.requireAck(),
+                    message.ackForId(),
+                    message.rbc(),
+                    message.rbcHash()
+            );
+        }
+        String payload = MessageSigner.canonicalPayload(signedMessage);
         String sig = MessageSigner.sign(payload, sharedSecret);
-        return new SignedMessage(message, sig, System.currentTimeMillis());
+        return new SignedMessage(signedMessage, sig, System.currentTimeMillis());
     }
 
     private SslContext serverSslContext() throws SSLException {

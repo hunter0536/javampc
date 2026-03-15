@@ -31,9 +31,9 @@ public final class CggmpRefreshMessageDispatcher {
                 logTaskId = map.get("signatureTaskId");
             }
         }
-        logger.info("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
+        logger.debug("=== CGGMP handleMessage: senderId={}, type={}, taskId={} ===",
                 senderId, message.type(), logTaskId);
-        Executor executor = ThreadPoolUtil.getSingleThreadPool();
+        Executor executor = ThreadPoolUtil.getRefreshDispatchThreadPool();
         return CompletableFuture.runAsync(() -> {
             try {
                 Object data = message.data();
@@ -43,7 +43,7 @@ public final class CggmpRefreshMessageDispatcher {
                         data = decoded;
                     }
                 }
-                logger.info("=== CGGMP processing: type={} ===", message.type());
+                logger.debug("=== CGGMP processing: type={} ===", message.type());
                 switch (message.type()) {
                     case CGGMP_REFRESH_INIT:
                         svc.refreshMessageHandler.onRefreshInit(senderId, data);
@@ -56,6 +56,9 @@ public final class CggmpRefreshMessageDispatcher {
                         break;
                     case CGGMP_REFRESH_R3:
                         svc.refreshMessageHandler.onRefreshR3(senderId, data);
+                        break;
+                    case CGGMP_REFRESH_COMMIT:
+                        svc.refreshMessageHandler.onRefreshCommit(senderId, data);
                         break;
                     case CGGMP_REFRESH_COMPLAINT:
                         svc.refreshMessageHandler.onRefreshComplaint(senderId, data);

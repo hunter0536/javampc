@@ -1,6 +1,5 @@
 package com.example.mpc.dao;
 
-import com.example.mpc.common.util.ThreadPoolUtil;
 import com.example.mpc.dto.AuxInfo;
 import com.example.mpc.service.DatabaseService;
 import org.slf4j.Logger;
@@ -11,7 +10,6 @@ import org.springframework.stereotype.Repository;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.util.concurrent.CompletableFuture;
 
 @Repository
 public class AuxInfoDao {
@@ -22,6 +20,7 @@ public class AuxInfoDao {
     private static final String SELECT_LATEST_SQL = "SELECT id, node_id, task_id, paillier_p, paillier_q, paillier_n, paillier_g, paillier_bit_length, pedersen_hat_n, pedersen_s, pedersen_t FROM aux_info WHERE node_id = ? ORDER BY id DESC LIMIT 1";
     private static final String SELECT_BY_TASK_SQL = "SELECT id FROM aux_info WHERE node_id = ? AND task_id = ? LIMIT 1";
     private static final String SELECT_BY_TASK_ID_SQL = "SELECT id, node_id, task_id, paillier_p, paillier_q, paillier_n, paillier_g, paillier_bit_length, pedersen_hat_n, pedersen_s, pedersen_t FROM aux_info WHERE node_id = ? AND task_id = ? LIMIT 1";
+    private static final String COUNT_AUX_SQL = "SELECT COUNT(1) FROM aux_info WHERE node_id = ?";
 
     @Autowired
     private DatabaseService databaseService;
@@ -135,6 +134,29 @@ public class AuxInfoDao {
             return null;
         } catch (Exception e) {
             logger.error("Error loading aux info by taskId: {}", e.getMessage());
+            throw new RuntimeException(e);
+        } finally {
+            closeStatement(pstmt);
+            if (conn != null) {
+                databaseService.releaseShareConnection(conn, nodeId);
+            }
+        }
+    }
+
+    public int countAuxSync(int nodeId) {
+        Connection conn = null;
+        PreparedStatement pstmt = null;
+        try {
+            conn = databaseService.getShareConnection(nodeId);
+            pstmt = conn.prepareStatement(COUNT_AUX_SQL);
+            pstmt.setInt(1, nodeId);
+            var rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return rs.getInt(1);
+            }
+            return 0;
+        } catch (Exception e) {
+            logger.error("Error counting aux info: {}", e.getMessage());
             throw new RuntimeException(e);
         } finally {
             closeStatement(pstmt);
